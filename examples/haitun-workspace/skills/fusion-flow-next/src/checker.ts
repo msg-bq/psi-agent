@@ -7,10 +7,11 @@ import type { CheckResult, WorkflowAst } from "./types.js";
  * list rather than thrown.
  *
  * Future implementations own static workflow semantics such as operator
- * contracts and arity, enclosing-workflow identity references, duplicates,
- * and reference integrity. For TypeScript lowering, the checker only answers
- * whether lossless/exact lowering exists; it does not build, rewrite, or
- * approximate emitter shapes.
+ * contracts and arity, duplicates, and reference integrity. For example, S01
+ * requires the first argument of `input_workflow` and `output_workflow` to
+ * equal the enclosing workflow name. For TypeScript lowering, the checker only
+ * answers whether lossless/exact lowering exists; it does not build, rewrite,
+ * or approximate emitter shapes.
  *
  * This boundary must not parse source, emit TypeScript, or execute workflows.
  */

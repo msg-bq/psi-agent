@@ -11,6 +11,7 @@ export interface SourcePosition {
 
 export interface SourceSpan {
   readonly start: SourcePosition;
+  /** Exclusive end position; spans use the half-open interval `[start, end)`. */
   readonly end: SourcePosition;
 }
 
@@ -70,15 +71,24 @@ export interface WorkflowAst {
 }
 
 export interface ParseResult {
+  /** Non-null exactly when this phase produced no error diagnostics. */
   readonly workflow: WorkflowAst | null;
+  /** Parser diagnostics only; callers combine phase results when needed. */
   readonly diagnostics: readonly Diagnostic[];
 }
 
-/** The checker only receives a non-null WorkflowAst from a successful parse; parse failures never produce CheckResult. */
+/**
+ * The checker only receives a non-null WorkflowAst from a successful parse;
+ * parse failures never produce CheckResult.
+ */
 export interface CheckResult {
   readonly workflow: WorkflowAst;
+  /** Checker diagnostics only; parser diagnostics are not repeated here. */
   readonly diagnostics: readonly Diagnostic[];
-  /** Indicates only that current TypeScript lowering is safe, not parse validity. */
+  /**
+   * True exactly when there are no checker errors and exact TypeScript lowering
+   * is supported.
+   */
   readonly canGenerate: boolean;
 }
 
@@ -89,5 +99,6 @@ export interface CheckResult {
 export interface GenerateResult {
   /** Null means no TypeScript; the generator must never emit placeholder or approximate code. */
   readonly code: string | null;
+  /** Generator diagnostics only; parser and checker diagnostics are not repeated here. */
   readonly diagnostics: readonly Diagnostic[];
 }
