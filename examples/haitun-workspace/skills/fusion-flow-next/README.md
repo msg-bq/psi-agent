@@ -14,6 +14,15 @@ This PR only establishes compiler architecture contracts.
 - `src/generator.ts`: checked workflow to deterministic TypeScript boundary.
 - `src/planning.ts`: Haitun lists planned functions first and checks for missing mappings.
 
+## Current scope and known gaps
+
+The committed grammar is a bootstrap surface: workflow blocks, operator-call assertions, identifiers, booleans, and ordered lists. It does not yet model declarations, numeric terms, formulas or rules, or the context-limited `consumes_multi` set from the language review. These belong to the language-contract workstream and must not be approximated by the parser or generator.
+
+| Item | Intended contract | Current gap | Required compiler behavior |
+| --- | --- | --- | --- |
+| `S01` | `input_workflow` and `output_workflow` declare external artifacts. | Current `flow.input` requires a default value, while `flow.output` writes a supplied runtime value; the declarations do not contain those values. | The checker reports an error with `designReference: "S01"` and sets `canGenerate` to false until an exact runtime mapping exists. |
+| Action names | Haitun maps every required action before authoring a workflow. | The action catalog is intentionally incomplete. | The future planning check compares names with `AvailableMappings`, warns for missing or unavailable mappings, and sets `canAuthorWorkflow` to false. |
+
 ## Activation boundary
 
 Do not add a `SKILL.md`, workspace tools, a prompt switch, or runner changes until the parser, checker, and generator have real implementations and runnable checks.

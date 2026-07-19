@@ -1,6 +1,6 @@
 /*
  * This grammar owns syntax only. Operator meaning, ownership, and backend
- * support belong to the checker; only the confirmed surface is present here.
+ * support belong to the checker; only the documented bootstrap surface is here.
  * The parser facade normalizes == to = before building the AST.
  */
 grammar FusionFlow;
