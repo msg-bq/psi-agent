@@ -29,6 +29,12 @@ export interface PlannedFunction {
   readonly actions: readonly PlannedMapping[];
 }
 
+/** Names actually exposed by the language and action implementation. */
+export interface AvailableMappings {
+  readonly syntaxNames: readonly string[];
+  readonly actionNames: readonly string[];
+}
+
 export interface PlanningCheckResult {
   /**
    * Means only that the declared planned functions have acceptable mappings.
@@ -43,17 +49,19 @@ export interface PlanningCheckResult {
  * Haitun must call this after listing planned functions and before authoring the
  * DSL.
  *
- * A future implementation will emit warnings for null or unknown mappings and
- * set `canAuthorWorkflow` to false. It only checks declared items and cannot
- * prove that the LLM listed every required function. It does not inspect
- * runtime tool authorization or execute anything. The future checker validates
- * the sentinel rules documented by these interfaces. The current implementation
- * throws only because this module is not wired or implemented; a future missing
- * mapping is a normal result, not an exception.
+ * The caller supplies the names that are actually available; a non-empty name
+ * is not assumed to exist. A future implementation emits warnings for null or
+ * unavailable mappings and sets `canAuthorWorkflow` to false. It only checks
+ * declared items and cannot prove that the LLM listed every required function.
+ * It does not inspect runtime tool authorization or execute anything. The
+ * current implementation throws only because this module is not wired or
+ * implemented; a future missing mapping is a normal result, not an exception.
  */
 export function checkPlannedFunctions(
   functions: readonly PlannedFunction[],
+  availableMappings: AvailableMappings,
 ): PlanningCheckResult {
   void functions;
+  void availableMappings;
   throw new Error("FusionFlow Next planning check is not implemented.");
 }
