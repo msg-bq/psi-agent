@@ -82,6 +82,10 @@ export interface CheckResult {
   readonly canGenerate: boolean;
 }
 
+/**
+ * Non-null `code` means generation succeeded and may coexist with warning
+ * diagnostics. Any error diagnostic requires `code: null`.
+ */
 export interface GenerateResult {
   /** Null means no TypeScript; the generator must never emit placeholder or approximate code. */
   readonly code: string | null;
