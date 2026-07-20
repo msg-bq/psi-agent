@@ -8,8 +8,8 @@ This PR only establishes compiler architecture contracts.
 ## Modules
 
 - `grammar/FusionFlow.g4`: syntax only.
-- `src/types.ts`: shared AST, diagnostics, and results.
-- `src/parser.ts`: parse boundary.
+- `src/types.ts`: diagnostics, phase results, and an opaque Workflow Core IR boundary.
+- `src/parser.ts`: parse-tree-to-Core-IR boundary.
 - `src/checker.ts`: static semantics and exact-lowering gate.
 - `src/generator.ts`: checked workflow to deterministic TypeScript boundary.
 - `src/planning.ts`: Haitun lists planned functions first and checks for missing mappings.
@@ -17,6 +17,11 @@ This PR only establishes compiler architecture contracts.
 ## Current scope and known gaps
 
 The committed grammar is a bootstrap surface: workflow blocks, operator-call assertions, identifiers, booleans, and ordered lists. It does not yet model declarations, numeric terms, formulas or rules, or the context-limited `consumes_multi` set from the language review. These belong to the language-contract workstream and must not be approximated by the parser or generator.
+
+`WorkflowCoreIR` is intentionally opaque in this PR. A separate follow-up PR
+will align its schema with KEDispatcher Core IR, define the missing workflow and
+list extensions, and preserve source locations as compiler metadata. This
+package does not introduce an independent AST in the meantime.
 
 | Item | Intended contract | Current gap | Required compiler behavior |
 | --- | --- | --- | --- |
@@ -31,12 +36,13 @@ Integrate in this order: generated parser -> real functions and checks -> inacti
 
 ## Suggested work split
 
-1. **Language contract** owns `grammar/FusionFlow.g4` and `src/types.ts`: define the supported syntax and shared AST, including constructs that cannot yet be lowered exactly to the current runtime.
-2. **Parser** owns `generated/` and `src/parser.ts`: generate the parser, report syntax errors, and convert parser output into the shared AST.
-3. **Static checker** owns `src/checker.ts`: check workflow legality and reject constructs that cannot be lowered without changing meaning.
-4. **TypeScript generator** owns `src/generator.ts`: convert a checked workflow into deterministic TypeScript and refuse unsupported input.
-5. **Planning warnings** owns `src/planning.ts`: check the functions listed by Haitun and warn when a syntax or action mapping is missing.
-6. **Haitun integration** updates existing prompt and tool entry points only after parsing and checks work: add the syntax-check tool and require planning before workflow generation.
-7. **Compatibility and migration** owns runnable checks under `test/` and the activation gate: keep the existing `fusion-flow`, runner, and `.flow.ts` path unchanged until final migration.
+1. **Core IR contract** is a separate follow-up PR: replace the opaque `WorkflowCoreIR` marker in `src/types.ts` with the KEDispatcher-aligned contract.
+2. **Language contract** owns `grammar/FusionFlow.g4`: define supported syntax, including constructs that cannot yet be lowered exactly to the current runtime.
+3. **Parser** owns `generated/` and `src/parser.ts`: generate the parser, report syntax errors, and lower its parse tree directly into Workflow Core IR.
+4. **Static checker** owns `src/checker.ts`: check workflow legality and reject constructs that cannot be lowered without changing meaning.
+5. **TypeScript generator** owns `src/generator.ts`: convert checked Workflow Core IR into deterministic TypeScript and refuse unsupported input.
+6. **Planning warnings** owns `src/planning.ts`: check the functions listed by Haitun and warn when a syntax or action mapping is missing.
+7. **Haitun integration** updates existing prompt and tool entry points only after parsing and checks work: add the syntax-check tool and require planning before workflow generation.
+8. **Compatibility and migration** owns runnable checks and the activation gate: keep the existing `fusion-flow`, runner, and `.flow.ts` path unchanged until final migration.
 
-Dependency order: 1 -> 2 -> 3 -> 4; 1 -> 5; 3 + 4 + 5 -> 6. Workstream 7 runs throughout and gates activation.
+Dependency order: 1 + 2 -> 3 -> 4 -> 5; 2 -> 6; 4 + 5 + 6 -> 7. Workstream 8 runs throughout and gates activation.

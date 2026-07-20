@@ -1,7 +1,7 @@
 /*
  * This grammar owns syntax only. Operator meaning, ownership, and backend
  * support belong to the checker; only the documented bootstrap surface is here.
- * The future Core IR visitor normalizes == to = while lowering the parse tree.
+ * The future Core IR lowering step normalizes == to =.
  */
 grammar FusionFlow;
 
