@@ -3,10 +3,11 @@ import type { ParseResult } from "./types.js";
 /**
  * Future implementation invokes the committed ANTLR-generated lexer and parser,
  * collects syntax diagnostics, and lowers the parse tree directly into
- * KEDispatcher-aligned Workflow Core IR. Accepted `==` spelling is normalized
- * to canonical `=` during lowering. This boundary does not perform static
- * workflow semantics or TypeScript backend checks. Generated imports are
- * deliberately deferred until generated sources are committed.
+ * KEDispatcher-aligned Workflow Core IR. Lowering preserves the distinction
+ * between assertion equality (`==`) and numeric equality (`=`); this bootstrap
+ * accepts only the former. This boundary does not perform static workflow
+ * semantics or TypeScript backend checks. Generated imports are deliberately
+ * deferred until generated sources are committed.
  */
 export function parseWorkflow(source: string): ParseResult {
   void source;

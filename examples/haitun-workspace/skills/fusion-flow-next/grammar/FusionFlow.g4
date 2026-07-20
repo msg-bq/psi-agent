@@ -1,7 +1,9 @@
 /*
- * This grammar owns syntax only. Operator meaning, ownership, and backend
- * support belong to the checker; only the documented bootstrap surface is here.
- * The future Core IR lowering step normalizes == to =.
+ * This bootstrap grammar defines syntax only. Whether an operator exists, is
+ * legal in a workflow, or has backend support belongs to the static checker.
+ *
+ * `==` is assertion equality. Numeric equality uses `=` and remains outside
+ * this bootstrap until numeric and formula syntax is added.
  */
 grammar FusionFlow;
 
@@ -14,7 +16,7 @@ workflowDeclaration
     ;
 
 assertion
-    : operatorCall equalityOperator value SEMICOLON
+    : operatorCall ASSERTION_EQUALS value SEMICOLON
     ;
 
 operatorCall
@@ -23,11 +25,6 @@ operatorCall
 
 argumentList
     : value (COMMA value)*
-    ;
-
-equalityOperator
-    : EQUAL
-    | DOUBLE_EQUAL
     ;
 
 value
@@ -48,8 +45,7 @@ listLiteral
 WORKFLOW: 'workflow';
 TRUE: 'True';
 FALSE: 'False';
-DOUBLE_EQUAL: '==';
-EQUAL: '=';
+ASSERTION_EQUALS: '==';
 LBRACE: '{';
 RBRACE: '}';
 LPAREN: '(';

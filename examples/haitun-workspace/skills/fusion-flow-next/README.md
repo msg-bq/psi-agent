@@ -16,7 +16,7 @@ This PR only establishes compiler architecture contracts.
 
 ## Current scope and known gaps
 
-The committed grammar is a bootstrap surface: workflow blocks, operator-call assertions, identifiers, booleans, and ordered lists. It does not yet model declarations, numeric terms, formulas or rules, or the context-limited `consumes_multi` set from the language review. These belong to the language-contract workstream and must not be approximated by the parser or generator.
+The committed grammar is a bootstrap surface: workflow blocks, operator-call assertions using assertion equality (`==`), identifiers, booleans, and ordered lists. It does not yet model declarations, numeric terms or numeric equality (`=`), formulas or rules, or the context-limited `consumes_multi` set from the language review. These belong to the language-contract workstream and must not be approximated by the parser or generator.
 
 `WorkflowCoreIR` is intentionally opaque in this PR. A separate follow-up PR
 will align its schema with KEDispatcher Core IR, define the missing workflow and
