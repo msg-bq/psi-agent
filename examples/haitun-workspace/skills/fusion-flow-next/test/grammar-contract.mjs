@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const loosePath = join(root, "grammar", "FusionFlow.g4");
-const strictPath = join(root, "grammar", "FusionFlowStrict.g4");
+assert.deepEqual(
+  readdirSync(join(root, "grammar")).filter((name) => name.endsWith(".g4")),
+  ["FusionFlow.g4"],
+  "the language contract must have one grammar",
+);
+const grammarPath = join(root, "grammar", "FusionFlow.g4");
 const examplePath = join(root, "examples", "operator-catalog.workflow");
-const looseGrammar = readFileSync(loosePath, "utf8");
-const strictGrammar = readFileSync(strictPath, "utf8");
+const grammar = readFileSync(grammarPath, "utf8");
 const example = readFileSync(examplePath, "utf8");
 
 const operatorCategories = {
@@ -51,25 +54,23 @@ function ruleBody(grammar, name) {
 }
 
 for (const [category, operators] of Object.entries(operatorCategories)) {
-  for (const grammar of [looseGrammar, strictGrammar]) {
-    const body = ruleBody(grammar, category);
-    for (const operator of Object.keys(operators)) {
-      assert.match(body, new RegExp("['\\\"]" + operator + "['\\\"]"));
-    }
-  }
+  const body = ruleBody(grammar, category);
+  assert.deepEqual(
+    [...body.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]).sort(),
+    Object.keys(operators).sort(),
+    category + " must contain exactly its declared operators",
+  );
 
   for (const operator of Object.keys(operators)) {
     assert.match(example, new RegExp("\\b" + operator + "\\s*\\("));
   }
 }
 
-for (const grammar of [looseGrammar, strictGrammar]) {
-  assert.match(
-    grammar,
-    /ifExpression\s*:\s*IF\s+LPAREN\s+formula\s+COMMA\s+term\s+COMMA\s+term\s+RPAREN\s*;/s,
-  );
-  assert.doesNotMatch(grammar, /\bELSE\b|\bbranch(?:Stmt|Arm)\b/);
-}
+assert.match(
+  grammar,
+  /ifExpression\s*:\s*IF\s+LPAREN\s+formula\s+COMMA\s+term\s+COMMA\s+term\s+RPAREN\s*;/s,
+);
+assert.doesNotMatch(grammar, /\bELSE\b|\bbranch(?:Stmt|Arm)\b/);
 
 if (process.argv.includes("--source-only")) {
   console.log("grammar source contract: ok");
@@ -82,65 +83,47 @@ const [{ FusionFlowLexer }, { FusionFlowParser }] = await Promise.all([
   import(pathToFileURL(join(generated, "FusionFlowLexer.js")).href),
   import(pathToFileURL(join(generated, "FusionFlowParser.js")).href),
 ]);
-const [{ FusionFlowStrictLexer }, { FusionFlowStrictParser }] =
-  await Promise.all([
-    import(pathToFileURL(join(generated, "FusionFlowStrictLexer.js")).href),
-    import(pathToFileURL(join(generated, "FusionFlowStrictParser.js")).href),
-  ]);
 
-function parse(source, Lexer, Parser) {
+function parse(source) {
   const errors = [];
   const listener = {
     syntaxError(_recognizer, _offendingSymbol, line, column, message) {
       errors.push(line + ":" + column + " " + message);
     },
   };
-  const lexer = new Lexer(CharStream.fromString(source));
+  const lexer = new FusionFlowLexer(CharStream.fromString(source));
   lexer.removeErrorListeners();
   lexer.addErrorListener(listener);
-  const parser = new Parser(new CommonTokenStream(lexer));
+  const parser = new FusionFlowParser(new CommonTokenStream(lexer));
   parser.removeErrorListeners();
   parser.addErrorListener(listener);
   parser.workflowFile();
   return errors;
 }
 
-const parsers = [
-  ["loose", FusionFlowLexer, FusionFlowParser],
-  ["strict", FusionFlowStrictLexer, FusionFlowStrictParser],
-];
-
-for (const [name, Lexer, Parser] of parsers) {
-  assert.deepEqual(parse(example, Lexer, Parser), [], name + " example");
-  assert.notDeepEqual(
-    parse(
-      "workflow sample { step_executor(review) = if (true) { writer } else { human }; }",
-      Lexer,
-      Parser,
-    ),
-    [],
-    name + " must reject block-style if",
-  );
-  assert.notDeepEqual(
-    parse("workflow sample { consumes_multi(step) = true; }", Lexer, Parser),
-    [],
-    name + " must keep consumes_multi surface-only",
-  );
-  assert.deepEqual(
-    parse("workflow sample { custom(value, value, value) = true; }", Lexer, Parser),
-    [],
-    name + " user operators keep flexible arity",
-  );
-  for (const source of [
-    "workflow sample { step_executor(review) = if(true = true, writer); }",
-    "workflow sample { step_executor(review) = if(true = true, writer, human, fallback); }",
-  ]) {
-    assert.notDeepEqual(
-      parse(source, Lexer, Parser),
-      [],
-      name + " must enforce ternary if arity",
-    );
-  }
+assert.deepEqual(parse(example), [], "operator catalog example");
+assert.notDeepEqual(
+  parse(
+    "workflow sample { step_executor(review) = if (true) { writer } else { human }; }",
+  ),
+  [],
+  "must reject block-style if",
+);
+assert.notDeepEqual(
+  parse("workflow sample { consumes_multi(step) = true; }"),
+  [],
+  "must keep consumes_multi surface-only",
+);
+assert.deepEqual(
+  parse("workflow sample { custom(value, value, value) = true; }"),
+  [],
+  "user operators keep checker-owned arity",
+);
+for (const source of [
+  "workflow sample { step_executor(review) = if(true = true, writer); }",
+  "workflow sample { step_executor(review) = if(true = true, writer, human, fallback); }",
+]) {
+  assert.notDeepEqual(parse(source), [], "must enforce ternary if arity");
 }
 
 for (const operators of Object.values(operatorCategories).slice(0, -1)) {
@@ -149,14 +132,9 @@ for (const operators of Object.values(operatorCategories).slice(0, -1)) {
       const args = Array.from({ length: wrongArity }, () => "value").join(", ");
       const source = "workflow sample { " + operator + "(" + args + ") = true; }";
       assert.deepEqual(
-        parse(source, FusionFlowLexer, FusionFlowParser),
+        parse(source),
         [],
-        "loose " + operator + "/" + wrongArity,
-      );
-      assert.notDeepEqual(
-        parse(source, FusionFlowStrictLexer, FusionFlowStrictParser),
-        [],
-        "strict " + operator + "/" + wrongArity,
+        "checker-owned arity for " + operator + "/" + wrongArity,
       );
     }
   }

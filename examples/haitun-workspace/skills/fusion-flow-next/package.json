@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "grammar:generate": "antlr-ng -Dlanguage=TypeScript -l false -v true --exact-output-dir -o generated -- grammar/FusionFlow.g4 grammar/FusionFlowStrict.g4",
+    "grammar:generate": "antlr-ng -Dlanguage=TypeScript -l false -v true --exact-output-dir -o generated -- grammar/FusionFlow.g4",
     "test:grammar": "node test/grammar-contract.mjs --source-only && npm run grammar:generate && tsc --noEmit false --outDir generated/test-build && node test/grammar-contract.mjs",
     "typecheck": "tsc --noEmit"
   },
