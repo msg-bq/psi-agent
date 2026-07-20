@@ -25,64 +25,32 @@ export interface Diagnostic {
   readonly designReference?: string;
 }
 
-export interface IdentifierNode {
-  readonly kind: "identifier";
-  readonly name: string;
-  readonly span: SourceSpan;
-}
+declare const workflowCoreIRBrand: unique symbol;
 
-export interface BooleanLiteralNode {
-  readonly kind: "boolean";
-  readonly value: boolean;
-  readonly span: SourceSpan;
-}
-
-/** An ordered list of workflow values. */
-export interface ListLiteralNode {
-  readonly kind: "list";
-  readonly items: readonly WorkflowValue[];
-  readonly span: SourceSpan;
-}
-
-export type WorkflowValue = IdentifierNode | BooleanLiteralNode | ListLiteralNode;
-
-export interface OperatorCallNode {
-  readonly kind: "operatorCall";
-  readonly operator: IdentifierNode;
-  readonly arguments: readonly WorkflowValue[];
-  readonly span: SourceSpan;
-}
-
-/** `=` is canonical; the parser may accept `==` but must normalize it to `=` before building the AST. */
-export interface AssertionNode {
-  readonly kind: "assertion";
-  readonly left: OperatorCallNode;
-  readonly comparator: "=";
-  readonly right: WorkflowValue;
-  readonly span: SourceSpan;
-}
-
-/** The root node for one workflow source file. */
-export interface WorkflowAst {
-  readonly kind: "workflow";
-  readonly name: IdentifierNode;
-  readonly statements: readonly AssertionNode[];
-  readonly span: SourceSpan;
-}
+/**
+ * Opaque placeholder for the KEDispatcher-aligned Workflow Core IR.
+ *
+ * This PR deliberately does not define another AST or a provisional Core IR
+ * schema. A follow-up PR will replace this brand with the shared Core IR
+ * contract, including the required workflow and list extensions.
+ */
+export type WorkflowCoreIR = {
+  readonly [workflowCoreIRBrand]: true;
+};
 
 export interface ParseResult {
   /** Non-null exactly when this phase produced no error diagnostics. */
-  readonly workflow: WorkflowAst | null;
+  readonly coreIR: WorkflowCoreIR | null;
   /** Parser diagnostics only; callers combine phase results when needed. */
   readonly diagnostics: readonly Diagnostic[];
 }
 
 /**
- * The checker only receives a non-null WorkflowAst from a successful parse;
+ * The checker only receives non-null Core IR from a successful parse;
  * parse failures never produce CheckResult.
  */
 export interface CheckResult {
-  readonly workflow: WorkflowAst;
+  readonly coreIR: WorkflowCoreIR;
   /** Checker diagnostics only; parser diagnostics are not repeated here. */
   readonly diagnostics: readonly Diagnostic[];
   /**
