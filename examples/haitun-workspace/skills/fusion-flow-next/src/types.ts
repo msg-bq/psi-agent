@@ -30,9 +30,9 @@ declare const workflowCoreIRBrand: unique symbol;
 /**
  * Opaque placeholder for the KEDispatcher-aligned Workflow Core IR.
  *
- * This PR deliberately does not define another AST or a provisional Core IR
- * schema. A follow-up PR will replace this brand with the shared Core IR
- * contract, including the required workflow and list extensions.
+ * This PR deliberately leaves the concrete Core IR schema undefined. A
+ * follow-up PR will replace this brand with the shared Core IR contract,
+ * including the required workflow and list extensions.
  */
 export type WorkflowCoreIR = {
   readonly [workflowCoreIRBrand]: true;
