@@ -1,11 +1,11 @@
 /*
- * FusionFlow's syntax-only language contract.
+ * Strict comparison grammar for FusionFlow.
  *
- * This loose grammar recognizes the preset operator catalog but deliberately
- * leaves arity and type validation to the static checker. Compare
- * FusionFlowStrict.g4 when parser-level preset arity enforcement is useful.
+ * It shares the loose grammar's language surface, but enforces exact arity for
+ * the 19 callable preset operators. User-declared operators remain flexible so
+ * their declared signatures can be validated by the static checker.
  */
-grammar FusionFlow;
+grammar FusionFlowStrict;
 
 workflowFile
     : (declaration SEMICOLON)* workflowDecl+ EOF
@@ -86,7 +86,8 @@ comparisonOp
 term
     : LPAREN term RPAREN
     | ifExpression
-    | operatorName LPAREN termList? RPAREN
+    | workflowBuiltinApplication
+    | userOperatorApplication
     | listLiteral
     | op=(PLUS | MINUS) term
     | <assoc=right> left=term op=CARET right=term
@@ -98,6 +99,48 @@ term
 /* A value-producing ternary expression; N-way branching is expressed by nesting. */
 ifExpression
     : IF LPAREN formula COMMA term COMMA term RPAREN
+    ;
+
+workflowBuiltinApplication
+    : workflowOwnerOperatorApplication
+    | stepOwnerOperatorApplication
+    | dataResourceOperatorApplication
+    | agentOwnerOperatorApplication
+    ;
+
+workflowOwnerOperatorApplication
+    : 'input_workflow' LPAREN term COMMA term RPAREN
+    | 'output_workflow' LPAREN term COMMA term RPAREN
+    | 'max_concurrency' LPAREN term RPAREN
+    | 'workflow_timeout' LPAREN term RPAREN
+    ;
+
+stepOwnerOperatorApplication
+    : 'step_name' LPAREN term RPAREN
+    | 'step_instruction' LPAREN term RPAREN
+    | 'step_executor' LPAREN term RPAREN
+    | 'step_timeout' LPAREN term RPAREN
+    | 'max_attempts' LPAREN term RPAREN
+    ;
+
+dataResourceOperatorApplication
+    : 'consumes' LPAREN term COMMA term RPAREN
+    | 'produces' LPAREN term COMMA term RPAREN
+    | 'foreach_item' LPAREN term COMMA term RPAREN
+    | 'resource_requirement' LPAREN term COMMA term RPAREN
+    ;
+
+agentOwnerOperatorApplication
+    : 'agent_config' LPAREN term COMMA term COMMA term COMMA term RPAREN
+    | 'allowed_tool' LPAREN term COMMA term RPAREN
+    | 'max_output_tokens' LPAREN term RPAREN
+    | 'temperature' LPAREN term RPAREN
+    | 'reasoning_effort' LPAREN term RPAREN
+    | 'max_turns' LPAREN term RPAREN
+    ;
+
+userOperatorApplication
+    : LOWID LPAREN termList? RPAREN
     ;
 
 termList
