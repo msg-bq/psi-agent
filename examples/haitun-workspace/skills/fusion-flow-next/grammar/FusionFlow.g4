@@ -45,9 +45,9 @@ conceptNameList
     : conceptName (COMMA conceptName)*
     ;
 
-/* Equality is a relation, not imperative assignment; both '=' and '==' parse. */
+/* Assertions use '=='; '=' is reserved for equality comparisons in formulas. */
 assertion
-    : term EQUALITY term
+    : term ASSERT_EQ term
     ;
 
 /*
@@ -68,7 +68,7 @@ comparison
     ;
 
 comparisonOp
-    : EQUALITY
+    : NUMERIC_EQ
     | NOT_EQUALS
     | LT
     | LTE
@@ -235,7 +235,8 @@ OR : 'OR' | 'or' | '|';
 NOT : '!';
 TRUE : 'True' | 'true' | 'TRUE';
 FALSE : 'False' | 'false' | 'FALSE';
-EQUALITY : '==' | '=';
+ASSERT_EQ : '==';
+NUMERIC_EQ : '=';
 NOT_EQUALS : '!=';
 LTE : '<=';
 GTE : '>=';

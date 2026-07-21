@@ -26,30 +26,30 @@ const download_source:Instruction;
 
 workflow report_pipeline {
     -- Workflow owner operators
-    input_workflow(report_flow, source) = true;
-    input_workflow_multi(report_flow) = [source, file_a];
-    output_workflow(report_flow, report) = true;
-    output_workflow_multi(report_flow) = [report, file_b];
-    max_concurrency(report_flow) = 4;
-    workflow_timeout(report_flow) = 240 + 60;
+    input_workflow(report_flow, source) == true;
+    input_workflow_multi(report_flow) == [source, file_a];
+    output_workflow(report_flow, report) == true;
+    output_workflow_multi(report_flow) == [report, file_b];
+    max_concurrency(report_flow) == 4;
+    workflow_timeout(report_flow) == 240 + 60;
 
     -- Step owner operators
-    step_name(fetch_step) = fetch_source;
-    step_instruction(fetch_step) = download_source;
-    step_executor(fetch_step) = writer_agent;
-    step_executor(format_step) = formatter_program;
-    step_timeout(fetch_step) = 60;
-    max_attempts(fetch_step) = 3;
+    step_name(fetch_step) == fetch_source;
+    step_instruction(fetch_step) == download_source;
+    step_executor(fetch_step) == writer_agent;
+    step_executor(format_step) == formatter_program;
+    step_timeout(fetch_step) == 60;
+    max_attempts(fetch_step) == 3;
 
     -- Data, loop, and resource operators
-    files = [file_a, file_b];
-    consumes(fetch_step, source) = true;
-    consumes_multi(format_step) = [source, report];
-    produces(fetch_step, report) = true;
-    produces_multi(format_step) = [file_a, file_b];
-    foreach_item(analyze_step, files) = file;
-    consumes(analyze_step, file) = true;
-    resource_requirement(analyze_step, cpu_millicore) = 2000;
+    files == [file_a, file_b];
+    consumes(fetch_step, source) == true;
+    consumes_multi(format_step) == [source, report];
+    produces(fetch_step, report) == true;
+    produces_multi(format_step) == [file_a, file_b];
+    foreach_item(analyze_step, files) == file;
+    consumes(analyze_step, file) == true;
+    resource_requirement(analyze_step, cpu_millicore) == 2000;
 
     -- Agent owner operators
     agent_config(
@@ -57,15 +57,15 @@ workflow report_pipeline {
         claude_sonnet,
         claude_cli,
         internal_llm_api
-    ) = true;
-    allowed_tool(writer_agent, web_search) = true;
-    max_output_tokens(writer_agent) = 4096;
-    temperature(writer_agent) = 0.7;
-    reasoning_effort(writer_agent) = high;
-    max_turns(writer_agent) = 8;
+    ) == true;
+    allowed_tool(writer_agent, web_search) == true;
+    max_output_tokens(writer_agent) == 4096;
+    temperature(writer_agent) == 0.7;
+    reasoning_effort(writer_agent) == high;
+    max_turns(writer_agent) == 8;
 
     -- if(condition, then_term, else_term) is a three-argument value expression.
-    step_executor(review_step) = if(
+    step_executor(review_step) == if(
         !(reasoning_effort(writer_agent) != high)
             AND (
                 max_attempts(fetch_step) >= 2
