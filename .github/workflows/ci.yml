@@ -28,6 +28,7 @@ jobs:
       - run: uv sync
       - run: uv run pytest -v
 
+  # Temporary PR guard for fusion-flow-next; remove before merging into main.
   fusion-flow-next:
     runs-on: ubuntu-latest
     defaults:
