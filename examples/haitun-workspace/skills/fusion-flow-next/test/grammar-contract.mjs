@@ -17,7 +17,9 @@ const example = readFileSync(examplePath, "utf8");
 const operatorCategories = {
   workflowOwnerOperator: {
     input_workflow: 2,
+    input_workflow_multi: 1,
     output_workflow: 2,
+    output_workflow_multi: 1,
     max_concurrency: 1,
     workflow_timeout: 1,
   },
@@ -30,7 +32,9 @@ const operatorCategories = {
   },
   dataResourceOperator: {
     consumes: 2,
+    consumes_multi: 1,
     produces: 2,
+    produces_multi: 1,
     foreach_item: 2,
     resource_requirement: 2,
   },
@@ -41,9 +45,6 @@ const operatorCategories = {
     temperature: 1,
     reasoning_effort: 1,
     max_turns: 1,
-  },
-  surfaceOnlyOperator: {
-    consumes_multi: 1,
   },
 };
 
@@ -66,11 +67,39 @@ for (const [category, operators] of Object.entries(operatorCategories)) {
   }
 }
 
+assert.deepEqual(
+  ruleBody(grammar, "workflowBuiltinOperator").match(/\b[a-z]\w+Operator\b/g),
+  Object.keys(operatorCategories),
+  "builtin dispatch must contain exactly the four owner categories",
+);
+assert.match(ruleBody(grammar, "operatorName"), /LOWID\s*\|\s*workflowBuiltinOperator/s);
+
 assert.match(
   grammar,
   /ifExpression\s*:\s*IF\s+LPAREN\s+formula\s+COMMA\s+term\s+COMMA\s+term\s+RPAREN\s*;/s,
 );
 assert.doesNotMatch(grammar, /\bELSE\b|\bbranch(?:Stmt|Arm)\b/);
+assert.match(ruleBody(grammar, "workflowFile"), /^\s*\(constDecl SEMICOLON\)\* workflowDecl\+ EOF\s*$/s);
+assert.match(ruleBody(grammar, "workflowItem"), /^\s*assertion SEMICOLON\s*$/s);
+assert.match(ruleBody(grammar, "assertion"), /^\s*term EQUALITY term\s*$/s);
+assert.match(
+  ruleBody(grammar, "atomicTerm"),
+  /^\s*constantName\s*\|\s*booleanLiteral\s*$/s,
+);
+for (const removedRule of [
+  "declaration",
+  "conceptDecl",
+  "opDecl",
+  "consumesMultiAssertion",
+  "artifactSet",
+  "variableName",
+  "callableWorkflowBuiltinOperator",
+  "surfaceOnlyOperator",
+]) {
+  assert.doesNotMatch(grammar, new RegExp("\\b" + removedRule + "\\s*:"));
+}
+assert.doesNotMatch(grammar, /\b(?:CONCEPT|OP|IMPLIES|IFF|ARROW)\s*:/);
+assert.match(grammar, /\bNOT\s*:\s*'!'\s*;/);
 
 if (process.argv.includes("--source-only")) {
   console.log("grammar source contract: ok");
@@ -110,15 +139,45 @@ assert.notDeepEqual(
   "must reject block-style if",
 );
 assert.notDeepEqual(
-  parse("workflow sample { consumes_multi(step) = true; }"),
+  parse("workflow sample { consumes_multi(step) = {source, report}; }"),
   [],
-  "must keep consumes_multi surface-only",
+  "must reject the removed multi-set assertion shape",
+);
+assert.deepEqual(
+  parse(
+    "workflow sample { input_workflow_multi(flow) = [source]; consumes_multi(step) = [source, report]; produces_multi(step) = []; }",
+  ),
+  [],
+  "multi operators return ordinary List terms",
 );
 assert.deepEqual(
   parse("workflow sample { custom(value, value, value) = true; }"),
   [],
-  "user operators keep checker-owned arity",
+  "externally registered operators keep checker-owned arity",
 );
+for (const source of [
+  "concept Step; workflow sample {}",
+  "op custom(Step) -> Bool; workflow sample {}",
+  "workflow sample { const step:Step; }",
+  "workflow sample { foreach_item(step, items) = File; }",
+]) {
+  assert.notDeepEqual(parse(source), [], "must reject removed local schema/variable syntax");
+}
+assert.deepEqual(
+  parse(
+    "workflow sample { step_executor(review) = if(!(max_attempts(review) != 2) AND (step_timeout(review) > 30 OR max_turns(agent) = 8), writer, human); }",
+  ),
+  [],
+  "formula supports !, AND, OR, and comparisons",
+);
+for (const source of [
+  "workflow sample { step_executor(review) = if(true = true IMPLIES false = false, writer, human); }",
+  "workflow sample { step_executor(review) = if(true = true IFF false = false, writer, human); }",
+  "workflow sample { step_executor(review) = if(not (true = true), writer, human); }",
+  "workflow sample { step_executor(review) = if(~(true = true), writer, human); }",
+]) {
+  assert.notDeepEqual(parse(source), [], "must reject removed logical syntax");
+}
 for (const source of [
   "workflow sample { step_executor(review) = if(true = true, writer); }",
   "workflow sample { step_executor(review) = if(true = true, writer, human, fallback); }",
@@ -126,7 +185,7 @@ for (const source of [
   assert.notDeepEqual(parse(source), [], "must enforce ternary if arity");
 }
 
-for (const operators of Object.values(operatorCategories).slice(0, -1)) {
+for (const operators of Object.values(operatorCategories)) {
   for (const [operator, arity] of Object.entries(operators)) {
     for (const wrongArity of [arity - 1, arity + 1]) {
       const args = Array.from({ length: wrongArity }, () => "value").join(", ");

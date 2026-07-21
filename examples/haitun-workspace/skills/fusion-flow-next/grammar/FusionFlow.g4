@@ -1,23 +1,26 @@
 /*
  * FusionFlow surface-syntax contract.
  *
- * The parser owns tokens, delimiters, declarations, assertions, formulas,
- * terms, the three-argument shape of if(...), collection placement, and the
- * names and owner categories of the preset operators.
+ * The parser owns tokens, delimiters, file-level identity declarations,
+ * assertions, formulas, terms, List literals, the three-argument shape of
+ * if(...), and the names and owner categories of the preset operators.
  *
- * The static checker owns declaration/reference resolution, concept
- * compatibility, ordinary preset/user operator contracts, call arity and
- * types, value constraints, workflow legality, and exact backend-lowering support.
- * Lowering/runtime own execution order, dependencies, branch evaluation,
- * retries/timeouts, and consumes_multi expansion. Callable preset and user
- * operators therefore share the same flexible call syntax here; there is
- * intentionally no second semantic grammar to keep in sync.
+ * Concepts and operator signatures come from an external catalog; source files
+ * cannot redefine them. The checker and catalog own identity/operator lookup,
+ * concept compatibility, ordinary operator arity and types, value constraints,
+ * workflow legality, and exact backend support. Lowering/runtime own execution
+ * order, dependencies, multi-operator data relations, branch evaluation, and
+ * retries/timeouts.
+ *
+ * Preset and externally registered operators share the same flexible call
+ * syntax here. Their arity is deliberately checker-owned; if(...) is the one
+ * call-like surface expression whose arity is fixed by this grammar.
  */
 grammar FusionFlow;
 
-/* A file has optional global declarations followed by one or more workflows. */
+/* A file has optional global identity declarations, then one or more workflows. */
 workflowFile
-    : (declaration SEMICOLON)* workflowDecl+ EOF
+    : (constDecl SEMICOLON)* workflowDecl+ EOF
     ;
 
 workflowDecl
@@ -28,30 +31,14 @@ workflowName
     : identifier
     ;
 
-/* Every declaration and assertion inside a workflow ends with a semicolon. */
+/* Workflow blocks contain assertions only; each assertion ends with a semicolon. */
 workflowItem
-    : declaration SEMICOLON
-    | assertion SEMICOLON
+    : assertion SEMICOLON
     ;
 
-/* Concepts, typed constants, and user-defined operator signatures. */
-declaration
-    : conceptDecl
-    | constDecl
-    | opDecl
-    ;
-
-conceptDecl
-    : CONCEPT conceptName (COLON conceptName)?
-    ;
-
+/* Attach concrete identities to concepts already defined by the catalog. */
 constDecl
     : CONST constantName COLON conceptNameList
-    ;
-
-/* Signature existence, inheritance, arity, and type validity are checker-owned. */
-opDecl
-    : OP operatorName LPAREN conceptNameList? RPAREN (ARROW conceptName)?
     ;
 
 conceptNameList
@@ -60,36 +47,19 @@ conceptNameList
 
 /* Equality is a relation, not imperative assignment; both '=' and '==' parse. */
 assertion
-    : consumesMultiAssertion
-    | term EQUALITY term
-    ;
-
-/*
- * Dedicated surface syntax: consumes_multi(Step) = {Artifact, ...}.
- * It is not a generic term call. The set may be empty syntactically and may
- * contain only constant names; cardinality and dependency semantics are
- * checker/runtime concerns.
- */
-consumesMultiAssertion
-    : 'consumes_multi' LPAREN term RPAREN EQUALITY artifactSet
-    ;
-
-artifactSet
-    : LBRACE (constantName (COMMA constantName)*)? RBRACE
+    : term EQUALITY term
     ;
 
 /*
  * Conditions bottom out at term comparisons; a bare term is not a formula.
- * Logical precedence, high to low: NOT, AND, OR, right-associative IMPLIES,
- * then IFF. Parentheses override it.
+ * Logical precedence, high to low: !, AND, then OR. Parentheses override it.
+ * Implication and biconditional forms are intentionally outside this surface.
  */
 formula
     : LPAREN formula RPAREN
     | NOT formula
     | left=formula AND right=formula
     | left=formula OR right=formula
-    | <assoc=right> left=formula IMPLIES right=formula
-    | left=formula IFF right=formula
     | comparison
     ;
 
@@ -109,8 +79,8 @@ comparisonOp
 /*
  * Value terms include calls, lists, literals, arithmetic, and if expressions.
  * Arithmetic precedence, high to low: unary +/-; right-associative ^; * / %;
- * then +/-. Lists are terms, but {...} sets are consumes_multi-only.
- * Numeric/operator type legality remains checker-owned.
+ * then +/-. Lists are ordinary terms, including the result side of every
+ * *_multi operator. Numeric/operator/List legality remains checker-owned.
  */
 term
     : LPAREN term RPAREN
@@ -128,7 +98,7 @@ term
  * Value-producing if(condition formula, then term, else term), always arity 3.
  * N-way choice uses nested if expressions. Branch types, dependency collection,
  * and eager/lazy evaluation are checker/runtime concerns. if is surface syntax,
- * not one of the 20 preset operators and not a block or Step.
+ * not one of the 23 preset operators and not a block or Step.
  */
 ifExpression
     : IF LPAREN formula COMMA term COMMA term RPAREN
@@ -143,12 +113,11 @@ listLiteral
     ;
 
 atomicTerm
-    : variableName
-    | constantName
+    : constantName
     | booleanLiteral
     ;
 
-/* Lowercase names identify workflows, constants, and user-defined operators. */
+/* Lowercase names identify workflows, constants, and catalog operators. */
 identifier
     : LOWID
     ;
@@ -157,24 +126,18 @@ conceptName
     : UPID
     ;
 
-/* consumes_multi is reserved for consumesMultiAssertion and cannot be called here. */
 operatorName
     : LOWID
-    | callableWorkflowBuiltinOperator
+    | workflowBuiltinOperator
     ;
 
 /*
- * Complete catalog: 4 workflow + 5 step + 4 data/resource + 6 agent
- * operators, plus 1 surface-only operator = 20. Owner categories are disjoint;
+ * Complete catalog: 6 workflow + 5 step + 6 data/resource + 6 agent = 23.
+ * Owner categories are disjoint;
  * cross-cutting labels such as dataflow, control, and configuration stay in
  * comments rather than duplicating names across parser rules.
  */
 workflowBuiltinOperator
-    : callableWorkflowBuiltinOperator
-    | surfaceOnlyOperator
-    ;
-
-callableWorkflowBuiltinOperator
     : workflowOwnerOperator
     | stepOwnerOperator
     | dataResourceOperator
@@ -184,13 +147,17 @@ callableWorkflowBuiltinOperator
 /*
  * Workflow owner (external I/O and workflow-level control/configuration):
  *   input_workflow(Workflow, Artifact) -> Bool       [arity 2]
+ *   input_workflow_multi(Workflow) -> List            [arity 1]
  *   output_workflow(Workflow, Artifact) -> Bool      [arity 2]
+ *   output_workflow_multi(Workflow) -> List           [arity 1]
  *   max_concurrency(Workflow) -> Integer             [arity 1]
  *   workflow_timeout(Workflow) -> Integer            [arity 1]
  */
 workflowOwnerOperator
     : 'input_workflow'
+    | 'input_workflow_multi'
     | 'output_workflow'
+    | 'output_workflow_multi'
     | 'max_concurrency'
     | 'workflow_timeout'
     ;
@@ -214,13 +181,17 @@ stepOwnerOperator
 /*
  * Data, loop, and resource owner:
  *   consumes(Step, Artifact) -> Bool                  [arity 2]
+ *   consumes_multi(Step) -> List                      [arity 1]
  *   produces(Step, Artifact) -> Bool                  [arity 2]
+ *   produces_multi(Step) -> List                      [arity 1]
  *   foreach_item(Step, List) -> Artifact              [arity 2]
  *   resource_requirement(Step, Resource) -> Integer   [arity 2]
  */
 dataResourceOperator
     : 'consumes'
+    | 'consumes_multi'
     | 'produces'
+    | 'produces_multi'
     | 'foreach_item'
     | 'resource_requirement'
     ;
@@ -243,16 +214,6 @@ agentOwnerOperator
     | 'max_turns'
     ;
 
-/* consumes_multi(Step) = ArtifactSet [surface arity 1]. */
-surfaceOnlyOperator
-    : 'consumes_multi'
-    ;
-
-/* Uppercase term names are variables; uppercase declaration names are concepts. */
-variableName
-    : UPID
-    ;
-
 /* Constants are numbers, restricted quoted IDs, or lowercase identifiers. */
 constantName
     : NUMBER
@@ -268,14 +229,10 @@ booleanLiteral
 /* Keywords and symbolic aliases are case-sensitive exactly as listed below. */
 WORKFLOW : 'workflow';
 IF : 'if';
-CONCEPT : 'concept';
 CONST : 'const';
-OP : 'op';
 AND : 'AND' | 'and' | '&';
 OR : 'OR' | 'or' | '|';
-NOT : 'NOT' | 'not' | '~';
-IMPLIES : 'IMPLIES' | 'implies' | '>>';
-IFF : 'IFF' | 'iff' | '<==>';
+NOT : '!';
 TRUE : 'True' | 'true' | 'TRUE';
 FALSE : 'False' | 'false' | 'FALSE';
 EQUALITY : '==' | '=';
@@ -290,7 +247,6 @@ STAR : '*';
 DIVIDE : '/';
 MODULO : '%';
 CARET : '^';
-ARROW : '->';
 
 NUMBER
     : DIGITS '.' DIGITS

@@ -1,22 +1,6 @@
--- Standalone syntax catalog for every preset workflow operator.
-
-concept Workflow;
-concept Step;
-concept Artifact;
-concept List;
-concept Resource;
-concept Executor;
-concept Agent:Executor;
-concept Human:Executor;
-concept Program:Executor;
-concept Model;
-concept Engine;
-concept ApiBase;
-concept Tool;
-concept StepName;
-concept Instruction;
-concept ReasoningEffort;
-concept Integer;
+-- Standalone syntax catalog for all 23 preset workflow operators.
+-- Concepts and operator signatures come from the external catalog; this file
+-- declares only the concrete identities used by this workflow.
 
 const report_flow:Workflow;
 const fetch_step:Step;
@@ -27,8 +11,9 @@ const source:Artifact;
 const report:Artifact;
 const file_a:Artifact;
 const file_b:Artifact;
+const file:Artifact;
 const files:List;
-const cpu:Resource;
+const cpu_millicore:Resource;
 const writer_agent:Agent;
 const alice:Human;
 const formatter_program:Program;
@@ -38,14 +23,15 @@ const internal_llm_api:ApiBase;
 const web_search:Tool;
 const fetch_source:StepName;
 const download_source:Instruction;
-const high:ReasoningEffort;
 
 workflow report_pipeline {
     -- Workflow owner operators
     input_workflow(report_flow, source) = true;
+    input_workflow_multi(report_flow) = [source, file_a];
     output_workflow(report_flow, report) = true;
+    output_workflow_multi(report_flow) = [report, file_b];
     max_concurrency(report_flow) = 4;
-    workflow_timeout(report_flow) = 300;
+    workflow_timeout(report_flow) = 240 + 60;
 
     -- Step owner operators
     step_name(fetch_step) = fetch_source;
@@ -58,10 +44,12 @@ workflow report_pipeline {
     -- Data, loop, and resource operators
     files = [file_a, file_b];
     consumes(fetch_step, source) = true;
+    consumes_multi(format_step) = [source, report];
     produces(fetch_step, report) = true;
-    foreach_item(analyze_step, files) = File;
-    resource_requirement(analyze_step, cpu) = 2;
-    consumes_multi(format_step) = {source, report};
+    produces_multi(format_step) = [file_a, file_b];
+    foreach_item(analyze_step, files) = file;
+    consumes(analyze_step, file) = true;
+    resource_requirement(analyze_step, cpu_millicore) = 2000;
 
     -- Agent owner operators
     agent_config(
@@ -76,9 +64,13 @@ workflow report_pipeline {
     reasoning_effort(writer_agent) = high;
     max_turns(writer_agent) = 8;
 
-    -- if(condition, then_term, else_term) selects a value using preset operators.
+    -- if(condition, then_term, else_term) is a three-argument value expression.
     step_executor(review_step) = if(
-        reasoning_effort(writer_agent) = high,
+        !(reasoning_effort(writer_agent) != high)
+            AND (
+                max_attempts(fetch_step) >= 2
+                OR step_timeout(fetch_step) > 30
+            ),
         writer_agent,
         alice
     );
