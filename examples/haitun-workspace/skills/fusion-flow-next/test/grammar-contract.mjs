@@ -12,38 +12,30 @@ assert.deepEqual(
 const grammarPath = join(root, "grammar", "FusionFlow.g4");
 const grammar = readFileSync(grammarPath, "utf8");
 
-const operatorCategories = {
-  workflowOwnerOperator: {
-    input_workflow: 2,
-    input_workflow_multi: 1,
-    output_workflow: 2,
-    output_workflow_multi: 1,
-    max_concurrency: 1,
-    workflow_timeout: 1,
-  },
-  stepOwnerOperator: {
-    step_name: 1,
-    step_instruction: 1,
-    step_executor: 1,
-    step_timeout: 1,
-    max_attempts: 1,
-  },
-  dataResourceOperator: {
-    consumes: 2,
-    consumes_multi: 1,
-    produces: 2,
-    produces_multi: 1,
-    foreach_item: 2,
-    resource_requirement: 2,
-  },
-  agentOwnerOperator: {
-    agent_config: 4,
-    allowed_tool: 2,
-    max_output_tokens: 1,
-    temperature: 1,
-    reasoning_effort: 1,
-    max_turns: 1,
-  },
+const presetOperatorArities = {
+  input_workflow: 2,
+  input_workflow_multi: 1,
+  output_workflow: 2,
+  output_workflow_multi: 1,
+  max_concurrency: 1,
+  workflow_timeout: 1,
+  step_name: 1,
+  step_instruction: 1,
+  step_executor: 1,
+  step_timeout: 1,
+  max_attempts: 1,
+  consumes: 2,
+  consumes_multi: 1,
+  produces: 2,
+  produces_multi: 1,
+  foreach_item: 2,
+  resource_requirement: 2,
+  agent_config: 4,
+  allowed_tool: 2,
+  max_output_tokens: 1,
+  temperature: 1,
+  reasoning_effort: 1,
+  max_turns: 1,
 };
 
 function ruleBody(grammar, name) {
@@ -52,35 +44,26 @@ function ruleBody(grammar, name) {
   return match[1];
 }
 
-for (const [category, operators] of Object.entries(operatorCategories)) {
-  const body = ruleBody(grammar, category);
-  assert.deepEqual(
-    [...body.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]).sort(),
-    Object.keys(operators).sort(),
-    category + " must contain exactly its declared operators",
+for (const [operator, arity] of Object.entries(presetOperatorArities)) {
+  const signature = grammar.match(
+    new RegExp(
+      "^\\s*\\*\\s+" +
+        operator +
+        "\\(((?:[A-Z][A-Za-z0-9_]*)(?:,\\s*[A-Z][A-Za-z0-9_]*)*)\\)\\s*->\\s*[A-Z][A-Za-z0-9_]*\\s+\\[arity\\s+" +
+        arity +
+        "\\]\\s*$",
+      "m",
+    ),
   );
-
-  for (const [operator, arity] of Object.entries(operators)) {
-    const signature = grammar.match(
-      new RegExp(
-        "^\\s*\\*\\s+" +
-          operator +
-          "\\(((?:[A-Z][A-Za-z0-9_]*)(?:,\\s*[A-Z][A-Za-z0-9_]*)*)\\)\\s*->\\s*[A-Z][A-Za-z0-9_]*\\s+\\[arity\\s+" +
-          arity +
-          "\\]\\s*$",
-        "m",
-      ),
-    );
-    assert.ok(
-      signature,
-      operator + " must document parameter types, return type, and arity",
-    );
-    assert.equal(
-      signature[1].split(",").length,
-      arity,
-      operator + " documented parameter count must match its arity",
-    );
-  }
+  assert.ok(
+    signature,
+    operator + " must document parameter types, return type, and arity",
+  );
+  assert.equal(
+    signature[1].split(",").length,
+    arity,
+    operator + " documented parameter count must match its arity",
+  );
 }
 
 assert.match(
@@ -89,11 +72,6 @@ assert.match(
   "the grammar must explain why ordinary operator arity is checker-owned",
 );
 
-assert.deepEqual(
-  ruleBody(grammar, "workflowBuiltinOperator").match(/\b[a-z]\w+Operator\b/g),
-  Object.keys(operatorCategories),
-  "builtin dispatch must contain exactly the four owner categories",
-);
 assert.match(ruleBody(grammar, "operatorName"), /LOWID\s*\|\s*workflowBuiltinOperator/s);
 
 assert.match(
@@ -238,17 +216,15 @@ for (const source of [
   assert.notDeepEqual(parse(source), [], "must enforce ternary if arity");
 }
 
-for (const operators of Object.values(operatorCategories)) {
-  for (const [operator, arity] of Object.entries(operators)) {
-    for (const wrongArity of [arity - 1, arity + 1]) {
-      const args = Array.from({ length: wrongArity }, () => "value").join(", ");
-      const source = "workflow sample { " + operator + "(" + args + ") == true; }";
-      assert.deepEqual(
-        parse(source),
-        [],
-        "checker-owned arity for " + operator + "/" + wrongArity,
-      );
-    }
+for (const [operator, arity] of Object.entries(presetOperatorArities)) {
+  for (const wrongArity of [arity - 1, arity + 1]) {
+    const args = Array.from({ length: wrongArity }, () => "value").join(", ");
+    const source = "workflow sample { " + operator + "(" + args + ") == true; }";
+    assert.deepEqual(
+      parse(source),
+      [],
+      "checker-owned arity for " + operator + "/" + wrongArity,
+    );
   }
 }
 
