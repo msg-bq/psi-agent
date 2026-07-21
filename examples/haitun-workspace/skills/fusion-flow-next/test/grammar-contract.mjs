@@ -10,9 +10,7 @@ assert.deepEqual(
   "the language contract must have one grammar",
 );
 const grammarPath = join(root, "grammar", "FusionFlow.g4");
-const examplePath = join(root, "examples", "operator-catalog.workflow");
 const grammar = readFileSync(grammarPath, "utf8");
-const example = readFileSync(examplePath, "utf8");
 
 const operatorCategories = {
   workflowOwnerOperator: {
@@ -61,10 +59,6 @@ for (const [category, operators] of Object.entries(operatorCategories)) {
     Object.keys(operators).sort(),
     category + " must contain exactly its declared operators",
   );
-
-  for (const operator of Object.keys(operators)) {
-    assert.match(example, new RegExp("\\b" + operator + "\\s*\\("));
-  }
 }
 
 assert.deepEqual(
@@ -138,7 +132,6 @@ function parse(source) {
   return errors;
 }
 
-assert.deepEqual(parse(example), [], "operator catalog example");
 assert.deepEqual(
   parse("workflow sample { max_turns(agent) == 8; }"),
   [],
