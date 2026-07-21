@@ -38,6 +38,15 @@ const presetOperatorArities = {
   max_turns: 1,
 };
 
+const grammarPresetOperators = [
+  ...grammar.matchAll(/^\s*(?::|\|)\s*'([a-z][a-z_]*)'\s*$/gm),
+].map((match) => match[1]);
+assert.deepEqual(
+  [...new Set(grammarPresetOperators)].sort(),
+  Object.keys(presetOperatorArities).sort(),
+  "every preset operator literal must have documented arity metadata",
+);
+
 function ruleBody(grammar, name) {
   const match = grammar.match(new RegExp("\\b" + name + "\\s*:(.*?);", "s"));
   assert.ok(match, "missing " + name + " rule");
