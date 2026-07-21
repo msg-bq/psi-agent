@@ -28,21 +28,6 @@ jobs:
       - run: uv sync
       - run: uv run pytest -v
 
-  # Temporary PR guard for fusion-flow-next; remove before merging into main.
-  fusion-flow-next:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: examples/haitun-workspace/skills/fusion-flow-next
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "26"
-      - run: npm ci
-      - run: npm run test:grammar
-      - run: npm run typecheck
-
   publish:
     needs: [lint, test]
     if: startsWith(github.ref, 'refs/tags/')
