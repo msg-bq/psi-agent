@@ -12,9 +12,15 @@
  * order, dependencies, multi-operator data relations, branch evaluation, and
  * retries/timeouts.
  *
- * Preset and externally registered operators share the same flexible call
- * syntax here. Their arity is deliberately checker-owned; if(...) is the one
- * call-like surface expression whose arity is fixed by this grammar.
+ * For a compact, readable BNF and consistency with KEDispatcher, preset
+ * operators remain syntax sugar over the same flexible call shape instead of
+ * getting separate arity-constrained parser rules. After syntax parsing, the
+ * checker/catalog validates ordinary operator arity and types.
+ *
+ * Complete inline documentation is therefore part of this grammar contract:
+ * every preset operator below lists its parameter types, return type, and
+ * explicit arity for human and agent readers. if(...) is the one call-like
+ * surface expression whose arity is fixed by this grammar.
  */
 grammar FusionFlow;
 

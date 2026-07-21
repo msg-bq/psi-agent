@@ -59,7 +59,35 @@ for (const [category, operators] of Object.entries(operatorCategories)) {
     Object.keys(operators).sort(),
     category + " must contain exactly its declared operators",
   );
+
+  for (const [operator, arity] of Object.entries(operators)) {
+    const signature = grammar.match(
+      new RegExp(
+        "^\\s*\\*\\s+" +
+          operator +
+          "\\(((?:[A-Z][A-Za-z0-9_]*)(?:,\\s*[A-Z][A-Za-z0-9_]*)*)\\)\\s*->\\s*[A-Z][A-Za-z0-9_]*\\s+\\[arity\\s+" +
+          arity +
+          "\\]\\s*$",
+        "m",
+      ),
+    );
+    assert.ok(
+      signature,
+      operator + " must document parameter types, return type, and arity",
+    );
+    assert.equal(
+      signature[1].split(",").length,
+      arity,
+      operator + " documented parameter count must match its arity",
+    );
+  }
 }
+
+assert.match(
+  grammar,
+  /compact, readable BNF.*consistency with KEDispatcher.*After syntax parsing.*checker\/catalog validates ordinary operator arity/s,
+  "the grammar must explain why ordinary operator arity is checker-owned",
+);
 
 assert.deepEqual(
   ruleBody(grammar, "workflowBuiltinOperator").match(/\b[a-z]\w+Operator\b/g),
