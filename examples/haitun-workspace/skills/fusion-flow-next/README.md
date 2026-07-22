@@ -1,20 +1,20 @@
 # FusionFlow Next
 
-FusionFlow Next is a temporary name for an isolated compiler-architecture package.
-This directory intentionally has no `SKILL.md`, so Haitun will not auto-load it.
-Existing `fusion-flow` and `.flow.ts` paths remain unchanged.
-This package establishes isolated compiler architecture and Core IR contracts.
+FusionFlow Next is an inactive compiler-architecture package. Its Python
+compiler modules are not connected to the existing `fusion-flow` runtime or
+the workspace skill entry point, so existing `.flow.ts` behavior is unchanged.
 
 ## Modules
 
 - `grammar/FusionFlow.g4`: the syntax grammar; ordinary preset/external-operator arity remains checker-owned.
-- `test/grammar-contract.mjs`: preset-operator signature-comment contract check for the grammar.
-- `src/core-ir.ts`: the concrete Workflow Core IR classes shared by parser, checker, and generator.
-- `src/types.ts`: source locations, diagnostics, and parse/check/generate phase results.
-- `src/parser.ts`: parser facade and Workflow Core IR output boundary.
-- `src/checker.ts`: static semantics and exact-lowering gate.
-- `src/generator.ts`: checked workflow to deterministic TypeScript boundary.
-- `src/planning.ts`: Haitun lists planned functions first and checks their required DSL syntax mappings.
+- `fusion_flow_next/contracts.py`: diagnostics and parse/check/generate phase results.
+- `fusion_flow_next/parser.py`: parser facade and Workflow Core IR output boundary.
+- `fusion_flow_next/checker.py`: static semantics and exact-lowering gate.
+- `fusion_flow_next/generator.py`: checked workflow to deterministic TypeScript boundary.
+- `fusion_flow_next/planning.py`: planned-function syntax mapping boundary.
+
+The TypeScript compiler files remain during the stacked Python replacement and
+are removed only after their Python equivalents pass.
 
 ## Current scope and known gaps
 
