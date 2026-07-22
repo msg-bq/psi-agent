@@ -8,7 +8,7 @@ This package establishes isolated compiler architecture and Core IR contracts.
 ## Modules
 
 - `grammar/FusionFlow.g4`: the syntax grammar; ordinary preset/external-operator arity remains checker-owned.
-- `test/grammar-contract.mjs`: source and generated-parser contract check for the grammar.
+- `test/grammar-contract.mjs`: preset-operator signature-comment contract check for the grammar.
 - `src/core-ir.ts`: the concrete Workflow Core IR classes shared by parser, checker, and generator.
 - `src/types.ts`: source locations, diagnostics, and parse/check/generate phase results.
 - `src/parser.ts`: parser facade and Workflow Core IR output boundary.
