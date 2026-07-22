@@ -41,6 +41,8 @@ flows/curated/**/runs/
 
 # image generation output (placeholder / inference)
 generated/
+!skills/fusion-flow-next/generated/
+!skills/fusion-flow-next/generated/*.ts
 
 psi-agent.exe
 psi-agent

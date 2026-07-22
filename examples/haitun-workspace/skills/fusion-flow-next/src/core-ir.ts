@@ -88,7 +88,16 @@ export class ConnectiveFormula {
   }
 }
 
-export type Term = Constant | CompoundTerm | ListTerm;
+/** Conditional term with explicit true and false branches. */
+export class IfTerm {
+  public constructor(
+    readonly condition: Formula,
+    readonly whenTrue: Term,
+    readonly whenFalse: Term,
+  ) {}
+}
+
+export type Term = Constant | CompoundTerm | ListTerm | IfTerm;
 export type Formula = Assertion | ConnectiveFormula;
 
 /** Named workflow block passed between parser and checker. */
@@ -96,5 +105,13 @@ export class Workflow {
   public constructor(
     readonly name: string,
     readonly assertions: readonly Assertion[],
+  ) {}
+}
+
+/** Parsed file containing its constants and workflows. */
+export class WorkflowFile {
+  public constructor(
+    readonly constants: readonly Constant[],
+    readonly workflows: readonly Workflow[],
   ) {}
 }

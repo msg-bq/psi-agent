@@ -5,11 +5,14 @@ import {
   ConnectiveFormula,
   Constant,
   type Formula,
+  IfTerm,
   ListTerm,
   Operator,
   type Term,
   Workflow,
+  WorkflowFile,
 } from "../src/core-ir.js";
+import type { ParseResult } from "../src/types.js";
 
 // @ts-expect-error Workflow Core IR deliberately has no variables.
 import type { Variable } from "../src/core-ir.js";
@@ -43,7 +46,13 @@ const condition = new ConnectiveFormula(
   "AND",
   new ConnectiveFormula(senior, "NOT"),
 );
+const conditionalArtifact = new IfTerm(condition, draft, report);
 const workflow = new Workflow("review_pipeline", [consumes]);
+const workflowFile = new WorkflowFile(
+  [reviewStep, draft, report, age],
+  [workflow],
+);
+const parseResult: ParseResult = { coreIR: workflowFile, diagnostics: [] };
 
 if (false) {
   // @ts-expect-error AND requires a right formula.
@@ -54,6 +63,7 @@ if (false) {
 
 const workflowName: string = workflow.name;
 const firstListItem: Term = artifacts.items[0]!;
+const retainedConditionalTerm: Term = conditionalArtifact;
 const retainedCondition: Formula = condition;
 const retainedAssertion: Assertion = workflow.assertions[0]!;
 const catalogArity: number = consumesMulti.arity;
@@ -62,9 +72,11 @@ void [
   workflow,
   workflowName,
   firstListItem,
+  retainedConditionalTerm,
   retainedCondition,
   retainedAssertion,
   catalogArity,
+  parseResult,
 ];
 
 void (null as unknown as Variable);

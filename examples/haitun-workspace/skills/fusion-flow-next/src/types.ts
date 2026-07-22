@@ -1,4 +1,4 @@
-import type { Workflow } from "./core-ir.js";
+import type { WorkflowFile } from "./core-ir.js";
 
 /**
  * A source location.
@@ -29,7 +29,7 @@ export interface Diagnostic {
 
 export interface ParseResult {
   /** Non-null exactly when this phase produced no error diagnostics. */
-  readonly coreIR: Workflow | null;
+  readonly coreIR: WorkflowFile | null;
   /** Parser diagnostics only; callers combine phase results when needed. */
   readonly diagnostics: readonly Diagnostic[];
 }
@@ -39,7 +39,7 @@ export interface ParseResult {
  * parse failures never produce CheckResult.
  */
 export interface CheckResult {
-  readonly coreIR: Workflow;
+  readonly coreIR: WorkflowFile;
   /** Checker diagnostics only; parser diagnostics are not repeated here. */
   readonly diagnostics: readonly Diagnostic[];
   /**

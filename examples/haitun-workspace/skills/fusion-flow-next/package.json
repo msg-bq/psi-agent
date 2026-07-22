@@ -8,6 +8,8 @@
   },
   "scripts": {
     "grammar:generate": "antlr-ng -Dlanguage=TypeScript -l false -v true --exact-output-dir -o generated -- grammar/FusionFlow.g4",
+    "build:test": "npm run grammar:generate && tsc --noEmit false --outDir .test-build",
+    "test": "node test/grammar-contract.mjs && npm run build:test && node test/parser-contract.mjs",
     "test:grammar": "node test/grammar-contract.mjs",
     "typecheck": "tsc --noEmit"
   },

@@ -5,11 +5,18 @@
  * 移入 AGENTS.md，或从 workflowBuiltinOperator 开始递归解析规则以准确提取 Operator。
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+assert.deepEqual(
+  readdirSync(join(root, "generated"))
+    .filter((name) => name.endsWith(".ts"))
+    .sort(),
+  ["FusionFlowLexer.ts", "FusionFlowParser.ts", "FusionFlowVisitor.ts"],
+  "the committed generated TypeScript file set must stay exact",
+);
 const grammar = readFileSync(join(root, "grammar", "FusionFlow.g4"), "utf8");
 
 const presetOperators = [
