@@ -13,7 +13,7 @@ This package establishes isolated compiler architecture and Core IR contracts.
 - `src/types.ts`: source locations, diagnostics, and parse/check/generate phase results.
 - `src/parser.ts`: parser facade and Workflow Core IR output boundary.
 - `src/checker.ts`: static semantics and exact-lowering gate.
-- `src/generator.ts`: checked workflow to deterministic TypeScript boundary.
+- `src/generator.ts`: abstract TypeScript compiler template with Core IR dispatch and concrete-emitter hooks.
 - `src/planning.ts`: Haitun lists planned functions first and checks their required DSL syntax mappings.
 
 ## Current scope and known gaps
@@ -24,7 +24,7 @@ For a compact, readable BNF and consistency with KEDispatcher, preset operators 
 
 The generated parser is still not committed or wired into `src/parser.ts`. The current Core IR result carries one `Workflow` and has no dedicated file-level declaration or `if` node, so parser integration must first define a lossless mapping for global declarations, multiple workflow blocks, and `if` expressions. Operator registration and arity, catalog type compatibility, workflow legality, and backend support remain static-checker responsibilities.
 
-The Core IR contains catalog-owned `Concept` and `Operator` references, typed constants, recursive compound terms, ordered list terms, assertions, and `NOT`/`AND`/`OR` formulas. `Workflow` is the only workflow-level class and stores one syntax-level block name with its assertions. Constants are carried by the terms that use them rather than duplicated in a document-level collection. The workflow does not redeclare concepts or operators.
+The Core IR contains catalog-owned `Concept` and `Operator` references, typed constants, recursive compound terms, ordered list terms, assertions, and `NOT`/`AND`/`OR` formulas. `Workflow` is the only workflow-level class and stores one syntax-level block name with its assertions. Constants are carried by the terms that use them rather than duplicated in a document-level collection. The workflow does not redeclare concepts or operators. The abstract TypeScript compiler now provides the generation gate and Core IR dispatch template; concrete TypeScript emission remains unimplemented.
 
 Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimization requests are intentionally absent because the reviewed workflow surface does not use them. Operator execution, concept registries and matching, validation, parsing, generation, and Haitun activation remain separate workstreams.
 

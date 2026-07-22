@@ -1,17 +1,76 @@
+import {
+  Assertion,
+  CompoundTerm,
+  ConnectiveFormula,
+  Constant,
+  type Formula,
+  ListTerm,
+  type Term,
+  type Workflow,
+} from "./core-ir.js";
 import type { CheckResult, GenerateResult } from "./types.js";
 
-/**
- * Future implementations consume checker output only. When `canGenerate` is
- * false, they return `{ code: null, diagnostics }` and never placeholder or
- * approximate TypeScript. Generation is deterministic and treats DSL values
- * as data rather than raw TypeScript; diagnostics preserve stable source order.
- * It does not parse, repeat static checks, execute workflows, or introduce a
- * backend registry. This placeholder is not wired into Haitun, and the explicit
- * current throw only prevents accidental use before implementation. Future
- * unsupported workflows are normal `{ code: null, diagnostics }` results; only
- * infrastructure or programming faults may throw.
- */
-export function generateTypeScript(checkResult: CheckResult): GenerateResult {
-  void checkResult;
-  throw new Error("FusionFlow Next TypeScript generator is not implemented.");
+/** Shared Core IR traversal for concrete TypeScript emitters. */
+export abstract class TypeScriptCompiler {
+  public compile(checkResult: CheckResult): GenerateResult {
+    if (!checkResult.canGenerate) {
+      return { code: null, diagnostics: [] };
+    }
+
+    const workflow = checkResult.coreIR;
+    return this.buildProgram(
+      workflow,
+      workflow.assertions.map((assertion) =>
+        this.compileAssertion(assertion),
+      ),
+    );
+  }
+
+  protected compileFormula(formula: Formula): string {
+    if (formula instanceof Assertion) {
+      return this.compileAssertion(formula);
+    }
+    if (formula instanceof ConnectiveFormula) {
+      return this.compileConnectiveFormula(formula);
+    }
+    return this.unsupported("formula", formula);
+  }
+
+  protected compileTerm(term: Term): string {
+    if (term instanceof Constant) {
+      return this.compileConstant(term);
+    }
+    if (term instanceof CompoundTerm) {
+      return this.compileCompoundTerm(term);
+    }
+    if (term instanceof ListTerm) {
+      return this.compileListTerm(term);
+    }
+    return this.unsupported("term", term);
+  }
+
+  protected abstract compileConstant(constant: Constant): string;
+
+  protected abstract compileCompoundTerm(term: CompoundTerm): string;
+
+  protected abstract compileListTerm(term: ListTerm): string;
+
+  protected abstract compileAssertion(assertion: Assertion): string;
+
+  protected abstract compileConnectiveFormula(
+    formula: ConnectiveFormula,
+  ): string;
+
+  protected abstract buildProgram(
+    workflow: Workflow,
+    assertions: readonly string[],
+  ): GenerateResult;
+
+  private unsupported(label: string, node: unknown): never {
+    const nodeType =
+      node instanceof Object ? node.constructor.name : typeof node;
+    throw new TypeError(
+      `${this.constructor.name} cannot compile unsupported ${label} node of type ${nodeType}.`,
+    );
+  }
 }
