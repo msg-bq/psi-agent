@@ -9,10 +9,10 @@ from .contracts import (
 )
 from .parser import parse_workflow
 from .planning import (
-    PlannedFunction,
+    PlannedStep,
     PlannedSyntax,
     PlanningCheckResult,
-    check_planned_functions,
+    check_planned_steps,
 )
 
 __all__ = [
@@ -20,12 +20,12 @@ __all__ = [
     "Diagnostic",
     "DiagnosticSeverity",
     "ParseResult",
-    "PlannedFunction",
+    "PlannedStep",
     "PlannedSyntax",
     "PlanningCheckResult",
     "SourcePosition",
     "SourceSpan",
-    "check_planned_functions",
+    "check_planned_steps",
     "check_workflow",
     "parse_workflow",
 ]

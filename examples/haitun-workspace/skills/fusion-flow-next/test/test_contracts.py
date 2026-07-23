@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from fusion_flow_next import PlannedStep, check_planned_steps
 from fusion_flow_next.checker import check_workflow
 from fusion_flow_next.parser import parse_workflow
-from fusion_flow_next.planning import check_planned_functions
 
 
 def test_unimplemented_phase_boundaries_fail_explicitly() -> None:
@@ -12,4 +12,4 @@ def test_unimplemented_phase_boundaries_fail_explicitly() -> None:
     with pytest.raises(NotImplementedError, match="checker is not implemented"):
         check_workflow(object())
     with pytest.raises(NotImplementedError, match="planning check is not implemented"):
-        check_planned_functions((), ())
+        check_planned_steps((PlannedStep("example", "Example step", ()),), ())
