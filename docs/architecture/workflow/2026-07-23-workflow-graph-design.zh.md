@@ -248,9 +248,10 @@ Artifact A -> Step S1 -> Artifact B -> Step S2 -> Artifact A
 它不解析 BNF 文本，也不直接宣称支持 TypeScript class instance。TypeScript 或生成
 parser 需要先通过 DTO/adapter 提供上述结构。
 
-当 `step_executor` RHS 携带 `belong_concepts` 时，projector 校验它在 `Human`、
-`Agent`、`Program` 中恰好命中一类；结构适配器未携带 catalog 类型时只能保留
-`executor_id`，完整类型校验仍属于上游 checker。Graph 自身不复制该分类。
+当 `step_executor` RHS 携带**非空** `belong_concepts` 时，projector 校验它在
+`Human`、`Agent`、`Program` 中恰好命中一类；缺少该属性或值为空都表示结构
+适配器尚未提供 catalog 类型信息，此时只保留 `executor_id`，完整类型校验仍
+属于上游 checker。Graph 自身不复制该分类。
 
 当前 Python `fusion_flow_next.core_ir.Assertion` 已经表示 equality，本身没有保存
 源文本中的等号 token；这种对象缺少 `relation_symbol` 时按 canonical `=` 处理。
