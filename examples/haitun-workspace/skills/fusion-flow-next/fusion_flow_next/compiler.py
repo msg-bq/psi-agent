@@ -20,11 +20,18 @@ from .core_ir import (
 
 @dataclass(frozen=True, slots=True)
 class _CompiledDeclarations:
+    """Backend declarations made available when assembling the program."""
+
     constants: Mapping[Constant, object]
 
 
 class CoreIRCompiler:
-    """Compile FusionFlow Core IR through backend-specific node hooks."""
+    """Traverse Core IR and delegate target representation to node hooks.
+
+    Backends override only the shapes they support and use ``_compile_formula``
+    and ``_compile_term`` to compile child nodes. Default node hooks fail
+    closed, so unsupported IR is never approximated or silently omitted.
+    """
 
     def compile(self, core_ir: WorkflowFile) -> object:
         """Compile a workflow file without storing the input on the compiler."""
@@ -39,12 +46,16 @@ class CoreIRCompiler:
         )
 
     def _compile_workflow(self, workflow: Workflow) -> object:
+        """Compile workflow assertions before assembling the workflow."""
+
         return self._build_workflow(
             workflow,
             assertions=tuple(self._compile_formula(assertion) for assertion in workflow.assertions),
         )
 
     def _compile_formula(self, formula: object) -> object:
+        """Dispatch a formula to its backend hook."""
+
         if isinstance(formula, Assertion):
             return self._compile_assertion(formula)
         if isinstance(formula, ConnectiveFormula):
@@ -52,6 +63,8 @@ class CoreIRCompiler:
         return self._unsupported("formula", formula)
 
     def _compile_term(self, term: object) -> object:
+        """Dispatch a term to its backend hook."""
+
         if isinstance(term, Constant):
             return self._compile_constant(term)
         if isinstance(term, CompoundTerm):
@@ -62,6 +75,7 @@ class CoreIRCompiler:
             return self._compile_if_term(term)
         return self._unsupported("term", term)
 
+    # Concrete backends override exactly the node shapes they support.
     def _compile_constant(self, constant: Constant) -> object:
         return self._unsupported("constant declaration", constant)
 
@@ -86,6 +100,8 @@ class CoreIRCompiler:
         *,
         assertions: tuple[object, ...],
     ) -> object:
+        """Assemble one workflow from its compiled assertions."""
+
         del workflow, assertions
         raise NotImplementedError(f"{type(self).__name__} must implement _build_workflow().")
 
@@ -95,6 +111,8 @@ class CoreIRCompiler:
         *,
         workflows: tuple[object, ...],
     ) -> object:
+        """Assemble the backend program from declarations and workflows."""
+
         del declarations, workflows
         raise NotImplementedError(f"{type(self).__name__} must implement _build_program().")
 
