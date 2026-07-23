@@ -242,7 +242,7 @@ Artifact A -> Step S1 -> Artifact B -> Step S2 -> Artifact A
 - CompoundTerm：`operator.name`、`arguments`；
 - Constant：`symbol`；
 - Constant 可选类型信息：`belong_concepts[*].name`；
-- ListTerm：`items` 或 `elements`；
+- ListTerm：`items` 或 `elements`；若两者同时存在且内容不同则拒绝；
 - syntax-review local set carrier：`members`。
 
 它不解析 BNF 文本，也不直接宣称支持 TypeScript class instance。TypeScript 或生成
@@ -255,7 +255,7 @@ parser 需要先通过 DTO/adapter 提供上述结构。
 
 当前 Python `fusion_flow_next.core_ir.Assertion` 已经表示 equality，本身没有保存
 源文本中的等号 token；这种对象缺少 `relation_symbol` 时按 canonical `=` 处理。
-只有 adapter 显式携带了其他 relation symbol 时才校验并拒绝。
+adapter 显式携带 `=` 或 `==` 时同样按 equality 处理，其他 relation symbol 拒绝。
 
 ### 7.2 已知 operator
 
@@ -279,6 +279,10 @@ parser 需要先通过 DTO/adapter 提供上述结构。
 已知 operator 如果 arity、RHS、owner 或类型形状错误，直接产生 projection error，
 不能伪装成 residual。
 
+arity 以 `CompoundTerm.arguments` 的实际长度为准，不使用 `Operator.arity`。当前
+Core IR 中 `Operator.arity` 来自可选 catalog 签名，手工构造或尚未经过 checker 的
+operator 默认可能为 0，不能代表应用实参数量。
+
 ### 7.3 mapping
 
 | Core IR assertion | WorkflowGraph |
@@ -291,7 +295,15 @@ parser 需要先通过 DTO/adapter 提供上述结构。
 | `consumes(s, a) = True` | `ConsumesEdge(a, s)` |
 | `produces(s, a) = True` | `ProducesEdge(s, a)` |
 | `foreach_item(s, source) = item` | `ForeachEdge(source, s, item)` + local Artifact |
-| timeout/retry/resource | Step 字段或 policy |
+| `step_timeout(s) = n` | `StepNode(s).timeout_seconds = n` |
+| `max_attempts(s) = n` | `StepNode(s).max_attempts = n` |
+| `resource_requirement(s, resource) = n` | `StepNode(s).resources += (resource, n)` |
+| `max_concurrency(w) = n` | `WorkflowPolicy.max_concurrency = n` |
+| `workflow_timeout(w) = n` | `WorkflowPolicy.timeout_seconds = n` |
+
+其中所有 `n` 都从 `Constant.symbol` 显式解析为正整数；关系型 assertion 的 `True`
+也按明确的布尔常量解析，不能使用 Python truthiness。resource identity 使用
+`(step_id, resource_id)` 结构化键，不把 resource 或 amount 建成 Artifact。
 
 普通值 assertion，例如 `files = [file_a, file_b]`，不展开进静态图，留在 residual 供
 值求解或 runtime 使用。
