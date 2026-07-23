@@ -43,15 +43,6 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     first_workflow, second_workflow = workflow_file.workflows
     first_custom_assertion, second_custom_assertion = first_workflow.assertions
     conditional_assertion, arithmetic_assertion = second_workflow.assertions
-    assert all(
-        assertion.relation_symbol == "="
-        for assertion in (
-            first_custom_assertion,
-            second_custom_assertion,
-            conditional_assertion,
-            arithmetic_assertion,
-        )
-    )
 
     assert isinstance(first_custom_assertion.lhs, CompoundTerm)
     assert isinstance(second_custom_assertion.lhs, CompoundTerm)
@@ -82,18 +73,20 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     negated = conditional.condition.formula_left
     assert negated.connective == "NOT"
     assert negated.formula_right is None
-    assert isinstance(negated.formula_left, Assertion)
+    assert isinstance(negated.formula_left, ConnectiveFormula)
     not_equals = negated.formula_left
-    assert not_equals.relation_symbol == "!="
-    assert isinstance(not_equals.lhs, CompoundTerm)
-    assert not_equals.lhs.operator.name == "max_attempts"
-    assert not_equals.lhs.arguments[0] is review
-    assert isinstance(not_equals.rhs, Constant)
-    assert not_equals.rhs.symbol == "2"
+    assert not_equals.connective == "NOT"
+    assert not_equals.formula_right is None
+    assert isinstance(not_equals.formula_left, Assertion)
+    equality = not_equals.formula_left
+    assert isinstance(equality.lhs, CompoundTerm)
+    assert equality.lhs.operator.name == "max_attempts"
+    assert equality.lhs.arguments[0] is review
+    assert isinstance(equality.rhs, Constant)
+    assert equality.rhs.symbol == "2"
 
     assert isinstance(conditional.condition.formula_right, Assertion)
     numeric_equals = conditional.condition.formula_right
-    assert numeric_equals.relation_symbol == "="
     assert isinstance(numeric_equals.lhs, CompoundTerm)
     assert numeric_equals.lhs.operator.name == "max_turns"
     assert numeric_equals.lhs.arguments[0] is first_custom.arguments[0]
@@ -128,6 +121,58 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     nested_power = power.arguments[1]
     assert nested_power.operator.name == "^"
     assert [argument.symbol for argument in nested_power.arguments if isinstance(argument, Constant)] == ["2", "3"]
+
+
+def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
+    result = parse_workflow(
+        """
+        workflow comparisons {
+          compare(
+            if(a < b, a, b),
+            if(a <= b, a, b),
+            if(a > b, a, b),
+            if(a >= b, a, b),
+            if(a != b, a, b)
+          ) == true;
+        }
+        """
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    assertion = result.core_ir.workflows[0].assertions[0]
+    assert isinstance(assertion.lhs, CompoundTerm)
+    conditions = tuple(argument.condition for argument in assertion.lhs.arguments if isinstance(argument, IfTerm))
+    assert len(conditions) == 5
+
+    for condition, operator_name in zip(
+        conditions[:4],
+        (
+            "comparison_lt_op",
+            "comparison_lte_op",
+            "comparison_gt_op",
+            "comparison_gte_op",
+        ),
+        strict=True,
+    ):
+        assert isinstance(condition, Assertion)
+        assert isinstance(condition.lhs, CompoundTerm)
+        assert condition.lhs.operator.name == operator_name
+        assert [argument.symbol for argument in condition.lhs.arguments if isinstance(argument, Constant)] == [
+            "a",
+            "b",
+        ]
+        assert isinstance(condition.rhs, Constant)
+        assert condition.rhs.symbol == "true"
+
+    not_equal = conditions[-1]
+    assert isinstance(not_equal, ConnectiveFormula)
+    assert not_equal.connective == "NOT"
+    assert not_equal.formula_right is None
+    assert isinstance(not_equal.formula_left, Assertion)
+    assert isinstance(not_equal.formula_left.lhs, Constant)
+    assert isinstance(not_equal.formula_left.rhs, Constant)
+    assert (not_equal.formula_left.lhs.symbol, not_equal.formula_left.rhs.symbol) == ("a", "b")
 
 
 def test_duplicate_declarations_are_retained_but_first_declaration_owns_lookup() -> None:

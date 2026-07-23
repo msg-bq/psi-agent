@@ -17,7 +17,6 @@ from .core_ir import (
     IfTerm,
     ListTerm,
     Operator,
-    RelationSymbol,
     Term,
     Workflow,
     WorkflowFile,
@@ -69,6 +68,13 @@ class _CoreIrVisitor:
     concepts, constants, and operators preserves shared Core IR references.
     """
 
+    _COMPARISON_OPERATORS = {
+        "<": "comparison_lt_op",
+        "<=": "comparison_lte_op",
+        ">": "comparison_gt_op",
+        ">=": "comparison_gte_op",
+    }
+
     def __init__(self) -> None:
         self._concepts: dict[str, Concept] = {}
         self._constants: dict[str, Constant] = {}
@@ -113,13 +119,22 @@ class _CoreIrVisitor:
             )
         return self.visit_formula(context.formula(0))
 
-    def visit_comparison(self, context: Any) -> Assertion:
+    def visit_comparison(self, context: Any) -> Formula:
         terms = context.term()
-        relation_symbol: RelationSymbol = context.comparisonOp().getText()
+        lhs = self.visit_term(terms[0])
+        rhs = self.visit_term(terms[1])
+        symbol = context.comparisonOp().getText()
+        equality = Assertion(lhs=lhs, rhs=rhs)
+        if symbol == "=":
+            return equality
+        if symbol == "!=":
+            return ConnectiveFormula(formula_left=equality, connective="NOT")
         return Assertion(
-            lhs=self.visit_term(terms[0]),
-            rhs=self.visit_term(terms[1]),
-            relation_symbol=relation_symbol,
+            lhs=CompoundTerm(
+                operator=self._resolve_operator(self._COMPARISON_OPERATORS[symbol]),
+                arguments=(lhs, rhs),
+            ),
+            rhs=self._resolve_constant("true"),
         )
 
     def visit_term(self, context: Any) -> Term:
@@ -173,6 +188,9 @@ class _CoreIrVisitor:
 
     def visit_atomic_term(self, context: Any) -> Constant:
         symbol = self._normalize_constant(context.getText())
+        return self._resolve_constant(symbol)
+
+    def _resolve_constant(self, symbol: str) -> Constant:
         existing = self._constants.get(symbol)
         if existing is not None:
             return existing
@@ -207,10 +225,10 @@ class _CoreIrVisitor:
 def parse_workflow(source: str) -> ParseResult:
     """Parse syntax and lower it without performing static workflow checks.
 
-    Syntax failures are returned as parser diagnostics. Successful lowering
-    preserves assertion equality (``==``) separately from formula comparison
-    equality (``=``). Compilation and workflow execution are outside this
-    boundary.
+    Syntax failures are returned as parser diagnostics. Formula equality lowers
+    to an assertion, inequality to NOT over an assertion, and ordered
+    comparisons to KEDispatcher comparison operators asserted true. Compilation
+    and workflow execution are outside this boundary.
     """
 
     listener = _DiagnosticListener()
