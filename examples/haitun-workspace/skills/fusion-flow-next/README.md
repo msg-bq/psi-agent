@@ -7,14 +7,13 @@ the workspace skill entry point, so existing `.flow.ts` behavior is unchanged.
 ## Modules
 
 - `grammar/FusionFlow.g4`: the syntax grammar; ordinary preset/external-operator arity remains checker-owned.
-- `fusion_flow_next/contracts.py`: diagnostics and parse/check/generate phase results.
+- `fusion_flow_next/contracts.py`: diagnostics and parse/check phase results.
 - `fusion_flow_next/parser.py`: parser facade and Workflow Core IR output boundary.
-- `fusion_flow_next/checker.py`: static semantics and exact-lowering gate.
-- `fusion_flow_next/generator.py`: checked workflow to deterministic TypeScript boundary.
+- `fusion_flow_next/checker.py`: static semantics boundary.
 - `fusion_flow_next/planning.py`: planned-function syntax mapping boundary.
 
-The TypeScript compiler files remain during the stacked Python replacement and
-are removed only after their Python equivalents pass.
+The legacy Node compiler files remain during the stacked Python replacement
+and are removed in the final cleanup PR.
 
 ## Current scope and known gaps
 
@@ -26,15 +25,11 @@ The generated parser is still not committed or wired into `src/parser.ts`. The c
 
 The Core IR contains catalog-owned `Concept` and `Operator` references, typed constants, recursive compound terms, ordered list terms, assertions, and `NOT`/`AND`/`OR` formulas. `Workflow` is the only workflow-level class and stores one syntax-level block name with its assertions. Constants are carried by the terms that use them rather than duplicated in a document-level collection. The workflow does not redeclare concepts or operators.
 
-Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimization requests are intentionally absent because the reviewed workflow surface does not use them. Operator execution, concept registries and matching, validation, parsing, generation, and Haitun activation remain separate workstreams.
-
-| Item | Intended contract | Current gap | Required compiler behavior |
-| --- | --- | --- | --- |
-| `S01` | `input_workflow` and `output_workflow` declare external artifacts. | Current `flow.input` requires a default value, while `flow.output` writes a supplied runtime value; the declarations do not contain those values. | The checker reports an error with `designReference: "S01"` and sets `canGenerate` to false until an exact runtime mapping exists. |
+Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimization requests are intentionally absent because the reviewed workflow surface does not use them. Operator execution, concept registries and matching, validation, parsing, backend compilation, and Haitun activation remain separate workstreams.
 
 ## Activation boundary
 
-Do not add a `SKILL.md`, workspace tools, a prompt switch, or runner changes until the parser, checker, and generator have real implementations and runnable checks.
+Do not add a `SKILL.md`, workspace tools, a prompt switch, or runner changes until the parser, checker, and compiler have real implementations and runnable checks.
 
 Integrate in this order: generated parser -> real functions and checks -> inactive or opt-in Haitun checker tool -> prompt opt-in -> replace legacy only after migration is complete. Existing `fusion-flow` remains the source of truth until the final migration.
 
@@ -43,8 +38,8 @@ Integrate in this order: generated parser -> real functions and checks -> inacti
 1. **Core IR contract** is defined in `src/core-ir.ts`; keep it limited to the reviewed workflow subset.
 2. **Language contract** owns `grammar/FusionFlow.g4`; ordinary operator registration, arity, and types stay checker/catalog-owned.
 3. **Parser** owns `generated/` and `src/parser.ts`: reconcile the full file grammar with the current single-`Workflow` Core IR boundary, generate the parser, report syntax errors, and produce lossless Core IR for later stages.
-4. **Static checker** owns `src/checker.ts`: check workflow legality and reject constructs that cannot be lowered without changing meaning.
-5. **TypeScript generator** owns `src/generator.ts`: convert checked Workflow Core IR into deterministic TypeScript and refuse unsupported input.
+4. **Static checker** owns the Python checker: validate workflow legality and backend-independent constraints.
+5. **Compiler** owns the Python compiler template: lower checked Workflow Core IR through backend-specific hooks without selecting a target in the shared layer.
 6. **Planning warnings** owns `src/planning.ts`: check the functions listed by Haitun and warn when a required DSL syntax mapping is missing.
 7. **Haitun integration** updates existing prompt and tool entry points only after parsing and checks work: add the syntax-check tool and require planning before workflow generation.
 8. **Compatibility and migration** owns runnable checks and the activation gate: keep the existing `fusion-flow`, runner, and `.flow.ts` path unchanged until final migration.

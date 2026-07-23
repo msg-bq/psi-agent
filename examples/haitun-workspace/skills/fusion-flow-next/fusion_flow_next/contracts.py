@@ -36,10 +36,3 @@ class ParseResult:
 class CheckResult:
     core_ir: object
     diagnostics: tuple[Diagnostic, ...]
-    can_generate: bool
-
-
-@dataclass(frozen=True, slots=True)
-class GenerateResult:
-    code: str | None
-    diagnostics: tuple[Diagnostic, ...]
