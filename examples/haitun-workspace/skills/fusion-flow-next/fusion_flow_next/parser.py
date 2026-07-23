@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from antlr4 import CommonTokenStream, InputStream, Token
 
@@ -68,7 +68,7 @@ class _CoreIrVisitor:
     concepts, constants, and operators preserves shared Core IR references.
     """
 
-    _COMPARISON_OPERATORS = {
+    _COMPARISON_OPERATORS: ClassVar[dict[str, str]] = {
         "<": "comparison_lt_op",
         "<=": "comparison_lte_op",
         ">": "comparison_gt_op",
