@@ -14,7 +14,7 @@ or workspace tools, so existing `.flow.ts` behavior is unchanged.
 - `fusion_flow_next/core_ir.py`: immutable Workflow Core IR shared by compiler phases.
 - `fusion_flow_next/parser.py`: parser facade and Workflow Core IR output boundary.
 - `fusion_flow_next/checker.py`: static semantics boundary.
-- `fusion_flow_next/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned function against the syntax names actually available.
+- `fusion_flow_next/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
 - `src/core-ir.ts`: the existing Workflow Core IR classes shared by the Node/TypeScript compiler prototype.
 - `src/types.ts`: the existing source locations, diagnostics, and phase results.
 - `src/parser.ts`, `src/checker.ts`, `src/generator.ts`, and `src/planning.ts`: the existing Node/TypeScript compiler boundaries.
@@ -63,7 +63,7 @@ Commit only `FusionFlowLexer.py` and `FusionFlowParser.py`; the generated `.inte
 3. **Parser** owns `fusion_flow_next/generated/` and `fusion_flow_next/parser.py`: report syntax errors and produce lossless Core IR for later stages.
 4. **Static checker** owns the Python checker: validate workflow legality and backend-independent constraints.
 5. **Compiler** will own `fusion_flow_next/compiler.py`: lower checked Workflow Core IR through backend-specific hooks without selecting a target in the shared layer.
-6. **Planning warnings** owns `fusion_flow_next/planning.py`: after Haitun lists planned functions and before it authors the DSL, check their declared syntax mappings and warn about missing or unavailable names. This cannot detect functions that Haitun failed to list.
+6. **Planning warnings** owns `fusion_flow_next/planning.py`: after Haitun lists planned steps and before it authors the DSL, check their declared syntax mappings and warn about missing or unavailable names. Each item is already at `Step` granularity; this phase does not introduce a higher-level requirement model and cannot detect steps that Haitun failed to list.
 7. **Haitun integration** updates existing prompt and tool entry points only after parsing and checks work: add the syntax-check tool and require planning before workflow generation.
 8. **Compatibility and migration** owns runnable checks and the activation gate: keep the existing `fusion-flow`, runner, and `.flow.ts` path unchanged until final migration.
 

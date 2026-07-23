@@ -24,10 +24,10 @@ from .core_ir import (
 )
 from .parser import parse_workflow
 from .planning import (
-    PlannedFunction,
+    PlannedStep,
     PlannedSyntax,
     PlanningCheckResult,
-    check_planned_functions,
+    check_planned_steps,
 )
 
 __all__ = [
@@ -45,7 +45,7 @@ __all__ = [
     "LogicalConnective",
     "Operator",
     "ParseResult",
-    "PlannedFunction",
+    "PlannedStep",
     "PlannedSyntax",
     "PlanningCheckResult",
     "SourcePosition",
@@ -53,7 +53,7 @@ __all__ = [
     "Term",
     "Workflow",
     "WorkflowFile",
-    "check_planned_functions",
+    "check_planned_steps",
     "check_workflow",
     "parse_workflow",
 ]
