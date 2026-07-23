@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fusion_flow_next.core_ir import (
     Assertion,
     CompoundTerm,
@@ -38,6 +39,8 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     assert [workflow.name for workflow in workflow_file.workflows] == ["first", "second"]
 
     review, draft, backup = workflow_file.constants
+    assert [concept.name for concept in review.belong_concepts] == ["Step", "Agent"]
+    assert [concept.name for concept in draft.belong_concepts] == ["Artifact"]
     assert review.belong_concepts[1] is backup.belong_concepts[0]
 
     first_workflow, second_workflow = workflow_file.workflows
@@ -58,8 +61,10 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
 
     assert isinstance(first_custom_assertion.rhs, Constant)
     assert isinstance(second_custom_assertion.rhs, Constant)
-    assert first_custom_assertion.rhs.symbol == "true"
-    assert second_custom_assertion.rhs.symbol == "false"
+    assert first_custom_assertion.rhs.symbol == "True"
+    assert second_custom_assertion.rhs.symbol == "False"
+    assert [concept.name for concept in first_custom_assertion.rhs.belong_concepts] == ["Bool"]
+    assert [concept.name for concept in second_custom_assertion.rhs.belong_concepts] == ["Bool"]
     assert arithmetic_assertion.rhs is first_custom_assertion.rhs
 
     assert isinstance(conditional_assertion.lhs, CompoundTerm)
@@ -84,6 +89,7 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     assert equality.lhs.arguments[0] is review
     assert isinstance(equality.rhs, Constant)
     assert equality.rhs.symbol == "2"
+    assert [concept.name for concept in equality.rhs.belong_concepts] == ["ComplexNumber"]
 
     assert isinstance(conditional.condition.formula_right, Assertion)
     numeric_equals = conditional.condition.formula_right
@@ -92,6 +98,7 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     assert numeric_equals.lhs.arguments[0] is first_custom.arguments[0]
     assert isinstance(numeric_equals.rhs, Constant)
     assert numeric_equals.rhs.symbol == "8"
+    assert [concept.name for concept in numeric_equals.rhs.belong_concepts] == ["ComplexNumber"]
     assert isinstance(conditional.when_true, Constant)
     assert isinstance(conditional.when_false, Constant)
     assert conditional.when_true.symbol == "writer"
@@ -163,7 +170,8 @@ def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
             "b",
         ]
         assert isinstance(condition.rhs, Constant)
-        assert condition.rhs.symbol == "true"
+        assert condition.rhs.symbol == "True"
+        assert [concept.name for concept in condition.rhs.belong_concepts] == ["Bool"]
 
     not_equal = conditions[-1]
     assert isinstance(not_equal, ConnectiveFormula)
@@ -175,23 +183,79 @@ def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
     assert (not_equal.formula_left.lhs.symbol, not_equal.formula_left.rhs.symbol) == ("a", "b")
 
 
-def test_duplicate_declarations_are_retained_but_first_declaration_owns_lookup() -> None:
+def test_literals_use_gk_constant_symbols_and_concepts() -> None:
+    result = parse_workflow(
+        """
+        workflow literals {
+          custom(002, 2.50, TRUE, false, name, "quoted") == true;
+        }
+        """
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    assertion = result.core_ir.workflows[0].assertions[0]
+    assert isinstance(assertion.lhs, CompoundTerm)
+    integer, decimal, true, false, name, quoted = assertion.lhs.arguments
+    assert isinstance(integer, Constant)
+    assert isinstance(decimal, Constant)
+    assert isinstance(true, Constant)
+    assert isinstance(false, Constant)
+    assert isinstance(name, Constant)
+    assert isinstance(quoted, Constant)
+    assert (integer.symbol, decimal.symbol, true.symbol, false.symbol) == ("2", "2.5", "True", "False")
+    assert [concept.name for concept in integer.belong_concepts] == ["ComplexNumber"]
+    assert [concept.name for concept in decimal.belong_concepts] == ["ComplexNumber"]
+    assert [concept.name for concept in true.belong_concepts] == ["Bool"]
+    assert [concept.name for concept in false.belong_concepts] == ["Bool"]
+    assert [concept.name for concept in name.belong_concepts] == ["Any"]
+    assert [concept.name for concept in quoted.belong_concepts] == ["Any"]
+    assert assertion.rhs is true
+
+
+def test_duplicate_declarations_reuse_identity() -> None:
     result = parse_workflow(
         """
         const item: First;
-        const item: Second;
+        const item: First;
         workflow duplicate { custom(item) == true; }
         """
     )
 
     assert result.diagnostics == ()
     assert isinstance(result.core_ir, WorkflowFile)
-    first, second = result.core_ir.constants
-    assert [first.symbol, second.symbol] == ["item", "item"]
-    assert first is not second
+    (item,) = result.core_ir.constants
     call = result.core_ir.workflows[0].assertions[0].lhs
     assert isinstance(call, CompoundTerm)
-    assert call.arguments[0] is first
+    assert call.arguments[0] is item
+
+
+def test_numeric_declaration_reuses_identity_and_builtin_concept() -> None:
+    result = parse_workflow(
+        """
+        const 2: Count;
+        workflow numeric { custom(2) == true; }
+        """
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    (number,) = result.core_ir.constants
+    call = result.core_ir.workflows[0].assertions[0].lhs
+    assert isinstance(call, CompoundTerm)
+    assert call.arguments[0] is number
+    assert [concept.name for concept in number.belong_concepts] == ["Count", "ComplexNumber"]
+
+
+def test_conflicting_constant_declarations_are_rejected() -> None:
+    with pytest.raises(ValueError, match="Conflicting FusionFlow constant declaration for 'item'"):
+        parse_workflow(
+            """
+            const item: First;
+            const item: Second;
+            workflow duplicate { custom(item) == true; }
+            """
+        )
 
 
 def test_syntax_errors_return_diagnostics_without_core_ir() -> None:

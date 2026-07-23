@@ -81,17 +81,30 @@ class _CoreIrVisitor:
         self._operators: dict[str, Operator] = {}
 
     def visit_workflow_file(self, context: Any) -> WorkflowFile:
-        constants = tuple(self.visit_const_decl(declaration) for declaration in context.constDecl())
+        declared_symbols = tuple(
+            dict.fromkeys(self.visit_const_decl(declaration).symbol for declaration in context.constDecl())
+        )
         workflows = tuple(self.visit_workflow_decl(workflow) for workflow in context.workflowDecl())
+        constants = tuple(self._constants[symbol] for symbol in declared_symbols)
         return WorkflowFile(constants=constants, workflows=workflows)
 
     def visit_const_decl(self, context: Any) -> Constant:
-        symbol = self._normalize_constant(context.constantName().getText())
+        symbol = self._strip_quotes(context.constantName().getText())
         concepts = tuple(
-            self._resolve_concept(concept.getText()) for concept in context.conceptNameList().conceptName()
+            dict.fromkeys(
+                self._resolve_concept(concept.getText()) for concept in context.conceptNameList().conceptName()
+            )
         )
+        existing = self._constants.get(symbol)
+        if existing is not None:
+            if set(existing.belong_concepts) == set(concepts):
+                return existing
+            raise ValueError(
+                f"Conflicting FusionFlow constant declaration for {symbol!r}: "
+                f"{existing.belong_concepts!r} versus {concepts!r}."
+            )
         constant = Constant(symbol=symbol, belong_concepts=concepts)
-        self._constants.setdefault(symbol, constant)
+        self._constants[symbol] = constant
         return constant
 
     def visit_workflow_decl(self, context: Any) -> Workflow:
@@ -128,6 +141,7 @@ class _CoreIrVisitor:
         if symbol == "=":
             return equality
         if symbol == "!=":
+            # HACK: FusionFlow intentionally keeps != as NOT equality; gk uses comparison_ne_op.
             return ConnectiveFormula(formula_left=equality, connective="NOT")
         return Assertion(
             lhs=CompoundTerm(
@@ -187,14 +201,33 @@ class _CoreIrVisitor:
         return ListTerm(items=items)
 
     def visit_atomic_term(self, context: Any) -> Constant:
-        symbol = self._normalize_constant(context.getText())
-        return self._resolve_constant(symbol)
+        return self._resolve_constant(context.getText())
 
-    def _resolve_constant(self, symbol: str) -> Constant:
+    def _resolve_constant(self, raw_text: str) -> Constant:
+        is_numeric = raw_text.replace(".", "", 1).isdigit()
+        if is_numeric:
+            value = float(raw_text) if "." in raw_text else int(raw_text)
+            symbol = str(value)
+            concepts = (self._resolve_concept("ComplexNumber"),)
+        elif not (raw_text.startswith('"') and raw_text.endswith('"')) and raw_text.lower() in {"true", "false"}:
+            symbol = str(raw_text.lower() == "true")
+            concepts = (self._resolve_concept("Bool"),)
+        else:
+            symbol = self._strip_quotes(raw_text)
+            concepts = (self._resolve_concept("Any"),)
+
         existing = self._constants.get(symbol)
         if existing is not None:
+            if not is_numeric:
+                return existing
+            merged_concepts = tuple(dict.fromkeys((*existing.belong_concepts, *concepts)))
+            if merged_concepts == existing.belong_concepts:
+                return existing
+            existing = Constant(symbol=symbol, belong_concepts=merged_concepts)
+            self._constants[symbol] = existing
             return existing
-        constant = Constant(symbol=symbol)
+
+        constant = Constant(symbol=symbol, belong_concepts=concepts)
         self._constants[symbol] = constant
         return constant
 
@@ -213,13 +246,10 @@ class _CoreIrVisitor:
         return operator
 
     @staticmethod
-    def _normalize_constant(symbol: str) -> str:
-        """Unquote string constants and canonicalize boolean literals."""
-
+    def _strip_quotes(symbol: str) -> str:
         if symbol.startswith('"') and symbol.endswith('"'):
             return symbol[1:-1]
-        normalized = symbol.lower()
-        return normalized if normalized in {"true", "false"} else symbol
+        return symbol
 
 
 def parse_workflow(source: str) -> ParseResult:
