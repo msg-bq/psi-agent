@@ -230,7 +230,7 @@ def test_duplicate_declarations_reuse_identity() -> None:
     assert call.arguments[0] is item
 
 
-def test_numeric_declaration_reuses_identity_and_builtin_concept() -> None:
+def test_numeric_literal_does_not_alias_numeric_declaration() -> None:
     result = parse_workflow(
         """
         const 2: Count;
@@ -243,8 +243,38 @@ def test_numeric_declaration_reuses_identity_and_builtin_concept() -> None:
     (number,) = result.core_ir.constants
     call = result.core_ir.workflows[0].assertions[0].lhs
     assert isinstance(call, CompoundTerm)
-    assert call.arguments[0] is number
-    assert [concept.name for concept in number.belong_concepts] == ["Count", "ComplexNumber"]
+    literal = call.arguments[0]
+    assert isinstance(literal, Constant)
+    assert literal is not number
+    assert [concept.name for concept in number.belong_concepts] == ["Count"]
+    assert [concept.name for concept in literal.belong_concepts] == ["ComplexNumber"]
+
+
+def test_quoted_constants_do_not_alias_boolean_or_numeric_literals() -> None:
+    result = parse_workflow(
+        """
+        const "true": Artifact;
+        const "1": Artifact;
+        workflow lexical_types { custom("true", true, "1", 1) == true; }
+        """
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    quoted_true, quoted_one = result.core_ir.constants
+    call = result.core_ir.workflows[0].assertions[0].lhs
+    assert isinstance(call, CompoundTerm)
+    parsed_quoted_true, boolean_true, parsed_quoted_one, numeric_one = call.arguments
+    assert parsed_quoted_true is quoted_true
+    assert parsed_quoted_one is quoted_one
+    assert isinstance(boolean_true, Constant)
+    assert isinstance(numeric_one, Constant)
+    assert boolean_true is not quoted_true
+    assert numeric_one is not quoted_one
+    assert [concept.name for concept in quoted_true.belong_concepts] == ["Artifact"]
+    assert [concept.name for concept in quoted_one.belong_concepts] == ["Artifact"]
+    assert [concept.name for concept in boolean_true.belong_concepts] == ["Bool"]
+    assert [concept.name for concept in numeric_one.belong_concepts] == ["ComplexNumber"]
 
 
 def test_conflicting_constant_declarations_are_rejected() -> None:

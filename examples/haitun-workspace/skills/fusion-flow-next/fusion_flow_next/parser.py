@@ -78,6 +78,7 @@ class _CoreIrVisitor:
     def __init__(self) -> None:
         self._concepts: dict[str, Concept] = {}
         self._constants: dict[str, Constant] = {}
+        self._boolean_constants: dict[bool, Constant] = {}
         self._operators: dict[str, Operator] = {}
 
     def visit_workflow_file(self, context: Any) -> WorkflowFile:
@@ -148,7 +149,7 @@ class _CoreIrVisitor:
                 operator=self._resolve_operator(self._COMPARISON_OPERATORS[symbol]),
                 arguments=(lhs, rhs),
             ),
-            rhs=self._resolve_constant("true"),
+            rhs=self._boolean_constant("true"),
         )
 
     def visit_term(self, context: Any) -> Term:
@@ -201,34 +202,32 @@ class _CoreIrVisitor:
         return ListTerm(items=items)
 
     def visit_atomic_term(self, context: Any) -> Constant:
-        return self._resolve_constant(context.getText())
+        boolean_literal = context.booleanLiteral()
+        if boolean_literal is not None:
+            return self._boolean_constant(boolean_literal.getText())
+        return self._resolve_constant(context.constantName().getText())
 
     def _resolve_constant(self, raw_text: str) -> Constant:
         is_numeric = raw_text.replace(".", "", 1).isdigit()
         if is_numeric:
             value = float(raw_text) if "." in raw_text else int(raw_text)
-            symbol = str(value)
-            concepts = (self._resolve_concept("ComplexNumber"),)
-        elif not (raw_text.startswith('"') and raw_text.endswith('"')) and raw_text.lower() in {"true", "false"}:
-            symbol = str(raw_text.lower() == "true")
-            concepts = (self._resolve_concept("Bool"),)
-        else:
-            symbol = self._strip_quotes(raw_text)
-            concepts = (self._resolve_concept("Any"),)
+            return Constant(symbol=str(value), belong_concepts=(self._resolve_concept("ComplexNumber"),))
 
+        symbol = self._strip_quotes(raw_text)
         existing = self._constants.get(symbol)
         if existing is not None:
-            if not is_numeric:
-                return existing
-            merged_concepts = tuple(dict.fromkeys((*existing.belong_concepts, *concepts)))
-            if merged_concepts == existing.belong_concepts:
-                return existing
-            existing = Constant(symbol=symbol, belong_concepts=merged_concepts)
-            self._constants[symbol] = existing
             return existing
 
-        constant = Constant(symbol=symbol, belong_concepts=concepts)
+        constant = Constant(symbol=symbol, belong_concepts=(self._resolve_concept("Any"),))
         self._constants[symbol] = constant
+        return constant
+
+    def _boolean_constant(self, raw_text: str) -> Constant:
+        value = raw_text.lower() == "true"
+        constant = self._boolean_constants.get(value)
+        if constant is None:
+            constant = Constant(symbol=str(value), belong_concepts=(self._resolve_concept("Bool"),))
+            self._boolean_constants[value] = constant
         return constant
 
     def _resolve_concept(self, name: str) -> Concept:
