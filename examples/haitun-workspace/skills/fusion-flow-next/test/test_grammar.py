@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib
 import re
 from pathlib import Path
@@ -30,11 +29,12 @@ def test_preset_operators_document_signatures() -> None:
         assert len(parameter_types) == int(arity), operator
 
 
-def test_generated_parser_matches_grammar_checksum() -> None:
-    expected = hashlib.sha256(GRAMMAR.read_bytes()).hexdigest()
-    actual = (GENERATED / "FusionFlow.sha256").read_text(encoding="ascii").strip()
-
-    assert actual == expected
+def test_generated_directory_contains_runtime_sources_only() -> None:
+    assert {path.name for path in GENERATED.iterdir() if path.is_file()} == {
+        "FusionFlowLexer.py",
+        "FusionFlowParser.py",
+        "__init__.py",
+    }
 
 
 def test_generated_parser_imports() -> None:

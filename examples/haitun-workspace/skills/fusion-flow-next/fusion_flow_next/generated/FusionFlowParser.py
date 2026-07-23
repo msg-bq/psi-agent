@@ -261,12 +261,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_workflowFile
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitWorkflowFile" ):
-                return visitor.visitWorkflowFile(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -342,12 +336,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_workflowDecl
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitWorkflowDecl" ):
-                return visitor.visitWorkflowDecl(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -399,12 +387,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_workflowName
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitWorkflowName" ):
-                return visitor.visitWorkflowName(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -441,12 +423,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_workflowItem
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitWorkflowItem" ):
-                return visitor.visitWorkflowItem(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -493,12 +469,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_constDecl
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitConstDecl" ):
-                return visitor.visitConstDecl(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -548,12 +518,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_conceptNameList
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitConceptNameList" ):
-                return visitor.visitConceptNameList(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -607,12 +571,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_assertion
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitAssertion" ):
-                return visitor.visitAssertion(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -675,12 +633,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_formula
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitFormula" ):
-                return visitor.visitFormula(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -793,12 +745,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_comparison
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitComparison" ):
-                return visitor.visitComparison(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -850,12 +796,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_comparisonOp
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitComparisonOp" ):
-                return visitor.visitComparisonOp(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -946,12 +886,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_term
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitTerm" ):
-                return visitor.visitTerm(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -1139,12 +1073,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_ifExpression
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitIfExpression" ):
-                return visitor.visitIfExpression(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1202,12 +1130,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_termList
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitTermList" ):
-                return visitor.visitTermList(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1261,12 +1183,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_listLiteral
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitListLiteral" ):
-                return visitor.visitListLiteral(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1316,12 +1232,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_atomicTerm
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitAtomicTerm" ):
-                return visitor.visitAtomicTerm(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1368,12 +1278,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_identifier
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitIdentifier" ):
-                return visitor.visitIdentifier(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1406,12 +1310,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_conceptName
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitConceptName" ):
-                return visitor.visitConceptName(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -1449,12 +1347,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_operatorName
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitOperatorName" ):
-                return visitor.visitOperatorName(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -1515,12 +1407,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_workflowBuiltinOperator
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitWorkflowBuiltinOperator" ):
-                return visitor.visitWorkflowBuiltinOperator(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1575,12 +1461,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_workflowOwnerOperator
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitWorkflowOwnerOperator" ):
-                return visitor.visitWorkflowOwnerOperator(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1617,12 +1497,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_stepOwnerOperator
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitStepOwnerOperator" ):
-                return visitor.visitStepOwnerOperator(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -1661,12 +1535,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_dataResourceOperator
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitDataResourceOperator" ):
-                return visitor.visitDataResourceOperator(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1703,12 +1571,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_agentOwnerOperator
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitAgentOwnerOperator" ):
-                return visitor.visitAgentOwnerOperator(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
@@ -1755,12 +1617,6 @@ class FusionFlowParser ( Parser ):
         def getRuleIndex(self):
             return FusionFlowParser.RULE_constantName
 
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitConstantName" ):
-                return visitor.visitConstantName(self)
-            else:
-                return visitor.visitChildren(self)
-
 
 
 
@@ -1802,12 +1658,6 @@ class FusionFlowParser ( Parser ):
 
         def getRuleIndex(self):
             return FusionFlowParser.RULE_booleanLiteral
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitBooleanLiteral" ):
-                return visitor.visitBooleanLiteral(self)
-            else:
-                return visitor.visitChildren(self)
 
 
 
