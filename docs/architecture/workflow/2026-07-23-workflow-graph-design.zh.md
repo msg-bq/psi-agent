@@ -1,6 +1,6 @@
 # Workflow Graph 初版设计：允许有环的声明式 Step–Artifact 图
 
-> 状态：待评审
+> 状态：已评审；2026-07-23 补充确认 Executor 包含 Human、Agent、Program
 > 日期：2026-07-23
 > 目标 PR：独立于 FusionFlow Python 运行时 PR
 > 目标包：`src/psi_agent/workflow_graph/`
@@ -118,14 +118,17 @@ StepNode
 合同：
 
 - 每个被引用 Step 必须恰好有一个 `step_name`；
-- 每个可执行 Step 必须恰好有一个 `step_executor`；
+- 每个可分派 Step 必须恰好有一个 `step_executor`；
 - `step_instruction` 第一版允许缺省；
 - `max_attempts >= 1`，含第一次执行；
 - timeout 和 resource amount 为正整数；
 - resources 以 `(step_id, resource_id)` 识别，不使用可碰撞的字符串拼接 key。
 
-`executor_id` 仍是 Core IR identity，不把 Python callable 塞进静态图。未来 executor
-通过外部 operation catalog 解析它。
+`executor_id` 仍是 Core IR 中的具体 constant identity，不把 Python callable、命令或
+人工审批配置塞进静态图。上游已确认 `Executor` 的三个直接子 concept 是 `Human`、
+`Agent`、`Program`；每个 executor identity 必须且只能属于其中一类。Graph 不增加
+`ExecutorKind` 或 `executor_kind` 字段，避免与 Core IR concept 类型形成第二份真源。
+未来 dispatcher 通过原始 Core IR/catalog 解析 identity 的类型与配置。
 
 ### 5.3 ArtifactNode
 
@@ -238,11 +241,16 @@ Artifact A -> Step S1 -> Artifact B -> Step S2 -> Artifact A
 - Assertion：`lhs`、`rhs`，可选 `relation_symbol`；
 - CompoundTerm：`operator.name`、`arguments`；
 - Constant：`symbol`；
+- Constant 可选类型信息：`belong_concepts[*].name`；
 - ListTerm：`items` 或 `elements`；
 - syntax-review local set carrier：`members`。
 
 它不解析 BNF 文本，也不直接宣称支持 TypeScript class instance。TypeScript 或生成
 parser 需要先通过 DTO/adapter 提供上述结构。
+
+当 `step_executor` RHS 携带 `belong_concepts` 时，projector 校验它在 `Human`、
+`Agent`、`Program` 中恰好命中一类；结构适配器未携带 catalog 类型时只能保留
+`executor_id`，完整类型校验仍属于上游 checker。Graph 自身不复制该分类。
 
 当前 Python `fusion_flow_next.core_ir.Assertion` 已经表示 equality，本身没有保存
 源文本中的等号 token；这种对象缺少 `relation_symbol` 时按 canonical `=` 处理。
@@ -315,11 +323,13 @@ residual 可能含任意上游对象，因此 `GraphProjection` 本身不是持�
 
 - List 项展开为普通边或 I/O 标记；
 - 重复项报错，避免静默丢 multiplicity；
-- 项的顺序在 WorkflowGraph 中被擦除；
+- 该 List 只是批量书写关系的载体，项的源码顺序没有执行含义；
+- WorkflowGraph 保留全部依赖关系，但不保留载体的源码顺序；
 - 因此这不是从 repository Core IR 到 Graph 的无损 round-trip；
 - 原始 Core IR 必须由调用者继续保存。
 
-不得再用“List 无重复时无损”描述它，因为 `[a, b]` 与 `[b, a]` 会投影为同一组关系。
+这里的“非无损”仅指无法从 Graph 还原 `[a, b]` 还是 `[b, a]`，不表示丢失执行依赖。
+不得再用“List 无重复时无损”描述它，因为两种写法会投影为同一组关系。
 
 ## 9. 结构校验
 
@@ -390,8 +400,12 @@ failure、结果聚合与提交由未来 runtime 负责。
 
 - 图的普通依赖已决定 all-ready、fan-out 和隐式并行；
 - planner 应按图决定 frontier；
-- executor 通过外部 `operations` mapping 解析 `executor_id`；
-- atomic operation 可以内部调用 `flow.session/call/exec`；
+- dispatcher 通过原始 Core IR/catalog 判断 `executor_id` 属于 Human、Agent 还是
+  Program；
+- Agent handler 可以内部调用 `flow.session`，Program handler 可以调用
+  `flow.call/exec` 或其他程序适配器；
+- Human handler 必须持久保存未完成任务、释放 worker，并在收到人类结果后提交
+  produces Artifact；
 - 图的控制语义未闭合时，不从普通数据边猜测 `if`、first/any 或 while。
 
 ## 13. 测试策略

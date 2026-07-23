@@ -83,6 +83,7 @@ activation/version，它遇到无 seed 环会永远没有 ready Step，遇到 se
 ### 3.2 WorkflowGraph 拥有什么
 
 - Step/Artifact identity；
+- Step 到具体 Executor identity 的映射，但不复制 Executor concept 类型；
 - consumes/produces/foreach 关系；
 - 少量已闭合的 static policies；
 - 为依赖分析准备的规范化视图。
@@ -137,8 +138,9 @@ activation/version，它遇到无 seed 环会永远没有 ready Step，遇到 se
 - 有 input/output/consumes/produces 四种 multi；
 - RHS 是有序、可重复的 List。
 
-Graph 中的边是关系集合，无法保存 List order。初版若兼容 repository dialect，只能
-显式做 order-erasing projection，并拒绝重复。若未来 List 顺序是业务语义，应：
+Graph 中的边是关系集合。当前 multi List 只作为批量关系载体，源码顺序没有执行
+含义；初版兼容 repository dialect 时显式擦除载体顺序并拒绝重复，但会保留全部
+依赖关系。若未来某个新 construct 的 List 顺序成为业务语义，应：
 
 - 保留在 Core IR；
 - 或新增不同的 ordered construct；
@@ -394,31 +396,49 @@ ForeachEdge 已足够，不应为了未来统一而先包一层空 Region。
 planner 不能“看到环就调用 `flow.loop_while`”。只有显式 structured-loop contract
 才能 lower 成 loop primitive。
 
-## 10. Executor、Agent config 与 residual
+## 10. Executor、Agent config、Human task 与 residual
 
-`StepNode.executor_id` 只指向 identity。真正执行至少还需要外部映射：
+`StepNode.executor_id` 只指向具体 identity。它不是 Python 函数 identity 的同义词。
+原始 Core IR 已确认 `Executor` 的三个直接子 concept：
 
 ```text
-values[identity] -> Core IR value
-operations[executor_id] -> async operation
+Executor
+├── Human
+├── Agent
+└── Program
+```
+
+不在 Graph 增加 `executor_kind`；真正分派至少还需要原始 Core IR/catalog：
+
+```text
+executor_concept[executor_id] -> Human | Agent | Program
+executor_config[executor_id] -> catalog-owned configuration
+handlers[concept] -> runtime dispatcher
 ```
 
 Agent 的 model、engine、api_base、tools、instruction、system prompt、max_turns 等
 并不都属于 Graph topology。它们应继续留在 Core IR/catalog/residual，由 future
 executor adapter 解析。
 
+Program 也不等于一条 shell 字符串；它可以指向脚本、可执行程序或其他程序适配器。
+Human Step 不是普通 Boolean 审批事件：它可以消费和产生任意 Artifact。future
+runtime 必须持久化未完成的人类任务、释放 worker，并在人类提交结果后完成 Step；
+等待期间的状态、correlation、权限、超时和重复提交处理都不进入本次静态图。
+
 当前 unresolved：
 
 - `agent_config` 默认值和多配置；
 - system prompt 的声明式表示；
 - Program executor 的 operation binding；
+- Human executor 的 assignee/pool、通知、认领、权限、correlation 和提交协议；
 - context schema；
 - tool authorization；
 - workspace/runDir；
 - foreach/retry 是否共享 Agent state；
 - session identity/resume。
 
-Graph PR 不增加 SessionNode。`flow.session` 是 runtime invocation，不是静态 Step。
+Graph PR 不增加 SessionNode、HumanTaskNode 或 ProgramNode。三类执行者都复用普通
+Step，差异只由 dispatcher 根据 executor identity 的 Core IR concept 决定。
 
 ## 11. residual 如何持久化和重新组合
 
@@ -513,7 +533,7 @@ Python 运行时 PR：
 2. 是否接受初版“cycle 可保存，但尚不可执行”的边界？
 3. 是否接受运行时把 input+producer 视为未闭合反馈语义，而模型先允许保存？
 4. Artifact 是否现在就需要 Concept/type reference？
-5. 是否保留 repository List-multi 的显式有损关系投影，还是首版只支持评审 dialect？
+5. 是否保留 repository List-multi 的显式顺序擦除关系投影，还是首版只支持评审 dialect？
 6. 是否确认一个普通 Artifact 初版只允许一个 producer？
 7. foreach 多输出是否应全部按 index 分别聚合为 List？
 8. foreach 单 slot 失败时是否坚持 all-or-nothing？
