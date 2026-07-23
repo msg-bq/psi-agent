@@ -40,7 +40,6 @@ class _RecordingCompiler(CoreIRCompiler):
     def _compile_assertion(self, assertion: Assertion) -> object:
         return (
             "assertion",
-            assertion.relation_symbol,
             self._compile_term(assertion.lhs),
             self._compile_term(assertion.rhs),
         )
@@ -75,7 +74,7 @@ class _RecordingCompiler(CoreIRCompiler):
 def test_core_ir_compiler_traverses_workflow_file_through_backend_hooks() -> None:
     first = Constant("first")
     second = Constant("second")
-    condition = ConnectiveFormula(Assertion(first, second, "!="), "NOT")
+    condition = ConnectiveFormula(Assertion(first, second), "NOT")
     result = IfTerm(
         condition=condition,
         when_true=CompoundTerm(operator=Operator("+"), arguments=(first, second)),
@@ -101,14 +100,12 @@ def test_core_ir_compiler_traverses_workflow_file_through_backend_hooks() -> Non
                 (
                     (
                         "assertion",
-                        "=",
                         (
                             "if",
                             (
                                 "NOT",
                                 (
                                     "assertion",
-                                    "!=",
                                     ("constant", "first"),
                                     ("constant", "second"),
                                 ),

@@ -8,7 +8,7 @@ or workspace tools, so existing `.flow.ts` behavior is unchanged.
 ## Modules
 
 - `grammar/FusionFlow.g4`: the syntax grammar; ordinary preset/external-operator arity remains checker-owned.
-- `test/grammar-contract.mjs`: preset-operator signature-comment contract check for the grammar.
+- `test/test_grammar.py`: generated-parser and preset-signature contract checks.
 - `fusion_flow_next/generated/`: committed ANTLR 4.13.2 Python lexer and parser generated from the grammar.
 - `fusion_flow_next/contracts.py`: diagnostics and parse/check phase results.
 - `fusion_flow_next/core_ir.py`: immutable Workflow Core IR shared by compiler phases.
