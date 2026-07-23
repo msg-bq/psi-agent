@@ -26,6 +26,7 @@ def test_workflow_core_ir_contract() -> None:
     workflow_file = WorkflowFile((item,), (workflow,))
 
     assert operator.arity == 1
+    assert not hasattr(assertion, "relation_symbol")
     assert workflow_file.workflows[0].assertions[0].lhs is conditional
 
 

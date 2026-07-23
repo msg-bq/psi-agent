@@ -51,11 +51,10 @@ class ListTerm:
 
 @dataclass(frozen=True, slots=True)
 class Assertion:
-    """Atomic relation between two terms."""
+    """Atomic equality between two terms."""
 
     lhs: Term
     rhs: Term
-    relation_symbol: RelationSymbol = "="
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +97,6 @@ class WorkflowFile:
     workflows: tuple[Workflow, ...]
 
 
-type RelationSymbol = Literal["=", "!=", "<", "<=", ">", ">="]
 type LogicalConnective = Literal["NOT", "AND", "OR"]
 type Term = Constant | CompoundTerm | ListTerm | IfTerm
 type Formula = Assertion | ConnectiveFormula
