@@ -19,6 +19,9 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
         const review: Step, Agent;
         const "draft": Artifact;
         const backup: Agent;
+        const agent: Agent;
+        const writer: Agent;
+        const human: Agent;
 
         workflow first {
           custom(agent, review) == TRUE;
@@ -35,10 +38,17 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     assert result.diagnostics == ()
     assert isinstance(result.core_ir, WorkflowFile)
     workflow_file = result.core_ir
-    assert [constant.symbol for constant in workflow_file.constants] == ["review", "draft", "backup"]
+    assert [constant.symbol for constant in workflow_file.constants] == [
+        "review",
+        "draft",
+        "backup",
+        "agent",
+        "writer",
+        "human",
+    ]
     assert [workflow.name for workflow in workflow_file.workflows] == ["first", "second"]
 
-    review, draft, backup = workflow_file.constants
+    review, draft, backup, agent, writer, human = workflow_file.constants
     assert [concept.name for concept in review.belong_concepts] == ["Step", "Agent"]
     assert [concept.name for concept in draft.belong_concepts] == ["Artifact"]
     assert review.belong_concepts[1] is backup.belong_concepts[0]
@@ -56,6 +66,7 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     assert first_custom.operator.name == "custom"
     assert first_custom.operator is second_custom.operator
     assert first_custom.operator is arithmetic_call.operator
+    assert first_custom.arguments[0] is agent
     assert first_custom.arguments[1] is review
     assert second_custom.arguments[0] is review
 
@@ -101,8 +112,8 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     assert [concept.name for concept in numeric_equals.rhs.belong_concepts] == ["ComplexNumber"]
     assert isinstance(conditional.when_true, Constant)
     assert isinstance(conditional.when_false, Constant)
-    assert conditional.when_true.symbol == "writer"
-    assert conditional.when_false.symbol == "human"
+    assert conditional.when_true is writer
+    assert conditional.when_false is human
 
     sum_term, list_term, negation = arithmetic_call.arguments
     assert isinstance(sum_term, CompoundTerm)
@@ -133,6 +144,8 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
 def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
     result = parse_workflow(
         """
+        const a: Comparable;
+        const b: Comparable;
         workflow comparisons {
           compare(
             if(a < b, a, b),
@@ -186,6 +199,8 @@ def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
 def test_literals_use_gk_constant_symbols_and_concepts() -> None:
     result = parse_workflow(
         """
+        const name: Name;
+        const "quoted": Name;
         workflow literals {
           custom(002, 2.50, TRUE, false, name, "quoted") == true;
         }
@@ -194,6 +209,7 @@ def test_literals_use_gk_constant_symbols_and_concepts() -> None:
 
     assert result.diagnostics == ()
     assert isinstance(result.core_ir, WorkflowFile)
+    declared_name, declared_quoted = result.core_ir.constants
     assertion = result.core_ir.workflows[0].assertions[0]
     assert isinstance(assertion.lhs, CompoundTerm)
     integer, decimal, true, false, name, quoted = assertion.lhs.arguments
@@ -208,8 +224,10 @@ def test_literals_use_gk_constant_symbols_and_concepts() -> None:
     assert [concept.name for concept in decimal.belong_concepts] == ["ComplexNumber"]
     assert [concept.name for concept in true.belong_concepts] == ["Bool"]
     assert [concept.name for concept in false.belong_concepts] == ["Bool"]
-    assert [concept.name for concept in name.belong_concepts] == ["Any"]
-    assert [concept.name for concept in quoted.belong_concepts] == ["Any"]
+    assert name is declared_name
+    assert quoted is declared_quoted
+    assert [concept.name for concept in name.belong_concepts] == ["Name"]
+    assert [concept.name for concept in quoted.belong_concepts] == ["Name"]
     assert assertion.rhs is true
 
 
@@ -286,6 +304,11 @@ def test_conflicting_constant_declarations_are_rejected() -> None:
             workflow duplicate { custom(item) == true; }
             """
         )
+
+
+def test_undeclared_constant_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown FusionFlow constant 'unknown'; declare it with a concept"):
+        parse_workflow("workflow missing { custom(unknown) == true; }")
 
 
 def test_syntax_errors_return_diagnostics_without_core_ir() -> None:

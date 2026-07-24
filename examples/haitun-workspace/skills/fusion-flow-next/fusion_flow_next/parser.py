@@ -218,9 +218,7 @@ class _CoreIRVisitor:
         if existing is not None:
             return existing
 
-        constant = Constant(symbol=symbol, belong_concepts=(self._resolve_concept("Any"),))
-        self._constants[symbol] = constant
-        return constant
+        raise ValueError(f"Unknown FusionFlow constant {symbol!r}; declare it with a concept.")
 
     def _boolean_constant(self, raw_text: str) -> Constant:
         value = raw_text.lower() == "true"
