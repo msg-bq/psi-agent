@@ -59,6 +59,20 @@
 
 在这些问题未定前把图接到运行时，只会把临时假设固化成 API。
 
+### 1.4 human executor 由谁执行？
+
+当 `executor_id` 指向的 Core IR/catalog identity 属于 `Human` concept 时，表示执行
+需要人的参与；静态图不另存 `executor_kind`，它也不应映射成某个自动调用的
+`flow.*` 函数。图读取与计划层需要把它降解为：
+
+1. 暂停当前计划；
+2. 发出审批或外部事件请求；
+3. 持久化可恢复状态；
+4. 收到人的结果后恢复并产生对应 Artifact。
+
+这也说明 planner/executor adapter 仍是独立新模块；`fusion_flow` 只提供可直接执行的
+Agent、Python callable、subprocess 及运行记录原语。
+
 ## 2. 旧 TS API 的冗余是否保留
 
 ### 2.1 `Agent` 与 `flow.agent` / `flow.session`
@@ -125,12 +139,12 @@ AnyIO task group 天然适合结构化取消。建议：
 
 ### 3.5 Python callback 无法被强制取消
 
-旧 TS 为 laggard 提供默认 5 秒 grace。Python 版保留这个配置，但只能可靠约束
-受控的 Agent runner 和 subprocess。任意 callback 如果阻塞 event loop、没有取消
-检查点或吞掉取消，AnyIO 也不能安全强杀它。
+任意 callback 如果阻塞 event loop、没有取消检查点或吞掉取消，AnyIO 也不能安全
+强杀它。Python 首版不提供固定 laggard grace 配置，而是依赖结构化取消，等待受控的
+Agent runner、subprocess 和兄弟任务完成清理。
 
-首版要求 callback cancellation-cooperative；运行时不会在 grace 到期后 detach 一个
-仍能写 bindings 的任务。是否需要把不可控工作统一隔离到子进程，留给后续设计。
+首版要求 callback cancellation-cooperative；运行时不会 detach 一个仍能写 bindings
+的任务。是否需要把不可控工作统一隔离到子进程，留给后续设计。
 
 ## 4. 条件、选择与新 DSL 的不对齐
 
@@ -162,6 +176,11 @@ AnyIO task group 天然适合结构化取消。建议：
 
 **暂定**：为兼容保留一个入口和相同模式，但内部使用明确 discriminated config，
 拒绝空 choice、重复 choice 和反向数值范围。未来可新增窄 API，不能删除旧入口。
+
+`evaluate_static` 则使用独立的判别联合
+`RegexRule | ContainsRule | EqualsRule | RangeRule | PredicateRule`。调用方每次只能
+传入一种规则；predicate 是零参数 callable，持久化结果同时包含 `value` 与 `rule`。
+它不复用 `evaluate` 的扁平可选参数，也不调用 Agent。
 
 ## 5. 循环与有环图不是一回事
 
@@ -241,6 +260,17 @@ AnyIO task group 天然适合结构化取消。建议：
 
 尤其 `exec` 非零退出、Agent 返回校验失败时不得留下“看起来成功”的值。
 
+### 7.3 诊断写入失败是否应回滚业务结果？
+
+首版明确区分关键状态与诊断状态：
+
+- binding、最终 graph 和 meta 是关键状态，写入失败则本次运行失败；
+- `progress.jsonl` 与单节点 trace 文件只是增量诊断，best-effort 写入，失败只记日志。
+
+否则会出现 binding 已提交，却因为随后写一条 progress 失败而向调用者报告整个业务
+操作失败的“幽灵失败”。最终 graph/meta 从内存 trace 汇总，仍是完整运行事实的关键
+落盘。
+
 ## 8. resume 的真实含义
 
 旧代码的 resume 容易被理解为“从任意一行继续执行”，但普通 Python 协程不能仅靠
@@ -249,9 +279,10 @@ JSON trace 恢复调用栈。
 旧源码的 resume 行为是：
 
 - 选择一个既有 `run_id/run_dir`；
-- 读取其中可复用的 binding/trace；
+- 读取其中可复用的 binding 与 metadata；
 - 重新执行顶层程序；
-- 命中的步骤跳过实际调用；
+- 只有 `session`、`call` 会用稳定 binding 名和输入摘要尝试命中并跳过实际调用；
+- `evaluate`、`exec`、静态判断及任意 callable 会重新执行；
 - graph/meta 最终仍写回同一 run 目录。
 
 第一版为“逐项翻译”暂时保留这个外部合同，同时增加安全名称、规范化摘要和原子
@@ -278,7 +309,23 @@ PR 中默认替换。
 
 **暂定**：显式 key 优先；无法可靠识别时不复用。
 
-### 8.2 路径安全
+### 8.2 哪一层决定副作用是否重放
+
+旧 TS 不缓存 `evaluate` 与 `exec`。这意味着 resume 时可能重新选择分支，也可能
+重复执行脚本副作用。Python 首版保留这个可观察边界；它只额外避免覆盖旧 binding，
+未命中时写入带序号的新 binding。
+
+不建议把所有原语一律改成自动缓存：
+
+- `exec` 可能是查询，也可能是部署、发消息、写数据库，运行时无法仅凭 argv 判断；
+- `evaluate` 的重新判断有时是缺陷，有时是调用者希望使用最新上下文；
+- Human 节点还需要审批状态、外部事件与恢复令牌，不能折叠为字符串 cache。
+
+**待决定**：未来 planner 是否为每个计划动作生成稳定 action id 与显式
+`replay_policy`（例如 `reuse`、`rerun`、`require_confirmation`）。在此之前，
+调用方不能把 `resume_from_run_id` 当作端到端 exactly-once 保证。
+
+### 8.3 路径安全
 
 `resume_from_run_id="../../..."` 必须在读文件前被拒绝。`gc_runs` 也必须解析并核验
 每个目标仍位于 runs 根目录内。
@@ -321,8 +368,9 @@ Agent provider 可能不给 usage 或给出不同字段。模型应允许未知 
 
 ### 10.1 环境变量
 
-旧文档与实现对“继承父环境”可能不一致。暂定继承父环境后覆盖显式值，符合多数
-subprocess 预期。完全隔离可以增加 `inherit_env=False`。
+旧 TS 类型文档要求干净环境并仅保留 `PATH`，Python 首版则明确继承父环境，再覆盖
+调用方传入的值，符合普通 subprocess 预期。这是兼容性差异，不再表述为实现不明。
+完全隔离可以在确有需求时增加 `inherit_env=False`。
 
 ### 10.2 stdout/stderr 截断
 
@@ -336,8 +384,9 @@ Windows 和 POSIX 的进程树终止不同。第一版至少保证直接子进�
 
 ### 10.4 shell
 
-第一版只接受 argv，不提供 `shell=True`。如果未来确有 shell pipeline 需求，必须是
-显式危险 API，并重新设计转义和审计边界。
+第一版接口为 `flow.exec(name, argv, ...)`：`name` 是稳定操作身份、trace label 和
+默认 binding 前缀，`argv` 才是逐项传给子进程的命令，不提供 `shell=True`。如果未来
+确有 shell pipeline 需求，必须是显式危险 API，并重新设计转义和审计边界。
 
 ## 11. 不能照搬的 TS 缺陷清单
 
@@ -398,3 +447,6 @@ Python PR 不补造这些历史能力。若未来需要，应作为新的、单�
 10. `execution-graph.json` 是否为了兼容保留文件名，但内部模型改名为 trace？
 11. 图执行器将 Artifact 与 binding 映射时，是否确认使用独立 Artifact store？
 12. 是否确认不翻译 `pickEngine`/旧 CLI provider 栈，改用注入 runner？
+13. human executor 的暂停、审批、外部事件与恢复协议由哪个图执行模块负责？
+14. 是否接受 progress/单节点 trace 为 best-effort，而 binding、最终 graph/meta 为关键状态？
+15. 是否接受 Python `exec` 继承父环境这一项与旧 TS 类型文档不同的明确偏差？

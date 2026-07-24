@@ -89,6 +89,11 @@ src/
     │   ├── cli/                    # 单次消息 CLI thin client
     │   ├── telegram/               # Telegram bot channel
     │   ├── feishu/                 # Feishu bot channel
+    ├── fusion_flow/
+    │   ├── __init__.py             # Python FusionFlow 稳定公开 API
+    │   ├── model.py                # Agent、规则、trace、binding 等运行模型
+    │   ├── runtime.py              # run 生命周期、持久化与恢复
+    │   └── flow.py                 # 29 个 flow.* 执行原语
     └── gateway/
         ├── AGENTS.md                # Gateway 层设计文档
         ├── __init__.py              # Gateway dataclass + run()
@@ -114,6 +119,7 @@ src/
 - **Session 层**: `src/psi_agent/session/AGENTS.md` — workspace 启动、agent loop、tool 加载调用、schedule 机制、history 持久化
 - **Channel 层**: `src/psi_agent/channel/AGENTS.md` — ChannelCore 公共部件、REPL/CLI/Telegram/Feishu 约定
 - **Gateway 层**: `src/psi_agent/gateway/AGENTS.md` — 生命周期管理、REST API、Web Console SPA、CI 打包
+- **FusionFlow 运行时**: `docs/architecture/workflow/2026-07-23-fusion-flow-python-runtime-design.zh.md` — Python 执行原语、持久化与 TS 兼容边界
 
 ## 核心通信协议
 

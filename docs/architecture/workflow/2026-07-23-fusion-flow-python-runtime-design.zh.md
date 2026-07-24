@@ -38,17 +38,14 @@ Agent、启动子进程或更新运行记录。
 ```text
 WorkflowGraph（静态声明）
         |
-        | 未来：planner / executor
+        | 未来：planner
         v
 ExecutionPlan（一次运行的计划）
         |
-        v
-fusion_flow（本 PR：执行原语）
-        |
-        +-- Agent/session runner
-        +-- Python callable
-        +-- subprocess
-        +-- trace / binding / resume
+        | dispatcher 通过 Core IR/catalog 解析 executor_id 的类型
+        +-- agent   -> fusion_flow -> Agent/session runner
+        +-- program -> fusion_flow -> Python callable / subprocess
+        +-- human   -> 图执行器暂停 / 审批 / 外部事件 / 恢复
 ```
 
 `WorkflowGraph` 描述“有哪些步骤、Artifact 和关系”；`fusion_flow` 描述“一个具体
@@ -56,6 +53,10 @@ fusion_flow（本 PR：执行原语）
 静态图，也不反向充当工作流定义。
 
 未来的图执行器应同时依赖 `workflow_graph` 和 `fusion_flow`，而两者互不依赖。
+其中 human executor 不是某个 `flow.*` callable。读图与计划层应把它降解为“暂停运行、
+等待审批或外部事件、收到结果后恢复”；本 PR 不伪造一个自动执行 human 节点的函数。
+Human/Agent/Program 分类来自 `executor_id` 指向的 Core IR/catalog concept，不在运行时
+或静态图中再增加一份 `executor_kind`。
 
 ## 3. 为什么放在 `src/psi_agent/`
 
@@ -113,7 +114,7 @@ Python 采用 Ruff 可接受的 `snake_case` 命名；`if` 是 Python 关键字�
 | `flow.reduce` | `flow.reduce` | 顺序归约 |
 | `flow.pipeline` | `flow.pipeline` | 值依次通过多个步骤 |
 | `flow.retry` | `flow.retry` | 指数退避重试 |
-| `flow.evaluateStatic` | `flow.evaluate_static` | 不调用 Agent 的静态求值 |
+| `flow.evaluateStatic` | `flow.evaluate_static` | 通过判别式 `StaticRule` 做静态求值 |
 | `flow.use` | `flow.use` | 按服务名调用服务 |
 | `flow.block` | `flow.block` | 执行匿名/内联块 |
 | `flow.defineBlock` | `flow.define_block` | 定义具名块 |
@@ -121,7 +122,7 @@ Python 采用 Ruff 可接受的 `snake_case` 命名；`if` 是 Python 关键字�
 | `flow.repeat` | `flow.repeat` | 固定次数重复 |
 | `flow.input` | `flow.input` | 读取输入 binding |
 | `flow.output` | `flow.output` | 写入输出 binding |
-| `flow.exec` | `flow.exec` | 无 shell 的子进程执行 |
+| `flow.exec` | `flow.exec` | 显式 `name` + `argv` 的无 shell 子进程执行 |
 
 包级别同时保留：
 
@@ -132,8 +133,9 @@ Python 采用 Ruff 可接受的 `snake_case` 命名；`if` 是 Python 关键字�
 - `format_token_count`：格式化 token 数；
 - `gc_runs`：清理历史运行目录。
 
-`RunContext.input()` 和 `RunContext.save()` 也保留，分别委托同一上下文中的
-`flow.input()` 和 `flow.output()`，避免形成两套落盘与查重逻辑。
+`RunContext.input()` 和 `RunContext.save()` 也保留。委托方向是
+`flow.input()` → 当前 `RunContext.input()`、`flow.output()` → 当前
+`RunContext.save()`，因此落盘与查重逻辑只有一套。
 
 旧 `pickEngine`、CLI provider 选择和交互式提示不进入本包。Agent 调用通过注入的
 异步 `SessionRunner` 完成。
@@ -212,7 +214,6 @@ psi-agent 的有状态 Session，必须由独立 adapter 明确规定 history �
 - `first`：第一个完成的任务决定结果；其余任务被取消并完成清理；
 - `any=n`：按完成顺序收集前 `n` 个结果，达到数量后取消其余任务；
 - 任一模式都使用 AnyIO task group；
-- first/any 沿用旧版默认 5 秒 laggard grace；
 - `n` 必须是整数且满足 `1 <= n <= len(tasks)`；
 - 空任务列表只允许 `all`，结果为空列表；
 - 任务失败、取消与“还未选中”在 trace 中分开表示。
@@ -229,9 +230,9 @@ psi-agent 的有状态 Session，必须由独立 adapter 明确规定 history �
 偏差，不宣称与旧副作用时序完全一致，需在书面设计评审时确认。
 
 Python 无法安全强杀一个不让出控制权或主动吞掉取消的任意 callable。首版合同要求
-用户 callback 是 cancellation-cooperative；5 秒 grace 用于给 runner、subprocess
-等受控资源完成清理。不得为了按时返回而把仍可写 binding 的任务 detached 到 run
-结束之后。
+用户 callback 是 cancellation-cooperative；运行时使用结构化取消并等待受控的
+runner、subprocess 和兄弟任务完成清理，不承诺固定宽限时间，也不会把仍可写 binding
+的任务 detached 到 run 结束之后。
 
 ### 8.2 条件与选择
 
@@ -240,6 +241,11 @@ Python 无法安全强杀一个不让出控制权或主动吞掉取消的任意 
 - trace 明确记录所选分支下标；
 - `choice` 拒绝空候选和重复候选；
 - 数字范围必须满足 `minimum <= maximum`。
+
+`evaluate_static(question, rule, binding_name=...)` 的 `rule` 是判别联合
+`RegexRule | ContainsRule | EqualsRule | RangeRule | PredicateRule`，而不是一组可同时
+出现的可选关键字。每种规则只携带自身需要的数据；`PredicateRule.fn` 是零参数
+callable。binding 的 JSON 同时包含 `value` 与 `rule` 字段，便于审计。
 
 ### 8.3 循环与重试
 
@@ -279,21 +285,24 @@ Python 无法安全强杀一个不让出控制权或主动吞掉取消的任意 
 ### 8.7 exec
 
 - 使用 `anyio.open_process()`；
+- 调用签名显式包含操作 `name` 和 `argv`；`name` 用作 trace label 与默认 binding 前缀；
 - `argv` 逐项传入，绝不经 shell；
 - 支持 `stdin`、`cwd`、显式环境变量覆盖、timeout；
 - 同时持续消费 stdout/stderr，避免 PIPE 阻塞；
 - 默认每个输出流最多保留 4 MiB，并记录是否截断；
 - timeout 或取消时终止进程并等待回收；
 - 退出码非零时操作失败，不能先提交成功 binding；
-- `cwd` 和恢复路径不得逃逸允许的根目录。
+- `cwd` 是调用者显式选择的子进程工作目录，不强制位于 runs 根目录；恢复路径仍必须
+  位于配置的 runs 根目录内。
 
-环境变量第一版采用“继承当前环境，再应用显式 overrides”的语义；如果要完全隔离，
-应作为后续显式选项，而不是依赖文档和实现各说各话。
+旧 TS 类型文档描述的是“干净环境，仅保留 `PATH` 后应用覆盖”，Python 首版有意采用
+“继承当前环境，再应用显式 overrides”的语义，以符合普通 subprocess 调用预期。
+这是已记录的兼容性差异；如果要完全隔离，应作为后续显式选项。
 
 ## 9. 持久化与恢复
 
 默认运行目录保留为当前工作目录下的 `runs/<run_id>/`，同时允许通过
-`RunOptions.runs_dir` 显式指定。所有 IO 使用 `anyio.Path`。`run_id`、binding、
+`run(..., runs_dir=...)` 显式指定。所有 IO 使用 `anyio.Path`。`run_id`、binding、
 service、block 等所有参与路径的名称都经过统一安全检查。
 
 建议落盘：
@@ -315,10 +324,25 @@ runs/<run_id>/
 
 文件使用“临时文件 + 同目录替换”写入，避免取消或崩溃留下半个 JSON。
 
+持久化分为两类：
+
+- binding、最终 `execution-graph.json` 和 `meta.json` 是关键业务状态，写入失败会使
+  本次运行失败；
+- `progress.jsonl` 和 `trace/*.json` 是增量诊断信息，采用 best-effort 写入，失败时
+  记录日志但不把已成功的业务操作反转成失败。与旧 TS 一致，首版只为包含 provider
+  调用细节的 `session`、`evaluate` 写独立 trace 文件；其余节点仍完整进入最终 graph。
+
+最终 graph/meta 仍会汇总完整内存 trace，因此单节点诊断文件缺失不改变运行结果。
+
 为忠实迁移，`resume_from_run_id` 指向既有 run：载入该目录的 cache，并在同一
-`run_id/run_dir` 上重新执行顶层程序、复用明确命中的步骤，再原子更新 graph/meta。
-它不恢复任意 Python callable，也不承诺从一个 trace 中间点继续协程，因此仍不是
-进程级 checkpoint。覆盖既有运行记录是否应改成派生新 run，作为待讨论项保留。
+`run_id/run_dir` 上重新执行顶层程序，再原子更新 graph/meta。旧 TS 只有
+`session`、`call` 会按稳定 binding 名与输入摘要尝试复用；`evaluate`、`exec`、
+静态判断和任意 Python callable 都会重新执行。Python 首版保留这一边界，但不会像
+旧实现那样覆盖未命中的旧 binding，而是分配带序号的新 binding。
+
+因此 resume 不是“整条工作流幂等重放”，也不是进程级 checkpoint。尤其
+`choice/evaluate` 可能重新选择分支，`exec` 可能再次产生外部副作用。是否应由未来
+planner 生成显式 replay policy，或扩展运行时缓存范围，作为待讨论项保留。
 
 ## 10. 与 TS 的兼容策略
 
@@ -359,7 +383,7 @@ provider 栈。兼容目标是可观察语义和公开能力，不是文本结�
 - JSON 原子写；
 - 不安全名称和 `resume_from_run_id` 路径逃逸；
 - 失败操作不写成功 binding；
-- 恢复只复用输入和实现摘要均匹配的结果；
+- 恢复只在 `session`、`call` 上复用输入摘要匹配的结果，其他原语重新执行；
 - `gc_runs` 不删除根目录外内容。
 
 ## 12. 验收标准
