@@ -90,9 +90,8 @@ src/
     │   ├── telegram/               # Telegram bot channel
     │   ├── feishu/                 # Feishu bot channel
     ├── workflow_graph/
-    │   ├── __init__.py             # 声明式图模型与投影 API
-    │   ├── model.py                # 允许有环的 Step–Artifact 静态图
-    │   └── projector.py            # Core IR assertion → WorkflowGraph
+    │   ├── __init__.py             # 声明式图模型 API
+    │   └── model.py                # 允许有环的 Step–Artifact 静态图
     └── gateway/
         ├── AGENTS.md                # Gateway 层设计文档
         ├── __init__.py              # Gateway dataclass + run()
@@ -118,7 +117,7 @@ src/
 - **Session 层**: `src/psi_agent/session/AGENTS.md` — workspace 启动、agent loop、tool 加载调用、schedule 机制、history 持久化
 - **Channel 层**: `src/psi_agent/channel/AGENTS.md` — ChannelCore 公共部件、REPL/CLI/Telegram/Feishu 约定
 - **Gateway 层**: `src/psi_agent/gateway/AGENTS.md` — 生命周期管理、REST API、Web Console SPA、CI 打包
-- **Workflow Graph**: `docs/architecture/workflow/2026-07-23-workflow-graph-design.zh.md` — 允许有环的声明式 Step–Artifact 图、Core IR 投影与待讨论语义
+- **Workflow Graph**: `docs/architecture/workflow/2026-07-23-workflow-graph-design.zh.md` — 允许有环的声明式 Step–Artifact 图及待讨论语义；具体 Core IR 后端位于 `examples/haitun-workspace/skills/fusion-flow-next/fusion_flow_next/graph_compiler.py`
 
 ## 核心通信协议
 

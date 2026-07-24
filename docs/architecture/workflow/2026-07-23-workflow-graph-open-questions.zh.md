@@ -101,91 +101,33 @@ activation/version，它遇到无 seed 环会永远没有 ready Step，遇到 se
 
 边界原则：如果一个字段只对一次 run 有意义，它不进入 `WorkflowGraph`。
 
-## 4. 当前语法评审与仓库实现不一致
+## 4. PR12 Core IR 与编译器边界
 
-两个 PR 不能把当前 `fusion-flow-next` 当作已经闭合的唯一语法合同。
+Graph 后端只接收真实的 `WorkflowFile`，不解析文本。
+`fusion_flow_next.graph_compiler.WorkflowGraphCompiler` 继承 PR12
+`CoreIRCompiler`；共享编译器拥有遍历，具体后端只实现 node hooks 和 program/
+workflow builders。
 
-### 4.1 assertion equality
+### 4.1 canonical Core IR
 
-7 月 18 日评审：
+- `Assertion` 类型本身表示 equality，不再从额外字段读取 `=` 或 `==`；
+- workflow block 保存 assertions，常量声明位于 `WorkflowFile`；
+- 四种 `*_multi` 的 RHS 都是 `ListTerm`，只读取真实 `ListTerm.items`；
+- List 源码顺序保留在 Core IR；编译成 Graph 关系时顺序被显式擦除，重复项报错；
+- `IfTerm`、connective formula 和 graph control region 是不同层的语义，初版 Graph
+  后端不近似处理。
 
-- canonical 输出使用单 `=`；
-- 可兼容读取 `==`；
-- 二者都表示 assertion equality。
+如果未来某个 construct 的 List 顺序成为执行语义，应保留在 Core IR 或新增 ordered
+construct，不能给普通关系边偷偷增加 position。
 
-当前 G4：
+### 4.2 backend support
 
-- `==` 用于 assertion；
-- `=` 被用于 formula comparison。
+- 已知 dependency assertion 编译为图节点、边或 policy；
+- 未知 compound operator 或非 compound assertion 保留为 residual；
+- 已识别但 arity、owner、RHS 或类型形状错误的关系直接报错；
+- `IfTerm` 等未支持递归节点沿 `CoreIRCompiler` 的默认 hook fail closed。
 
-影响：
-
-- 当前 Python Core IR 的 `Assertion` 不保存 token，projector 将缺省视为 canonical
-  `=`；显式 adapter 可以接受 `=`/`==`；
-- parser/checker 在上游必须决定 canonical lowering；
-- Graph PR 不修改 G4；
-- 不能宣称现有 BNF 与评审完全一致。
-
-### 4.2 `*_multi`
-
-评审合同：
-
-- 只有 `consumes_multi(step) = {a, b}`；
-- 是无序、重复报错、展开后消失的局部关系糖。
-
-当前 G4/Core IR：
-
-- 有 input/output/consumes/produces 四种 multi；
-- RHS 是有序、可重复的 List。
-
-Graph 中的边是关系集合。当前 multi List 只作为批量关系载体，源码顺序没有执行
-含义；初版兼容 repository dialect 时显式擦除载体顺序并拒绝重复，但会保留全部
-依赖关系。若未来某个新 construct 的 List 顺序成为业务语义，应：
-
-- 保留在 Core IR；
-- 或新增不同的 ordered construct；
-- 不能给普通边偷偷加 position 破坏另一 dialect。
-
-### 4.3 `if`
-
-评审 C04 的 ordered first-match、overlap、default、持久化仍全部 OPEN。当前 G4
-却固定了三参数 value-producing `if(condition, then, else)`。
-
-影响：
-
-- Graph PR 不增加 IfNode；
-- 旧 `flow.if_` 的执行行为不代表新 DSL 已确认；
-- value-level if、control branch、graph Region 必须区分；
-- 当前数据边不能表达“未选择分支不会产生 Artifact”。
-- Python `core_ir.py` 已有 `IfTerm`，但 TypeScript `src/core-ir.ts` 仍没有对应节点，
-  且 parser lowering 未实现；仓库内部也尚未端到端闭合。
-
-### 4.4 formula subset
-
-评审包含 NOT/AND/OR/IMPLIES/IFF，并要求 unknown 不能当 false。当前 G4/Core IR
-只覆盖 NOT/AND/OR 和 comparison 子集。
-
-Graph projector 只处理已知 dependency assertions，不声称承接完整 formula。
-
-### 4.5 workflow block 内容
-
-旧设计希望尽量复用 declaration/statement/term/formula；当前 G4 的 workflow block
-主要限制为 assertions，常量在文件级。
-
-这属于实验性简化，不应反向写成用户已确认合同。
-
-### 4.6 编译链仍未闭合
-
-Python ANTLR lexer/parser 已生成、提交且可导入，但尚未接入 `parser.py` facade；
-Python parser/checker 入口仍是 stub。TypeScript prototype 的 parser/checker/
-generator 边界同样未形成可用端到端链。因此 Graph PR 接收 normalized Python
-adapter，而不是假装已经有：
-
-```text
-FusionFlow text -> parser -> checked Core IR -> graph
-```
-
-真实 parser 接入应另 PR 完成。
+Graph PR 不修改 grammar、parser 或 checker，也不增加 IfNode。
 
 ## 5. Artifact 的类型和身份
 
@@ -442,16 +384,15 @@ Step，差异只由 dispatcher 根据 executor identity 的 Core IR concept 决�
 
 ## 11. residual 如何持久化和重新组合
 
-当前 `GraphProjection.residual_assertions` 可以保留外部 Core IR objects，不适合 JSON。
-候选方案：
+`WorkflowGraphCompilation.residual_assertions` 保留真实 Core IR `Assertion`，不适合
+JSON。初版边界是：
 
 1. 保存完整 Core IR，Graph 只是可重算的 cache；
-2. 定义独立 `ProjectedWorkflow(graph, residual_dto)` schema；
-3. Graph 只用于进程内分析，不独立持久化；
-4. 后续 compiler 每个 backend 各自消费 Core IR，无需重新组合。
+2. Graph 只用于进程内分析，不独立持久化；
+3. 每个 concrete compiler backend 各自消费 Core IR，不从 Graph 反向重建语义。
 
-初版采用 1/3 的保守边界：`graph.to_dict()` 可序列化，但不是完整 executable
-program。不要仅拿 Graph JSON 去执行。
+`graph.to_dict()` 可序列化，但不是完整 executable program。不要仅拿 Graph JSON
+去执行。
 
 ## 12. 序列化版本与反序列化
 
@@ -463,8 +404,7 @@ program。不要仅拿 Graph JSON 去执行。
 - forward/backward compatibility；
 - migration；
 - canonical ordering；
-- invalid legacy payload；
-- dialect 信息是否属于 graph。
+- invalid legacy payload。
 
 初版暂缓。若 PR 期间出现真实落盘消费者，应先加顶层 `schema_version=1`，再提供
 严格 `from_dict()`；不要做宽松 Any-dict parser。
@@ -482,9 +422,9 @@ program。不要仅拿 Graph JSON 去执行。
 - 模型已经允许 cycle；
 - 没有 runtime semantics 时 SCC 只能给结构诊断；
 - analyzer 是独立纯函数，随时可加；
-- 首 PR 目标是稳定 IR 和投影。
+- 首 PR 目标是稳定图模型和 PR12 compiler backend 边界。
 
-**暂定**：不在 model/projector 中加入 SCC。未来新增 `analyzer.py`，避免 Graph 对象
+**暂定**：不在 model/compiler 中加入 SCC。未来新增 `analyzer.py`，避免 Graph 对象
 自己缓存派生状态。
 
 ## 14. 名称：WorkflowGraph 还是 DefinitionGraph
@@ -505,7 +445,7 @@ program。不要仅拿 Graph JSON 去执行。
 
 图 PR：
 
-- 定义和投影静态图；
+- 定义静态图，并以 `WorkflowGraphCompiler(CoreIRCompiler)` 编译 checked Core IR；
 - 不执行；
 - 不依赖 runtime。
 
@@ -533,7 +473,7 @@ Python 运行时 PR：
 2. 是否接受初版“cycle 可保存，但尚不可执行”的边界？
 3. 是否接受运行时把 input+producer 视为未闭合反馈语义，而模型先允许保存？
 4. Artifact 是否现在就需要 Concept/type reference？
-5. 是否保留 repository List-multi 的显式顺序擦除关系投影，还是首版只支持评审 dialect？
+5. 是否确认 `ListTerm` multi 编译为关系时显式擦除顺序并拒绝重复？
 6. 是否确认一个普通 Artifact 初版只允许一个 producer？
 7. foreach 多输出是否应全部按 index 分别聚合为 List？
 8. foreach 单 slot 失败时是否坚持 all-or-nothing？

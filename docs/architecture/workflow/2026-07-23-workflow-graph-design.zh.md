@@ -3,11 +3,12 @@
 > 状态：已评审；2026-07-23 补充确认 Executor 包含 Human、Agent、Program
 > 日期：2026-07-23
 > 目标 PR：独立于 FusionFlow Python 运行时 PR
-> 目标包：`src/psi_agent/workflow_graph/`
+> 图模型：`src/psi_agent/workflow_graph/`
+> Core IR 后端：`examples/haitun-workspace/skills/fusion-flow-next/fusion_flow_next/graph_compiler.py`
 
 ## 1. 结论
 
-Workflow Core IR 中与执行依赖相关的 assertion，应投影为一个**类型化、有向、允许
+Workflow Core IR 中与执行依赖相关的 assertion，应编译为一个**类型化、有向、允许
 有环的 Step–Artifact 图**。
 
 它不是 DAG，也不是一次运行的状态机，更不是旧 FusionFlow
@@ -31,7 +32,7 @@ commit 与 termination 合同之前，不能据此宣称该环已经可执行。
 Workflow Core IR
     └── assertion、term、formula、identity
             |
-            | project_workflow()
+            | WorkflowGraphCompiler.compile()
             v
 WorkflowGraph
     └── 静态 Step、Artifact、关系、policy；允许有环
@@ -49,11 +50,11 @@ ExecutionTrace
 
 分层约束：
 
-- `workflow_graph` 不导入 `fusion_flow`；
-- `fusion_flow` 不导入 `workflow_graph`；
+- `psi_agent.workflow_graph` 只定义通用图模型，不导入 example skill；
+- `fusion_flow_next.graph_compiler` 继承 PR12 的 `CoreIRCompiler`，并单向导入图模型；
 - 未来 `workflow_runtime` 可以同时依赖二者；
 - Core IR 是语义事实的上游，Graph 是执行依赖的派生视图；
-- 未投影的 Core IR 不能被假装已经进入 Graph。
+- 未编译进图的 Core IR 不能被假装已经进入 Graph。
 
 ## 3. 为什么选择 Step–Artifact 数据流图
 
@@ -73,17 +74,20 @@ Petri Net、SCC 分析或 Region CDFG 可以成为以后独立的分析/lowering
 ```text
 src/psi_agent/workflow_graph/
 ├── __init__.py
-├── model.py       # 不可变模型、结构校验、确定性序列化
-└── projector.py   # 从已归一化 Workflow Core IR 结构投影
+└── model.py       # 不可变模型、结构校验、确定性序列化
 
 tests/psi_agent/workflow_graph/
 ├── __init__.py
 ├── test_model.py
-└── test_projector.py
+└── test_public_api.py
+
+examples/haitun-workspace/skills/fusion-flow-next/
+├── fusion_flow_next/graph_compiler.py  # CoreIRCompiler 的 WorkflowGraph 后端
+└── test/test_graph_compiler.py
 ```
 
-不创建 scheduler、store、analyzer、region、backend 或 registry。没有真实第二种实现
-前，不增加通用基类。
+不创建 scheduler、store、analyzer、region 或 registry。编译遍历复用 PR12
+`CoreIRCompiler`，不再为图后端另写一套遍历或通用基类。
 
 ## 5. 静态模型
 
@@ -231,31 +235,24 @@ Artifact A -> Step S1 -> Artifact B -> Step S2 -> Artifact A
 任意有向图的 SCC 缩点图必然是 DAG，可以用于以后分析组件间的依赖顺序；这不等于
 原始 WorkflowGraph 是 DAG。
 
-## 7. Core IR 投影边界
+## 7. Core IR 编译边界
 
-### 7.1 输入不是 BNF 文本
+### 7.1 复用 PR12 编译器
 
-`project_workflow()` 接收一个已归一化的 Python structural adapter：
+`fusion_flow_next.graph_compiler.WorkflowGraphCompiler` 继承
+`CoreIRCompiler`，输入是真实的 `WorkflowFile`、`Workflow`、`Assertion`、
+`CompoundTerm`、`Constant` 和 `ListTerm`。它不解析 BNF 文本，也不接受
+duck-typed DTO。
 
-- Workflow：`name`、`assertions`；
-- Assertion：`lhs`、`rhs`，可选 `relation_symbol`；
-- CompoundTerm：`operator.name`、`arguments`；
-- Constant：`symbol`；
-- Constant 可选类型信息：`belong_concepts[*].name`；
-- ListTerm：`items` 或 `elements`；若两者同时存在且内容不同则拒绝；
-- syntax-review local set carrier：`members`。
+`CoreIRCompiler.compile()` 负责遍历文件、声明和 workflow；图后端只实现
+`_compile_*` node hooks 以及 `_build_workflow()`、`_build_program()`。这样未知
+term 不会被近似处理，未实现的 `IfTerm` 或 connective formula 会沿共享编译器的
+fail-closed 路径显式报错。
 
-它不解析 BNF 文本，也不直接宣称支持 TypeScript class instance。TypeScript 或生成
-parser 需要先通过 DTO/adapter 提供上述结构。
-
-当 `step_executor` RHS 携带**非空** `belong_concepts` 时，projector 校验它在
-`Human`、`Agent`、`Program` 中恰好命中一类；缺少该属性或值为空都表示结构
-适配器尚未提供 catalog 类型信息，此时只保留 `executor_id`，完整类型校验仍
-属于上游 checker。Graph 自身不复制该分类。
-
-当前 Python `fusion_flow_next.core_ir.Assertion` 已经表示 equality，本身没有保存
-源文本中的等号 token；这种对象缺少 `relation_symbol` 时按 canonical `=` 处理。
-adapter 显式携带 `=` 或 `==` 时同样按 equality 处理，其他 relation symbol 拒绝。
+`Assertion` 类型本身表示 equality，不再读取源 token 或兼容额外 relation 字段。
+`step_executor` 的类型信息直接来自 `Constant.belong_concepts`；值非空时，图后端
+检查它在 `Human`、`Agent`、`Program` 中恰好命中一类。空值只保留
+`executor_id`，完整 catalog 类型校验仍属于上游 checker。Graph 自身不复制该分类。
 
 ### 7.2 已知 operator
 
@@ -274,10 +271,13 @@ adapter 显式携带 `=` 或 `==` 时同样按 equality 处理，其他 relation
 - `resource_requirement`
 - `max_concurrency`
 - `workflow_timeout`
-- 显式 dialect 允许的 `*_multi`
+- `input_workflow_multi`
+- `output_workflow_multi`
+- `consumes_multi`
+- `produces_multi`
 
-已知 operator 如果 arity、RHS、owner 或类型形状错误，直接产生 projection error，
-不能伪装成 residual。
+已知 operator 如果 arity、RHS、owner 或类型形状错误，直接产生
+`WorkflowGraphCompilationError`，不能伪装成 residual。
 
 arity 以 `CompoundTerm.arguments` 的实际长度为准，不使用 `Operator.arity`。当前
 Core IR 中 `Operator.arity` 来自可选 catalog 签名，手工构造或尚未经过 checker 的
@@ -300,6 +300,10 @@ operator 默认可能为 0，不能代表应用实参数量。
 | `resource_requirement(s, resource) = n` | `StepNode(s).resources += (resource, n)` |
 | `max_concurrency(w) = n` | `WorkflowPolicy.max_concurrency = n` |
 | `workflow_timeout(w) = n` | `WorkflowPolicy.timeout_seconds = n` |
+| `input_workflow_multi(w) = [a, ...]` | 每项成为 workflow input |
+| `output_workflow_multi(w) = [a, ...]` | 每项成为 workflow output |
+| `consumes_multi(s) = [a, ...]` | 每项成为 `ConsumesEdge(a, s)` |
+| `produces_multi(s) = [a, ...]` | 每项成为 `ProducesEdge(s, a)` |
 
 其中所有 `n` 都从 `Constant.symbol` 显式解析为正整数；关系型 assertion 的 `True`
 也按明确的布尔常量解析，不能使用 Python truthiness。resource identity 使用
@@ -313,26 +317,22 @@ operator 默认可能为 0，不能代表应用实参数量。
 未知、图无关且结构合法的 assertions 保留在：
 
 ```text
-GraphProjection
+WorkflowGraphCompilation
 ├── graph
 └── residual_assertions
 ```
 
-residual 可能含任意上游对象，因此 `GraphProjection` 本身不是持久化 payload。
-需要持久化时，调用者分别保存原始 Core IR 和 `graph.to_dict()`。
+`WorkflowGraphCompiler.compile(WorkflowFile)` 为每个 workflow 返回一个
+`WorkflowGraphCompilation`。residual 保留真实 `Assertion`，因此 compilation
+本身不是持久化 payload；需要持久化时，调用者分别保存原始 Core IR 和
+`graph.to_dict()`。
 
-## 8. 两个不兼容 dialect
+未知 compound operator 或非 compound assertion 可以进入 residual；已识别但形状
+错误的关系和共享编译器不支持的递归节点必须显式失败。
 
-7 月 18 日评审合同与当前 `fusion-flow-next` 仓库语法存在真实差异，不能静默合并：
+## 8. ListTerm multi 的信息边界
 
-| Dialect | `*_multi` 合同 |
-| --- | --- |
-| `SYNTAX_REVIEW_2026_07_18` | 只有 `consumes_multi(step) = {a, b}`；局部、无序、重复报错 |
-| `REPOSITORY_LIST_MULTI` | input/output/consumes/produces 四种 multi；RHS 是有序 List |
-
-调用者必须显式传入 `WorkflowDialect`。
-
-对于 `REPOSITORY_LIST_MULTI`，初版 projector 明确执行**关系投影**：
+四种 `*_multi` 都从真实 `ListTerm.items` 读取。图后端把它们编译为关系：
 
 - List 项展开为普通边或 I/O 标记；
 - 重复项报错，避免静默丢 multiplicity；
@@ -342,7 +342,7 @@ residual 可能含任意上游对象，因此 `GraphProjection` 本身不是持�
 - 原始 Core IR 必须由调用者继续保存。
 
 这里的“非无损”仅指无法从 Graph 还原 `[a, b]` 还是 `[b, a]`，不表示丢失执行依赖。
-不得再用“List 无重复时无损”描述它，因为两种写法会投影为同一组关系。
+不得再用“List 无重复时无损”描述它，因为两种写法会编译为同一组关系。
 
 ## 9. 结构校验
 
@@ -369,7 +369,7 @@ residual 可能含任意上游对象，因此 `GraphProjection` 本身不是持�
 
 ## 10. 确定性序列化
 
-确定性不只依赖 projector。即使调用者直接以不同 tuple 顺序构造语义相同的
+确定性不只依赖 compiler。即使调用者直接以不同 tuple 顺序构造语义相同的
 `WorkflowGraph`，`to_dict()` 也必须：
 
 - 按 identity 排 steps；
@@ -433,14 +433,14 @@ failure、结果聚合与提交由未来 runtime 负责。
 - input + producer 结构可保存；
 - 不可变性。
 
-### 13.2 projector 测试
+### 13.2 graph compiler 测试
 
 - 每个已知 operator 的成功映射；
 - arity、owner、RHS、类型错误；
 - 未知 assertion 进入 residual；
-- syntax-review multi；
-- repository List multi 显式擦除顺序、拒绝重复；
-- cycle 投影后仍保留；
+- 真实 `ListTerm` multi 显式擦除顺序、拒绝重复；
+- 未支持的 term 经 `CoreIRCompiler` fail closed；
+- cycle 编译后仍保留；
 - resource key 不发生 `"a:b" + "c"` 与 `"a" + "b:c"` 碰撞；
 - 结果排序稳定。
 
@@ -467,9 +467,9 @@ failure、结果聚合与提交由未来 runtime 负责。
 
 - 图模型明确允许有环，代码中没有 DAG 校验；
 - 静态定义与运行状态彻底分离；
-- Core IR 投影边界、dialect 和信息损失显式；
+- PR12 `CoreIRCompiler` hook 边界、residual 和 List 关系映射的信息损失显式；
 - 模型结构检查完整；
-- 直接构造和投影构造都能确定性序列化；
+- 直接构造和编译构造都能确定性序列化；
 - tests、Ruff、ty 通过；
 - 根 AGENTS 的代码结构和设计说明同步；
 - 中文待讨论文档完整记录未闭合语义；
