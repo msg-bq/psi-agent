@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from antlr4 import CommonTokenStream, InputStream, Token
@@ -23,6 +24,14 @@ from .core_ir import (
 )
 from .generated.FusionFlowLexer import FusionFlowLexer
 from .generated.FusionFlowParser import FusionFlowParser
+
+
+@dataclass(slots=True)
+class ParseContext:
+    """Concept and operator symbols shared by related FusionFlow parses."""
+
+    concepts: dict[str, Concept]
+    operators: dict[str, Operator]
 
 
 class _DiagnosticListener:
@@ -75,19 +84,16 @@ class _CoreIRVisitor:
         ">=": "comparison_gte_op",
     }
 
-    def __init__(self) -> None:
-        self._concepts: dict[str, Concept] = {}
+    def __init__(self, context: ParseContext) -> None:
+        self._context = context
         self._constants: dict[str, Constant] = {}
         self._boolean_constants: dict[bool, Constant] = {}
-        self._operators: dict[str, Operator] = {}
 
     def visit_workflow_file(self, context: Any) -> WorkflowFile:
-        declared_symbols = tuple(
-            dict.fromkeys(self.visit_const_decl(declaration).symbol for declaration in context.constDecl())
-        )
+        for declaration in context.constDecl():
+            self.visit_const_decl(declaration)
         workflows = tuple(self.visit_workflow_decl(workflow) for workflow in context.workflowDecl())
-        constants = tuple(self._constants[symbol] for symbol in declared_symbols)
-        return WorkflowFile(constants=constants, workflows=workflows)
+        return WorkflowFile(constants=tuple(self._constants.values()), workflows=workflows)
 
     def visit_const_decl(self, context: Any) -> Constant:
         symbol = self._strip_quotes(context.constantName().getText())
@@ -135,35 +141,54 @@ class _CoreIRVisitor:
 
     def visit_comparison(self, context: Any) -> Formula:
         terms = context.term()
-        lhs = self.visit_term(terms[0])
-        rhs = self.visit_term(terms[1])
         symbol = context.comparisonOp().getText()
-        equality = Assertion(lhs=lhs, rhs=rhs)
-        if symbol == "=":
-            return equality
-        if symbol == "!=":
+        if symbol in {"=", "!="}:
+            equality = Assertion(lhs=self.visit_term(terms[0]), rhs=self.visit_term(terms[1]))
+            if symbol == "=":
+                return equality
             # HACK: FusionFlow intentionally keeps != as NOT equality; gk uses comparison_ne_op.
             return ConnectiveFormula(formula_left=equality, connective="NOT")
+
+        operator = self._resolve_operator(self._COMPARISON_OPERATORS[symbol])
+        lhs = self.visit_term(
+            terms[0],
+            None if not operator.input_concepts else operator.input_concepts[0],
+        )
+        rhs = self.visit_term(
+            terms[1],
+            None if len(operator.input_concepts) < 2 else operator.input_concepts[1],
+        )
         return Assertion(
-            lhs=CompoundTerm(
-                operator=self._resolve_operator(self._COMPARISON_OPERATORS[symbol]),
-                arguments=(lhs, rhs),
-            ),
+            lhs=CompoundTerm(operator=operator, arguments=(lhs, rhs)),
             rhs=self._boolean_constant("true"),
         )
 
-    def visit_term(self, context: Any) -> Term:
+    def visit_term(self, context: Any, expected_concept: Concept | None = None) -> Term:
         if context.left is not None and context.right is not None:
+            operator = self._resolve_operator(context.op.text)
             return CompoundTerm(
-                operator=self._resolve_operator(context.op.text),
-                arguments=(self.visit_term(context.left), self.visit_term(context.right)),
+                operator=operator,
+                arguments=(
+                    self.visit_term(
+                        context.left,
+                        None if not operator.input_concepts else operator.input_concepts[0],
+                    ),
+                    self.visit_term(
+                        context.right,
+                        None if len(operator.input_concepts) < 2 else operator.input_concepts[1],
+                    ),
+                ),
             )
 
         if context.op is not None:
-            operand = self.visit_term(context.term(0))
             if context.op.text == "+":
-                return operand
-            return CompoundTerm(operator=self._resolve_operator("-"), arguments=(operand,))
+                return self.visit_term(context.term(0), expected_concept)
+            operator = self._resolve_operator("-")
+            operand = self.visit_term(
+                context.term(0),
+                None if not operator.input_concepts else operator.input_concepts[0],
+            )
+            return CompoundTerm(operator=operator, arguments=(operand,))
 
         conditional = context.ifExpression()
         if conditional is not None:
@@ -171,11 +196,18 @@ class _CoreIRVisitor:
 
         operator_name = context.operatorName()
         if operator_name is not None:
+            operator = self._resolve_operator(operator_name.getText())
             term_list = context.termList()
-            arguments = () if term_list is None else tuple(self.visit_term(term) for term in term_list.term())
+            terms = () if term_list is None else tuple(term_list.term())
             return CompoundTerm(
-                operator=self._resolve_operator(operator_name.getText()),
-                arguments=arguments,
+                operator=operator,
+                arguments=tuple(
+                    self.visit_term(
+                        term,
+                        operator.input_concepts[index] if index < len(operator.input_concepts) else None,
+                    )
+                    for index, term in enumerate(terms)
+                ),
             )
 
         list_literal = context.listLiteral()
@@ -184,9 +216,9 @@ class _CoreIRVisitor:
 
         atomic_term = context.atomicTerm()
         if atomic_term is not None:
-            return self.visit_atomic_term(atomic_term)
+            return self.visit_atomic_term(atomic_term, expected_concept)
 
-        return self.visit_term(context.term(0))
+        return self.visit_term(context.term(0), expected_concept)
 
     def visit_if_expression(self, context: Any) -> IfTerm:
         branches = context.term()
@@ -201,24 +233,36 @@ class _CoreIRVisitor:
         items = () if term_list is None else tuple(self.visit_term(term) for term in term_list.term())
         return ListTerm(items=items)
 
-    def visit_atomic_term(self, context: Any) -> Constant:
+    def visit_atomic_term(self, context: Any, expected_concept: Concept | None = None) -> Constant:
         boolean_literal = context.booleanLiteral()
         if boolean_literal is not None:
             return self._boolean_constant(boolean_literal.getText())
-        return self._resolve_constant(context.constantName().getText())
+        return self._resolve_constant(context.constantName().getText(), expected_concept)
 
-    def _resolve_constant(self, raw_text: str) -> Constant:
+    def _resolve_constant(self, raw_text: str, expected_concept: Concept | None = None) -> Constant:
         is_numeric = raw_text.replace(".", "", 1).isdigit()
         if is_numeric:
             value = float(raw_text) if "." in raw_text else int(raw_text)
             return Constant(symbol=str(value), belong_concepts=(self._resolve_concept("ComplexNumber"),))
 
+        # Quoted and unquoted names intentionally share one constant history key.
         symbol = self._strip_quotes(raw_text)
         existing = self._constants.get(symbol)
         if existing is not None:
+            if expected_concept is not None and expected_concept not in existing.belong_concepts:
+                concepts = tuple(concept.name for concept in existing.belong_concepts)
+                raise ValueError(
+                    f"FusionFlow constant {symbol!r} has concepts {concepts!r}; "
+                    f"operator position requires concept {expected_concept.name!r}."
+                )
             return existing
 
-        raise ValueError(f"Unknown FusionFlow constant {symbol!r}; declare it with a concept.")
+        if expected_concept is None:
+            raise ValueError(f"Cannot infer concept for FusionFlow constant {symbol!r}.")
+        # HACK: GK uses Any for implicit constants; FusionFlow infers direct operator arguments here.
+        constant = Constant(symbol=symbol, belong_concepts=(expected_concept,))
+        self._constants[symbol] = constant
+        return constant
 
     def _boolean_constant(self, raw_text: str) -> Constant:
         value = raw_text.lower() == "true"
@@ -229,18 +273,16 @@ class _CoreIRVisitor:
         return constant
 
     def _resolve_concept(self, name: str) -> Concept:
-        concept = self._concepts.get(name)
-        if concept is None:
-            concept = Concept(name=name)
-            self._concepts[name] = concept
-        return concept
+        try:
+            return self._context.concepts[name]
+        except KeyError:
+            raise ValueError(f"Unknown FusionFlow concept {name!r}.") from None
 
     def _resolve_operator(self, name: str) -> Operator:
-        operator = self._operators.get(name)
-        if operator is None:
-            operator = Operator(name=name)
-            self._operators[name] = operator
-        return operator
+        try:
+            return self._context.operators[name]
+        except KeyError:
+            raise ValueError(f"Unknown FusionFlow operator {name!r}.") from None
 
     @staticmethod
     def _strip_quotes(symbol: str) -> str:
@@ -249,7 +291,7 @@ class _CoreIRVisitor:
         return symbol
 
 
-def parse_workflow(source: str) -> ParseResult:
+def parse_workflow(source: str, *, context: ParseContext) -> ParseResult:
     """Parse syntax and lower it without performing static workflow checks.
 
     Syntax failures are returned as parser diagnostics. Formula equality lowers
@@ -271,4 +313,4 @@ def parse_workflow(source: str) -> ParseResult:
     diagnostics = tuple(listener.diagnostics)
     if diagnostics:
         return ParseResult(core_ir=None, diagnostics=diagnostics)
-    return ParseResult(core_ir=_CoreIRVisitor().visit_workflow_file(tree), diagnostics=diagnostics)
+    return ParseResult(core_ir=_CoreIRVisitor(context).visit_workflow_file(tree), diagnostics=diagnostics)

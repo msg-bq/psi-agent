@@ -4,13 +4,60 @@ import pytest
 from fusion_flow_next.core_ir import (
     Assertion,
     CompoundTerm,
+    Concept,
     ConnectiveFormula,
     Constant,
     IfTerm,
     ListTerm,
+    Operator,
     WorkflowFile,
 )
-from fusion_flow_next.parser import parse_workflow
+from fusion_flow_next.parser import ParseContext, parse_workflow
+
+
+def _context() -> ParseContext:
+    concepts = {
+        name: Concept(name=name)
+        for name in (
+            "Agent",
+            "Artifact",
+            "Bool",
+            "Comparable",
+            "ComplexNumber",
+            "Count",
+            "First",
+            "Name",
+            "Second",
+            "Step",
+        )
+    }
+    operators = {
+        name: Operator(name=name)
+        for name in (
+            "+",
+            "-",
+            "*",
+            "^",
+            "compare",
+            "comparison_gt_op",
+            "comparison_gte_op",
+            "comparison_lt_op",
+            "comparison_lte_op",
+            "custom",
+            "max_attempts",
+            "max_turns",
+            "step_executor",
+        )
+    }
+    operators["typed"] = Operator(
+        name="typed",
+        input_concepts=(concepts["Artifact"], concepts["Artifact"]),
+    )
+    operators["typed_mixed"] = Operator(
+        name="typed_mixed",
+        input_concepts=(concepts["Artifact"], concepts["Agent"]),
+    )
+    return ParseContext(concepts=concepts, operators=operators)
 
 
 def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
@@ -32,7 +79,8 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
           step_executor(review) == if(!(max_attempts(review) != 2) AND max_turns(agent) = 8, writer, human);
           custom(1 + 2 * 3, [review, "draft"], -(4 ^ 2 ^ 3)) == true;
         }
-        """
+        """,
+        context=_context(),
     )
 
     assert result.diagnostics == ()
@@ -155,7 +203,8 @@ def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
             if(a != b, a, b)
           ) == true;
         }
-        """
+        """,
+        context=_context(),
     )
 
     assert result.diagnostics == ()
@@ -204,7 +253,8 @@ def test_literals_use_gk_constant_symbols_and_concepts() -> None:
         workflow literals {
           custom(002, 2.50, TRUE, false, name, "quoted") == true;
         }
-        """
+        """,
+        context=_context(),
     )
 
     assert result.diagnostics == ()
@@ -237,7 +287,8 @@ def test_duplicate_declarations_reuse_identity() -> None:
         const item: First;
         const item: First;
         workflow duplicate { custom(item) == true; }
-        """
+        """,
+        context=_context(),
     )
 
     assert result.diagnostics == ()
@@ -253,7 +304,8 @@ def test_numeric_literal_does_not_alias_numeric_declaration() -> None:
         """
         const 2: Count;
         workflow numeric { custom(2) == true; }
-        """
+        """,
+        context=_context(),
     )
 
     assert result.diagnostics == ()
@@ -274,7 +326,8 @@ def test_quoted_constants_do_not_alias_boolean_or_numeric_literals() -> None:
         const "true": Artifact;
         const "1": Artifact;
         workflow lexical_types { custom("true", true, "1", 1) == true; }
-        """
+        """,
+        context=_context(),
     )
 
     assert result.diagnostics == ()
@@ -302,17 +355,83 @@ def test_conflicting_constant_declarations_are_rejected() -> None:
             const item: First;
             const item: Second;
             workflow duplicate { custom(item) == true; }
-            """
+            """,
+            context=_context(),
         )
 
 
-def test_undeclared_constant_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Unknown FusionFlow constant 'unknown'; declare it with a concept"):
-        parse_workflow("workflow missing { custom(unknown) == true; }")
+def test_declared_quoted_and_unquoted_names_reuse_one_constant() -> None:
+    result = parse_workflow(
+        """
+        const foo: Artifact;
+        workflow reuse { typed(foo, "foo") == true; }
+        """,
+        context=_context(),
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    (foo,) = result.core_ir.constants
+    call = result.core_ir.workflows[0].assertions[0].lhs
+    assert isinstance(call, CompoundTerm)
+    assert call.arguments == (foo, foo)
+
+
+def test_undeclared_names_are_inferred_and_listed_in_first_use_order() -> None:
+    result = parse_workflow(
+        'workflow inferred { typed(second, "first") == true; }',
+        context=_context(),
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    second, first = result.core_ir.constants
+    assert (second.symbol, first.symbol) == ("second", "first")
+    assert [concept.name for concept in second.belong_concepts] == ["Artifact"]
+    assert [concept.name for concept in first.belong_concepts] == ["Artifact"]
+    call = result.core_ir.workflows[0].assertions[0].lhs
+    assert isinstance(call, CompoundTerm)
+    assert call.arguments == (second, first)
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "const foo: Agent; workflow conflict { typed(foo, foo) == true; }",
+        'workflow conflict { typed_mixed(foo, "foo") == true; }',
+    ),
+)
+def test_constant_concept_conflicts_are_rejected(source: str) -> None:
+    with pytest.raises(ValueError, match=r"FusionFlow constant 'foo'.*concept"):
+        parse_workflow(source, context=_context())
+
+
+def test_undeclared_constant_without_operator_concept_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Cannot infer concept for FusionFlow constant 'unknown'"):
+        parse_workflow(
+            "workflow missing { custom(unknown) == true; }",
+            context=_context(),
+        )
+
+
+def test_unknown_parse_context_entries_are_rejected() -> None:
+    with pytest.raises(ValueError, match="Unknown FusionFlow concept 'Missing'"):
+        parse_workflow(
+            "const foo: Missing; workflow missing { custom(foo) == true; }",
+            context=_context(),
+        )
+    with pytest.raises(ValueError, match="Unknown FusionFlow operator 'missing'"):
+        parse_workflow(
+            "workflow missing { missing(true) == true; }",
+            context=_context(),
+        )
 
 
 def test_syntax_errors_return_diagnostics_without_core_ir() -> None:
-    result = parse_workflow("workflow broken { custom(value) = true; }")
+    result = parse_workflow(
+        "workflow broken { custom(value) = true; }",
+        context=_context(),
+    )
 
     assert result.core_ir is None
     assert result.diagnostics
@@ -325,7 +444,10 @@ def test_syntax_errors_return_diagnostics_without_core_ir() -> None:
 
 
 def test_eof_diagnostics_have_a_visible_half_open_span() -> None:
-    result = parse_workflow("workflow broken { custom(value) == true;")
+    result = parse_workflow(
+        "workflow broken { custom(value) == true;",
+        context=_context(),
+    )
 
     assert result.core_ir is None
     assert result.diagnostics
