@@ -61,7 +61,7 @@ class _DiagnosticListener:
         )
 
 
-class _CoreIrVisitor:
+class _CoreIRVisitor:
     """Lower a parse tree while reusing declarations by their source symbol.
 
     The traversal follows KEDispatcher's handwritten visitor pattern. Reusing
@@ -273,4 +273,4 @@ def parse_workflow(source: str) -> ParseResult:
     diagnostics = tuple(listener.diagnostics)
     if diagnostics:
         return ParseResult(core_ir=None, diagnostics=diagnostics)
-    return ParseResult(core_ir=_CoreIrVisitor().visit_workflow_file(tree), diagnostics=diagnostics)
+    return ParseResult(core_ir=_CoreIRVisitor().visit_workflow_file(tree), diagnostics=diagnostics)
