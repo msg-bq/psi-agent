@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
+from typing import cast
 
 import pytest
 
@@ -99,6 +100,115 @@ def test_graph_components_are_frozen(
 ) -> None:
     with pytest.raises(FrozenInstanceError):
         setattr(component, field_name, value)
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        (
+            lambda: WorkflowGraph(
+                "flow",
+                cast(tuple[StepNode, ...], [StepNode("step", "name", "agent")]),
+                (),
+            ),
+            "steps must be a tuple",
+        ),
+        (
+            lambda: WorkflowGraph(
+                "flow",
+                (),
+                cast(tuple[ArtifactNode, ...], [ArtifactNode("artifact")]),
+            ),
+            "artifacts must be a tuple",
+        ),
+        (
+            lambda: WorkflowGraph(
+                "flow",
+                (),
+                (),
+                cast(tuple[ConsumesEdge, ...], []),
+            ),
+            "edges must be a tuple",
+        ),
+        (
+            lambda: StepNode(
+                "step",
+                "name",
+                "agent",
+                resources=cast(
+                    tuple[ResourceRequirement, ...],
+                    [ResourceRequirement("cpu", 1)],
+                ),
+            ),
+            "resources must be a tuple",
+        ),
+    ],
+)
+def test_mutable_collections_are_rejected(
+    factory: Callable[[], object],
+    message: str,
+) -> None:
+    with pytest.raises(WorkflowGraphError, match=message):
+        factory()
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        (
+            lambda: WorkflowGraph(
+                "flow",
+                cast(tuple[StepNode, ...], ("not-step",)),
+                (),
+            ),
+            "steps must contain only StepNode",
+        ),
+        (
+            lambda: WorkflowGraph(
+                "flow",
+                (),
+                cast(tuple[ArtifactNode, ...], ("not-artifact",)),
+            ),
+            "artifacts must contain only ArtifactNode",
+        ),
+        (
+            lambda: WorkflowGraph(
+                "flow",
+                (),
+                (),
+                cast(tuple[ConsumesEdge, ...], ("not-edge",)),
+            ),
+            "edges must contain only workflow edges",
+        ),
+        (
+            lambda: StepNode(
+                "step",
+                "name",
+                "agent",
+                resources=cast(
+                    tuple[ResourceRequirement, ...],
+                    ("not-resource",),
+                ),
+            ),
+            "resources must contain only ResourceRequirement",
+        ),
+        (
+            lambda: WorkflowGraph(
+                "flow",
+                (),
+                (),
+                policy=cast(WorkflowPolicy, "not-policy"),
+            ),
+            "policy must be a WorkflowPolicy",
+        ),
+    ],
+)
+def test_wrong_component_types_use_public_graph_error(
+    factory: Callable[[], object],
+    message: str,
+) -> None:
+    with pytest.raises(WorkflowGraphError, match=message):
+        factory()
 
 
 @pytest.mark.parametrize(

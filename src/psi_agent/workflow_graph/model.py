@@ -81,6 +81,12 @@ class StepNode:
     max_attempts: int = 1
     resources: tuple[ResourceRequirement, ...] = ()
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.resources, tuple):
+            raise WorkflowGraphError("resources must be a tuple")
+        if not all(isinstance(requirement, ResourceRequirement) for requirement in self.resources):
+            raise WorkflowGraphError("resources must contain only ResourceRequirement")
+
 
 @dataclass(frozen=True, slots=True)
 class ArtifactNode:
@@ -131,6 +137,20 @@ class WorkflowGraph:
 
     def __post_init__(self) -> None:
         self._require_identity(self.workflow_id, "workflow_id")
+        if not isinstance(self.steps, tuple):
+            raise WorkflowGraphError("steps must be a tuple")
+        if not isinstance(self.artifacts, tuple):
+            raise WorkflowGraphError("artifacts must be a tuple")
+        if not isinstance(self.edges, tuple):
+            raise WorkflowGraphError("edges must be a tuple")
+        if not isinstance(self.policy, WorkflowPolicy):
+            raise WorkflowGraphError("policy must be a WorkflowPolicy")
+        if not all(isinstance(step, StepNode) for step in self.steps):
+            raise WorkflowGraphError("steps must contain only StepNode")
+        if not all(isinstance(artifact, ArtifactNode) for artifact in self.artifacts):
+            raise WorkflowGraphError("artifacts must contain only ArtifactNode")
+        if not all(isinstance(edge, (ConsumesEdge, ProducesEdge, ForeachEdge)) for edge in self.edges):
+            raise WorkflowGraphError("edges must contain only workflow edges")
 
         step_ids: set[str] = set()
         resource_keys: set[tuple[str, str]] = set()
