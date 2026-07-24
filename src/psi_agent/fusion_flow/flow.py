@@ -1,0 +1,1268 @@
+from __future__ import annotations
+
+import json
+import math
+import re
+import subprocess
+import time
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
+from dataclasses import dataclass
+from os import PathLike, environ
+from typing import Any, TypeVar, cast
+
+import anyio
+from loguru import logger
+
+from .model import (
+    AgentConfig,
+    AgentHandle,
+    AgentInvocation,
+    BlockHandle,
+    ContainsRule,
+    EqualsRule,
+    ExecResult,
+    PipelineStep,
+    PredicateRule,
+    RangeRule,
+    RegexRule,
+    ServiceHandle,
+    ServiceParam,
+    SessionResult,
+    StaticRule,
+    TokenUsage,
+    assert_safe_name,
+)
+from .runtime import current_run_context, stable_payload_hash
+
+T = TypeVar("T")
+R = TypeVar("R")
+
+_JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+_EVALUATOR_SYSTEM_PROMPT = """你是一个严谨的结构化判断器。
+
+你只输出 JSON, 不要任何解释、前后缀或 Markdown 代码块。
+
+根据用户给出的 kind 字段, 输出对应格式:
+
+- kind = "boolean": 输出 {"value": true} 或 {"value": false}
+- kind = "number": 输出 {"value": <number>}, 必须是数字字面量
+- kind = "choice": 输出 {"value": "<候选项原文>"}, value 必须严格等于 options 中的某一项
+
+如果信息不足以判断, 按你的最佳判断给出 value, 但保持 JSON 格式。
+绝对不要输出额外字段。"""
+
+
+@dataclass(slots=True)
+class _RegisteredService:
+    handle: ServiceHandle
+    body: Callable[[dict[str, str]], Awaitable[str]]
+
+
+@dataclass(slots=True)
+class _RegisteredBlock:
+    name: str
+    description: str | None
+    body: Callable[[dict[str, str]], Awaitable[object]]
+
+
+async def _await_maybe(value: object) -> object:
+    if isinstance(value, Awaitable):
+        return await value
+    return value
+
+
+def _preview(value: object) -> str:
+    text = repr(value)
+    return text if len(text) <= 60 else f"{text[:57]}..."
+
+
+def _normalize_string_mapping(value: Mapping[str, str] | None) -> dict[str, str]:
+    if value is None:
+        return {}
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise TypeError("mapping keys and values must be strings")
+        normalized[key] = item
+    return normalized
+
+
+def _config_payload(config: AgentConfig) -> dict[str, object]:
+    return {
+        "name": config.name,
+        "system": config.system,
+        "prompt": config.prompt,
+        "model": config.model,
+        "max_tokens": config.max_tokens,
+        "temperature": config.temperature,
+        "thinking_budget_tokens": config.thinking_budget_tokens,
+        "engine": config.engine,
+        "tools": list(config.tools),
+        "max_turns": config.max_turns,
+        "context_schema": list(config.context_schema or ()),
+    }
+
+
+def _build_evaluate_prompt(
+    *,
+    question: str,
+    context: Mapping[str, str],
+    kind: str,
+    choices: Sequence[str],
+    minimum: float | None,
+    maximum: float | None,
+    integer: bool,
+) -> str:
+    lines = ["# 任务", question, ""]
+    if context:
+        lines.append("# 上下文")
+        for key, value in context.items():
+            lines.extend((f"## context.{key}", value, ""))
+    lines.append("# 输出格式")
+    if kind == "boolean":
+        lines.append('kind = "boolean", 输出 {"value": true} 或 {"value": false}。')
+    elif kind == "number":
+        constraints: list[str] = []
+        if minimum is not None:
+            constraints.append(f"min={minimum}")
+        if maximum is not None:
+            constraints.append(f"max={maximum}")
+        if integer:
+            constraints.append("必须为整数")
+        suffix = f"({', '.join(constraints)})" if constraints else ""
+        lines.append(f'kind = "number", 输出 {{"value": <number>}}{suffix}。')
+    else:
+        lines.append('kind = "choice", 必须从下列候选项中选一个:')
+        lines.extend(f"- {choice}" for choice in choices)
+        lines.append('输出 {"value": "<候选项原文>"}。')
+    return "\n".join(lines)
+
+
+def _ensure_bool(value: object, *, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError(f"{label} must return bool")
+    return value
+
+
+def _extract_json_payload(text: str) -> object:
+    fenced = _JSON_FENCE.search(text)
+    payload = fenced.group(1) if fenced is not None else text
+    return json.loads(payload)
+
+
+def _parse_evaluate_result(
+    *,
+    text: str,
+    kind: str,
+    choices: tuple[str, ...],
+    minimum: float | None,
+    maximum: float | None,
+    integer: bool,
+) -> bool | int | float | str:
+    payload = _extract_json_payload(text)
+    if not isinstance(payload, dict) or "value" not in payload:
+        raise ValueError("evaluate result must be a JSON object with value")
+    value = cast("dict[str, object]", payload)["value"]
+    if kind == "boolean":
+        if isinstance(value, bool):
+            return value
+        if value in {"true", "false"}:
+            return value == "true"
+        raise TypeError("boolean evaluate must resolve to bool")
+    if kind == "number":
+        if value is None:
+            number = 0.0
+        elif isinstance(value, bool | int | float):
+            number = float(value)
+        elif isinstance(value, str):
+            try:
+                number = float(value.strip()) if value.strip() else 0.0
+            except ValueError as error:
+                raise TypeError("number evaluate must resolve to a number") from error
+        else:
+            raise TypeError("number evaluate must resolve to a number")
+        if not math.isfinite(number):
+            raise ValueError("number evaluate must resolve to a finite number")
+        if integer:
+            number = math.floor(number + 0.5)
+        if minimum is not None:
+            number = max(number, minimum)
+        if maximum is not None:
+            number = min(number, maximum)
+        return int(number) if integer and number.is_integer() else number
+    if kind == "choice":
+        if not isinstance(value, str):
+            raise TypeError("choice evaluate must resolve to a string")
+        text = value.strip()
+        if text in choices:
+            return text
+        lowered = text.casefold()
+        matches = [choice for choice in choices if choice.casefold() == lowered]
+        if len(matches) == 1:
+            return matches[0]
+        raise ValueError(f"choice {text!r} is not one of the allowed values")
+    raise ValueError(f"unsupported evaluate kind: {kind}")
+
+
+async def _drain_stream(
+    stream: Any,
+    *,
+    limit: int,
+) -> tuple[bytes, bool]:
+    if stream is None:
+        return b"", False
+    chunks: list[bytes] = []
+    kept = 0
+    truncated = False
+    while True:
+        try:
+            chunk = await stream.receive()
+        except anyio.EndOfStream:
+            break
+        if kept < limit:
+            remaining = limit - kept
+            chunks.append(chunk[:remaining])
+            kept += min(len(chunk), remaining)
+            if len(chunk) > remaining:
+                truncated = True
+        elif chunk:
+            truncated = True
+    return b"".join(chunks), truncated
+
+
+async def _run_parallel_tasks[T](
+    tasks: Sequence[Callable[[], Awaitable[T]]],
+    *,
+    join: str,
+    required: int,
+) -> tuple[list[T], tuple[int, ...]]:
+    send_stream, receive_stream = anyio.create_memory_object_stream[tuple[int, bool, object]](
+        len(tasks),
+    )
+
+    async def worker(
+        index: int,
+        task: Callable[[], Awaitable[T]],
+        sender: Any,
+    ) -> None:
+        async with sender:
+            try:
+                value = await task()
+            except Exception as error:
+                await sender.send((index, False, error))
+            else:
+                await sender.send((index, True, value))
+
+    results: dict[int, T] = {}
+    completed: list[T] = []
+    selected_indexes: list[int] = []
+    failure: Exception | None = None
+    async with receive_stream, anyio.create_task_group() as task_group:
+        for index, task in enumerate(tasks):
+            task_group.start_soon(worker, index, task, send_stream.clone())
+        await send_stream.aclose()
+
+        expected = len(tasks) if join == "all" else required
+        while len(completed) < expected:
+            index, ok, payload = await receive_stream.receive()
+            if not ok:
+                failure = cast("Exception", payload)
+                task_group.cancel_scope.cancel()
+                break
+            value = cast("T", payload)
+            if join == "all":
+                results[index] = value
+                completed.append(value)
+            else:
+                selected_indexes.append(index)
+                completed.append(value)
+        if join != "all" or failure is not None:
+            task_group.cancel_scope.cancel()
+
+    if failure is not None:
+        raise failure
+    if join == "all":
+        return [results[index] for index in range(len(tasks))], ()
+    return completed, tuple(selected_indexes)
+
+
+class Flow:
+    def agent(self, config: AgentConfig) -> AgentHandle:
+        return AgentHandle(name=config.name, config=config)
+
+    async def session(
+        self,
+        agent: AgentHandle,
+        prompt: str,
+        context: Mapping[str, str] | None = None,
+        *,
+        binding_name: str | None = None,
+    ) -> str:
+        run = current_run_context()
+        if run.runner is None:
+            raise RuntimeError("flow.session requires an injected runner")
+        normalized_context = _normalize_string_mapping(context)
+        schema = agent.config.context_schema
+        if schema is not None:
+            expected = set(schema)
+            actual = set(normalized_context)
+            if actual != expected:
+                raise ValueError(
+                    f"context keys must match exactly: expected {sorted(expected)}, got {sorted(actual)}",
+                )
+        cache_key = stable_payload_hash(
+            {
+                "operation": "session",
+                "config": _config_payload(agent.config),
+                "prompt": prompt,
+                "context": normalized_context,
+            }
+        )
+        candidate = binding_name
+        if candidate is None and run.resumed:
+            candidate = await run._next_call_name(agent.name)
+        async with run._trace("session", agent.name, input_summary=prompt) as trace:
+            if candidate is not None:
+                cached = run._resume_lookup(
+                    candidate,
+                    cache_key=cache_key,
+                    operation="session",
+                )
+                if cached is not None:
+                    trace.cached = True
+                    trace.output_summary = cached
+                    return cached
+
+            reserved = (
+                await run._reserve_binding(binding_name)
+                if binding_name is not None
+                else await run._reserve_auto_binding(agent.name)
+            )
+            try:
+                raw = await run.runner(
+                    agent.config,
+                    AgentInvocation(prompt=prompt, context=normalized_context or None),
+                )
+                result = raw if isinstance(raw, SessionResult) else SessionResult(text=raw)
+                trace.tokens = TokenUsage(
+                    calls=1,
+                    input=result.input_tokens,
+                    output=result.output_tokens,
+                )
+                trace.output_summary = result.text
+                metadata = run._binding_metadata(
+                    reserved,
+                    produced_by=agent.name,
+                    tokens={
+                        "input": result.input_tokens,
+                        "output": result.output_tokens,
+                    },
+                    operation="session",
+                    agent=agent.name,
+                    cache_key=cache_key,
+                    input_hash=stable_payload_hash(
+                        {"prompt": prompt, "context": normalized_context},
+                    ),
+                )
+                await run._commit_reserved_binding(
+                    reserved,
+                    result.text,
+                    metadata=metadata,
+                )
+            except BaseException:
+                await run._release_binding(reserved)
+                raise
+        await run._write_trace_file(reserved, trace)
+        return result.text
+
+    def service(
+        self,
+        name: str,
+        body: Callable[[dict[str, str]], Awaitable[str]],
+        *,
+        params: Sequence[ServiceParam] = (),
+        description: str | None = None,
+    ) -> ServiceHandle:
+        run = current_run_context()
+        handle = ServiceHandle(
+            name=name,
+            params=tuple(params),
+            description=description,
+        )
+        registered = _RegisteredService(handle=handle, body=body)
+        normalized = run._register(
+            run.services,
+            handle.name,
+            registered,
+            kind="service",
+        )
+        return ServiceHandle(
+            name=normalized,
+            params=handle.params,
+            description=description,
+        )
+
+    async def call(
+        self,
+        service: ServiceHandle,
+        args: Mapping[str, str] | None = None,
+        *,
+        binding_name: str | None = None,
+    ) -> str:
+        run = current_run_context()
+        normalized_args = _normalize_string_mapping(args)
+        registered = run.services.get(service.name)
+        if not isinstance(registered, _RegisteredService):
+            raise ValueError(f'service "{service.name}" is not defined')
+
+        declared = {param.name: param for param in registered.handle.params}
+        for name, param in declared.items():
+            if param.required and name not in normalized_args:
+                raise ValueError(f'missing required argument "{name}"')
+        if declared:
+            unknown = set(normalized_args) - set(declared)
+            if unknown:
+                raise ValueError(f"unknown arguments: {sorted(unknown)}")
+
+        cache_key = stable_payload_hash(
+            {
+                "operation": "call",
+                "service": service.name,
+                "args": normalized_args,
+            }
+        )
+        candidate = binding_name
+        if candidate is None and run.resumed:
+            candidate = await run._next_call_name(service.name)
+        async with run._trace(
+            "call",
+            service.name,
+            input_summary=_preview(normalized_args),
+        ) as trace:
+            if candidate is not None:
+                cached = run._resume_lookup(
+                    candidate,
+                    cache_key=cache_key,
+                    operation="call",
+                )
+                if cached is not None:
+                    trace.cached = True
+                    trace.output_summary = cached
+                    return cached
+
+            reserved = (
+                await run._reserve_binding(binding_name)
+                if binding_name is not None
+                else await run._reserve_auto_binding(service.name)
+            )
+            try:
+                result = await registered.body(dict(normalized_args))
+                if not isinstance(result, str):
+                    raise TypeError("service body must return a string")
+                trace.output_summary = result
+                await run._commit_reserved_binding(
+                    reserved,
+                    result,
+                    metadata=run._binding_metadata(
+                        reserved,
+                        produced_by=service.name,
+                        operation="call",
+                        service=service.name,
+                        cache_key=cache_key,
+                    ),
+                )
+                return result
+            except BaseException:
+                await run._release_binding(reserved)
+                raise
+
+    async def parallel(
+        self,
+        tasks: Sequence[Callable[[], Awaitable[T]]],
+        *,
+        join: str = "all",
+        any_count: int | None = None,
+    ) -> list[T]:
+        required = 0
+        if join == "all":
+            required = len(tasks)
+        elif join == "first":
+            if not tasks:
+                raise ValueError('parallel(join="first") requires at least one task')
+            required = 1
+        elif join == "any":
+            if not tasks:
+                raise ValueError('parallel(join="any") requires at least one task')
+            if isinstance(any_count, bool) or not isinstance(any_count, int):
+                raise TypeError("any_count must be an integer")
+            if any_count < 1 or any_count > len(tasks):
+                raise ValueError("any_count must satisfy 1 <= any_count <= len(tasks)")
+            required = any_count
+        else:
+            raise ValueError(f"unsupported join mode: {join}")
+
+        run = current_run_context()
+        async with run._trace(
+            "parallel",
+            join,
+            metadata={"task_count": len(tasks), "join": join, "any_count": any_count},
+        ) as trace:
+            results, selected_indexes = await _run_parallel_tasks(
+                tasks,
+                join=join,
+                required=required,
+            )
+            if selected_indexes:
+                trace.metadata["selected_indexes"] = list(selected_indexes)
+                if join == "first":
+                    trace.metadata["selected_index"] = selected_indexes[0]
+            return results
+
+    async def if_(
+        self,
+        condition: bool,
+        then_fn: Callable[[], Awaitable[T]],
+        else_fn: Callable[[], Awaitable[T]] | None = None,
+    ) -> T | None:
+        if not isinstance(condition, bool):
+            raise TypeError("condition must be bool")
+        run = current_run_context()
+        async with run._trace(
+            "if",
+            "if",
+            metadata={"condition": condition},
+        ) as trace:
+            if condition:
+                trace.metadata["selected_index"] = 0
+                async with run._trace("ifBranch", "then") as branch:
+                    value = await then_fn()
+                    branch.output_summary = _preview(value)
+                    return value
+            if else_fn is not None:
+                trace.metadata["selected_index"] = 1
+                async with run._trace("ifBranch", "else") as branch:
+                    value = await else_fn()
+                    branch.output_summary = _preview(value)
+                    return value
+            trace.metadata["selected_index"] = None
+            return None
+
+    async def if_else(
+        self,
+        branches: Sequence[tuple[bool, Callable[[], Awaitable[T]]]],
+        else_fn: Callable[[], Awaitable[T]] | None = None,
+    ) -> T | None:
+        for index, (condition, _) in enumerate(branches):
+            if not isinstance(condition, bool):
+                raise TypeError(f"branch {index} condition must be bool")
+        run = current_run_context()
+        async with run._trace("if", "ifElse") as trace:
+            for index, (condition, fn) in enumerate(branches):
+                if not condition:
+                    continue
+                trace.metadata["selected_index"] = index
+                async with run._trace("ifBranch", f"branch-{index}") as branch:
+                    value = await fn()
+                    branch.output_summary = _preview(value)
+                    return value
+            if else_fn is not None:
+                trace.metadata["selected_index"] = len(branches)
+                async with run._trace("ifBranch", "else") as branch:
+                    value = await else_fn()
+                    branch.output_summary = _preview(value)
+                    return value
+            trace.metadata["selected_index"] = None
+            return None
+
+    async def for_each(
+        self,
+        items: Sequence[T],
+        fn: Callable[[T, int], Awaitable[object]],
+    ) -> None:
+        run = current_run_context()
+        async with run._trace("forEach", "forEach", metadata={"parallel": False}) as trace:
+            trace.metadata["item_count"] = len(items)
+            for index, item in enumerate(items):
+                async with run._trace(
+                    "iteration",
+                    str(index),
+                    input_summary=_preview(item),
+                    metadata={"index": index},
+                ):
+                    await fn(item, index)
+
+    async def parallel_for_each(
+        self,
+        items: Sequence[T],
+        fn: Callable[[T, int], Awaitable[object]],
+    ) -> None:
+        run = current_run_context()
+        async with run._trace(
+            "forEach",
+            "parallelForEach",
+            metadata={"parallel": True, "item_count": len(items)},
+        ):
+            tasks: list[Callable[[], Awaitable[object]]] = []
+            for index, item in enumerate(items):
+
+                async def visit(
+                    item: T = item,
+                    index: int = index,
+                ) -> object:
+                    async with run._trace(
+                        "iteration",
+                        str(index),
+                        input_summary=_preview(item),
+                        metadata={"index": index},
+                    ):
+                        return await fn(item, index)
+
+                tasks.append(visit)
+            await _run_parallel_tasks(tasks, join="all", required=len(tasks))
+
+    async def evaluate(
+        self,
+        *,
+        question: str,
+        kind: str,
+        agent: AgentHandle | None = None,
+        context: Mapping[str, str] | None = None,
+        choices: Sequence[str] = (),
+        minimum: float | None = None,
+        maximum: float | None = None,
+        integer: bool = False,
+        binding_name: str | None = None,
+    ) -> bool | int | float | str:
+        if kind not in {"boolean", "number", "choice"}:
+            raise ValueError(f"unsupported evaluate kind: {kind}")
+        if kind == "choice":
+            if not choices:
+                raise ValueError("choice evaluate requires non-empty choices")
+            if any(not isinstance(choice, str) for choice in choices):
+                raise TypeError("choice evaluate choices must be strings")
+            if len(set(choices)) != len(tuple(choices)):
+                raise ValueError("choice evaluate choices must be unique")
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError("minimum must be <= maximum")
+
+        run = current_run_context()
+        if run.runner is None:
+            raise RuntimeError("flow.evaluate requires an injected runner")
+        normalized_context = _normalize_string_mapping(context)
+        evaluator = agent or self.agent(
+            AgentConfig(
+                name="__evaluator__",
+                system=_EVALUATOR_SYSTEM_PROMPT,
+                max_tokens=256,
+                temperature=0,
+            )
+        )
+        prompt = _build_evaluate_prompt(
+            question=question,
+            context=normalized_context,
+            kind=kind,
+            choices=choices,
+            minimum=minimum,
+            maximum=maximum,
+            integer=integer,
+        )
+        reserved = (
+            await run._reserve_binding(binding_name)
+            if binding_name is not None
+            else await run._reserve_auto_binding(f"evaluate.{evaluator.name}")
+        )
+        try:
+            async with run._trace(
+                "evaluate",
+                kind,
+                input_summary=question,
+                metadata={
+                    "kind": kind,
+                    "question": question,
+                    "evaluator": evaluator.name,
+                    "options": list(choices),
+                    "minimum": minimum,
+                    "maximum": maximum,
+                    "integer": integer,
+                    "binding_name": reserved,
+                },
+            ) as trace:
+                raw_result = await run.runner(
+                    evaluator.config,
+                    AgentInvocation(
+                        prompt=prompt,
+                        context=normalized_context or None,
+                    ),
+                )
+                session_result = raw_result if isinstance(raw_result, SessionResult) else SessionResult(text=raw_result)
+                parsed = _parse_evaluate_result(
+                    text=session_result.text,
+                    kind=kind,
+                    choices=tuple(choices),
+                    minimum=minimum,
+                    maximum=maximum,
+                    integer=integer,
+                )
+                payload = json.dumps({"value": parsed}, ensure_ascii=False)
+                trace.tokens = TokenUsage(
+                    calls=1,
+                    input=session_result.input_tokens,
+                    output=session_result.output_tokens,
+                )
+                trace.output_summary = payload
+                await run._commit_reserved_binding(
+                    reserved,
+                    payload,
+                    metadata=run._binding_metadata(
+                        reserved,
+                        produced_by=evaluator.name,
+                        tokens={
+                            "input": session_result.input_tokens,
+                            "output": session_result.output_tokens,
+                        },
+                        operation="evaluate",
+                        kind=kind,
+                        evaluator=evaluator.name,
+                        question=question,
+                    ),
+                )
+        except BaseException:
+            await run._release_binding(reserved)
+            raise
+        await run._write_trace_file(reserved, trace)
+        return parsed
+
+    async def loop_until(
+        self,
+        condition: Callable[[], Awaitable[bool] | bool],
+        fn: Callable[[int], Awaitable[object]],
+        *,
+        max_iterations: int = 8,
+    ) -> None:
+        if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
+            raise ValueError("max_iterations must be a positive integer")
+        run = current_run_context()
+        async with run._trace("loop", "loopUntil") as trace:
+            iterations = 0
+            while iterations < max_iterations:
+                async with run._trace(
+                    "iteration",
+                    f"round-{iterations}",
+                    metadata={"index": iterations},
+                ):
+                    await fn(iterations)
+                iterations += 1
+                if _ensure_bool(await _await_maybe(condition()), label="condition"):
+                    trace.metadata["max_iterations_reached"] = False
+                    trace.metadata["iterations"] = iterations
+                    return
+            trace.metadata["max_iterations_reached"] = True
+            trace.metadata["iterations"] = iterations
+            logger.warning(
+                f"FusionFlow loop_until reached max_iterations={max_iterations}",
+            )
+
+    async def loop_while(
+        self,
+        condition: Callable[[], Awaitable[bool] | bool],
+        fn: Callable[[int], Awaitable[object]],
+        *,
+        max_iterations: int = 8,
+    ) -> None:
+        if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
+            raise ValueError("max_iterations must be a positive integer")
+        run = current_run_context()
+        async with run._trace("loop", "loopWhile") as trace:
+            iterations = 0
+            while iterations < max_iterations:
+                if not _ensure_bool(await _await_maybe(condition()), label="condition"):
+                    trace.metadata["max_iterations_reached"] = False
+                    trace.metadata["iterations"] = iterations
+                    return
+                async with run._trace(
+                    "iteration",
+                    f"round-{iterations}",
+                    metadata={"index": iterations},
+                ):
+                    await fn(iterations)
+                iterations += 1
+            trace.metadata["max_iterations_reached"] = True
+            trace.metadata["iterations"] = iterations
+            logger.warning(
+                f"FusionFlow loop_while reached max_iterations={max_iterations}",
+            )
+
+    async def choice(
+        self,
+        *,
+        question: str,
+        branches: Sequence[tuple[str, Callable[[], Awaitable[T]]]],
+        agent: AgentHandle | None = None,
+        context: Mapping[str, str] | None = None,
+        default_label: str | None = None,
+        binding_name: str | None = None,
+    ) -> T:
+        labels = [label for label, _ in branches]
+        if not labels:
+            raise ValueError("choice requires at least one branch")
+        if len(set(labels)) != len(labels):
+            raise ValueError("choice labels must be unique")
+        if default_label is not None and default_label not in labels:
+            raise ValueError("default_label must name an existing branch")
+
+        run = current_run_context()
+        async with run._trace(
+            "choice",
+            "choice",
+            metadata={
+                "question": question,
+                "options": labels,
+            },
+        ) as trace:
+            try:
+                selected = await self.evaluate(
+                    question=question,
+                    kind="choice",
+                    agent=agent,
+                    context=context,
+                    choices=tuple(labels),
+                    binding_name=binding_name,
+                )
+            except Exception:
+                if default_label is None:
+                    raise
+                selected = default_label
+
+            for index, (label, fn) in enumerate(branches):
+                if label != selected:
+                    continue
+                trace.metadata["selected_index"] = index
+                trace.metadata["chosen_index"] = index
+                trace.metadata["chosen_label"] = label
+                async with run._trace("choiceBranch", label) as branch:
+                    value = await fn()
+                    branch.output_summary = _preview(value)
+                    return value
+        raise ValueError(f"selected choice {selected!r} does not exist")
+
+    async def map(
+        self,
+        items: Sequence[T],
+        fn: Callable[[T, int], Awaitable[R]],
+    ) -> list[R]:
+        results: list[R] = []
+
+        async def run_one(item: T, index: int) -> None:
+            results.append(await fn(item, index))
+
+        await self.for_each(items, run_one)
+        return results
+
+    async def pmap(
+        self,
+        items: Sequence[T],
+        fn: Callable[[T, int], Awaitable[R]],
+    ) -> list[R]:
+        results: dict[int, R] = {}
+
+        async def run_one(item: T, index: int) -> None:
+            results[index] = await fn(item, index)
+
+        await self.parallel_for_each(items, run_one)
+        return [results[index] for index in range(len(items))]
+
+    async def filter(
+        self,
+        items: Sequence[T],
+        predicate: Callable[[T, int], Awaitable[object]],
+    ) -> list[T]:
+        kept: list[T] = []
+
+        async def decide(item: T, index: int) -> None:
+            if bool(await predicate(item, index)):
+                kept.append(item)
+
+        await self.for_each(items, decide)
+        return kept
+
+    async def pfilter(
+        self,
+        items: Sequence[T],
+        predicate: Callable[[T, int], Awaitable[object]],
+    ) -> list[T]:
+        flags = await self.pmap(items, predicate)
+        return [item for item, keep in zip(items, flags, strict=False) if bool(keep)]
+
+    async def reduce(
+        self,
+        items: Sequence[T],
+        fn: Callable[[R, T, int], Awaitable[R]],
+        initial: R,
+    ) -> R:
+        value = initial
+
+        async def accumulate(item: T, index: int) -> None:
+            nonlocal value
+            value = await fn(value, item, index)
+
+        await self.for_each(items, accumulate)
+        return value
+
+    async def pipeline(
+        self,
+        value: T,
+        steps: Sequence[PipelineStep],
+    ) -> object:
+        run = current_run_context()
+        current: object = value
+        async with run._trace("pipeline", "pipeline") as trace:
+            for index, step in enumerate(steps):
+                if not isinstance(step, PipelineStep):
+                    raise TypeError("pipeline steps must be PipelineStep instances")
+                label = step.label or str(index)
+                async with run._trace(
+                    "pipelineStep",
+                    label,
+                    input_summary=_preview(current),
+                    metadata={"index": index, "label": step.label},
+                ) as branch:
+                    current = await step.fn(current)
+                    branch.output_summary = _preview(current)
+            trace.output_summary = _preview(current)
+            return current
+
+    async def retry(
+        self,
+        operation: Callable[[], Awaitable[T]],
+        *,
+        max_attempts: int = 3,
+        initial_delay: float = 0.2,
+        backoff_factor: float = 2.0,
+        max_delay: float = 8.0,
+        should_retry: Callable[[Exception, int], Awaitable[bool] | bool] | None = None,
+    ) -> T:
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+            raise ValueError("max_attempts must be a positive integer")
+        for name, value in (
+            ("initial_delay", initial_delay),
+            ("backoff_factor", backoff_factor),
+            ("max_delay", max_delay),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+                raise ValueError(f"{name} must be a finite number")
+        if initial_delay < 0 or max_delay < 0:
+            raise ValueError("retry delays must be non-negative")
+        if backoff_factor <= 0:
+            raise ValueError("backoff_factor must be positive")
+        run = current_run_context()
+        async with run._trace(
+            "retry",
+            "retry",
+            metadata={
+                "max_attempts": max_attempts,
+                "attempts": 0,
+                "succeeded": False,
+                "error_trail": [],
+            },
+        ) as trace:
+            delay = initial_delay
+            attempts = 0
+            while True:
+                attempts += 1
+                trace.metadata["attempts"] = attempts
+                try:
+                    value = await operation()
+                except Exception as error:
+                    error_trail = cast("list[str]", trace.metadata["error_trail"])
+                    error_trail.append(f"attempt {attempts}: {error}")
+                    retryable = True
+                    if should_retry is not None:
+                        retryable = _ensure_bool(
+                            await _await_maybe(should_retry(error, attempts)),
+                            label="should_retry",
+                        )
+                    if attempts >= max_attempts or not retryable:
+                        raise
+                    await anyio.sleep(max(delay, 0))
+                    delay = min(max_delay, delay * backoff_factor)
+                else:
+                    trace.metadata["succeeded"] = True
+                    trace.output_summary = _preview(value)
+                    return value
+
+    async def evaluate_static(
+        self,
+        *,
+        question: str,
+        rule: StaticRule,
+        binding_name: str | None = None,
+    ) -> bool:
+        run = current_run_context()
+        if not isinstance(
+            rule,
+            RegexRule | ContainsRule | EqualsRule | RangeRule | PredicateRule,
+        ):
+            raise TypeError("rule must be a StaticRule")
+        async with run._trace(
+            "evaluate",
+            "static",
+            input_summary=question,
+            metadata={
+                "kind": "static",
+                "question": question,
+                "static_rule": rule.kind,
+            },
+        ) as trace:
+            if isinstance(rule, RegexRule):
+                pattern = re.compile(rule.pattern) if isinstance(rule.pattern, str) else rule.pattern
+                result = pattern.search(rule.on) is not None
+            elif isinstance(rule, ContainsRule):
+                result = rule.needle in rule.on
+            elif isinstance(rule, EqualsRule):
+                result = rule.on == rule.expected
+            elif isinstance(rule, RangeRule):
+                result = True
+                if rule.minimum is not None:
+                    result = result and rule.value >= rule.minimum
+                if rule.maximum is not None:
+                    result = result and rule.value <= rule.maximum
+            else:
+                result = _ensure_bool(
+                    await _await_maybe(rule.fn()),
+                    label="predicate",
+                )
+
+            reserved = (
+                await run._reserve_binding(binding_name)
+                if binding_name is not None
+                else await run._reserve_auto_binding("evaluate.static")
+            )
+            try:
+                payload = json.dumps(
+                    {"value": result, "rule": rule.kind},
+                    ensure_ascii=False,
+                )
+                trace.output_summary = payload
+                await run._commit_reserved_binding(
+                    reserved,
+                    payload,
+                    metadata=run._binding_metadata(
+                        reserved,
+                        produced_by="__static__",
+                        operation="evaluate_static",
+                        question=question,
+                        static_rule=rule.kind,
+                    ),
+                )
+                return result
+            except BaseException:
+                await run._release_binding(reserved)
+                raise
+
+    async def use(
+        self,
+        service_name: str,
+        args: Mapping[str, str] | None = None,
+        *,
+        binding_name: str | None = None,
+    ) -> str:
+        return await self.call(
+            ServiceHandle(name=service_name),
+            args,
+            binding_name=binding_name,
+        )
+
+    async def block(
+        self,
+        label: str,
+        fn: Callable[[], Awaitable[T]],
+    ) -> T:
+        run = current_run_context()
+        async with run._trace(
+            "block",
+            label,
+            metadata={"is_defined": False},
+        ) as trace:
+            value = await fn()
+            trace.output_summary = _preview(value)
+            return value
+
+    def define_block(
+        self,
+        name: str,
+        body: Callable[[dict[str, str]], Awaitable[object]],
+        *,
+        description: str | None = None,
+    ) -> BlockHandle:
+        run = current_run_context()
+        block = _RegisteredBlock(name=name, description=description, body=body)
+        normalized = run._register(run.blocks, name, block, kind="block")
+        return BlockHandle(name=normalized, description=description)
+
+    async def run_block(
+        self,
+        block: BlockHandle | str,
+        args: Mapping[str, str] | None = None,
+    ) -> object:
+        run = current_run_context()
+        name = block.name if isinstance(block, BlockHandle) else block
+        registered = run.blocks.get(name)
+        if not isinstance(registered, _RegisteredBlock):
+            raise ValueError(f'block "{name}" is not defined')
+        values = _normalize_string_mapping(args)
+        async with run._trace(
+            "block",
+            name,
+            input_summary=_preview(values),
+            metadata={"is_defined": True, "args": values},
+        ) as trace:
+            result = await registered.body(values)
+            trace.output_summary = _preview(result)
+            return result
+
+    async def repeat(
+        self,
+        times: int,
+        fn: Callable[[int], Awaitable[object]],
+    ) -> None:
+        if isinstance(times, bool) or not isinstance(times, int) or times < 0:
+            raise ValueError("times must be a non-negative integer")
+        await self.for_each(list(range(times)), lambda item, index: fn(item))
+
+    async def input(self, name: str, default_value: str) -> str:
+        return await current_run_context().input(name, default_value)
+
+    async def output(self, name: str, value: str) -> None:
+        await current_run_context().save(name, value)
+
+    async def exec(
+        self,
+        name: str,
+        argv: Sequence[str],
+        *,
+        stdin: str | bytes | None = None,
+        cwd: str | PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout_seconds: float = 300.0,
+        output_limit: int = 4 * 1024 * 1024,
+        binding_name: str | None = None,
+    ) -> ExecResult:
+        normalized_name = assert_safe_name(name)
+        if not argv:
+            raise ValueError("argv must not be empty")
+        if any(not isinstance(item, str) for item in argv):
+            raise TypeError("argv items must be strings")
+        if isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if isinstance(output_limit, bool) or not isinstance(output_limit, int) or output_limit < 1:
+            raise ValueError("output_limit must be a positive integer")
+
+        run = current_run_context()
+        command = list(argv)
+        merged_env = None
+        if env is not None:
+            merged_env = {**environ, **_normalize_string_mapping(env)}
+        reserved = (
+            await run._reserve_binding(binding_name)
+            if binding_name is not None
+            else await run._reserve_auto_binding(normalized_name)
+        )
+        process: Any = None
+        try:
+            async with run._trace(
+                "exec",
+                normalized_name,
+                input_summary=_preview(command),
+                metadata={"name": normalized_name, "argv": command},
+            ) as trace:
+                started = time.perf_counter()
+                process = await anyio.open_process(
+                    command,
+                    stdin=subprocess.PIPE if stdin is not None else None,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=cwd,
+                    env=merged_env,
+                )
+                if stdin is not None and process.stdin is not None:
+                    payload = stdin.encode("utf-8") if isinstance(stdin, str) else stdin
+                    await process.stdin.send(payload)
+                    await process.stdin.aclose()
+                with anyio.move_on_after(timeout_seconds) as scope:
+                    stdout_bytes, stdout_truncated, stderr_bytes, stderr_truncated = await _read_process_streams(
+                        process,
+                        output_limit=output_limit,
+                    )
+                    return_code = await process.wait()
+                if scope.cancel_called:
+                    raise TimeoutError(f"process timed out after {timeout_seconds}s")
+                raw = stdout_bytes.decode("utf-8", errors="replace")
+                stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+                result = ExecResult(
+                    stdout=raw.rstrip("\r\n"),
+                    raw=raw,
+                    stderr=stderr_text,
+                    exit_code=return_code,
+                    duration_ms=(time.perf_counter() - started) * 1_000,
+                    truncated=stdout_truncated or stderr_truncated,
+                )
+                if result.exit_code != 0:
+                    raise RuntimeError(
+                        f"command exited with code {result.exit_code}: {result.stderr or result.stdout}",
+                    )
+                trace.output_summary = result.stdout
+                await run._commit_reserved_binding(
+                    reserved,
+                    result.stdout,
+                    metadata=run._binding_metadata(
+                        reserved,
+                        produced_by=normalized_name,
+                        operation="exec",
+                        exec_name=normalized_name,
+                        argv=command,
+                    ),
+                )
+                return result
+        except BaseException:
+            await run._release_binding(reserved)
+            if process is not None:
+                with anyio.CancelScope(shield=True):
+                    if process.returncode is None:
+                        with suppress(ProcessLookupError):
+                            process.terminate()
+                    await process.wait()
+            raise
+
+
+async def _read_process_streams(
+    process: Any,
+    *,
+    output_limit: int,
+) -> tuple[bytes, bool, bytes, bool]:
+    stdout_bytes: bytes = b""
+    stderr_bytes: bytes = b""
+    stdout_truncated = False
+    stderr_truncated = False
+
+    async def read_stdout() -> None:
+        nonlocal stdout_bytes, stdout_truncated
+        stdout_bytes, stdout_truncated = await _drain_stream(
+            process.stdout,
+            limit=output_limit,
+        )
+
+    async def read_stderr() -> None:
+        nonlocal stderr_bytes, stderr_truncated
+        stderr_bytes, stderr_truncated = await _drain_stream(
+            process.stderr,
+            limit=output_limit,
+        )
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(read_stdout)
+        task_group.start_soon(read_stderr)
+    return stdout_bytes, stdout_truncated, stderr_bytes, stderr_truncated
+
+
+flow = Flow()
