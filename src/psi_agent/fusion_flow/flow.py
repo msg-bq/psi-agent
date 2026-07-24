@@ -1,3 +1,10 @@
+"""FusionFlow 的动态执行原语。
+
+本文件保留旧 TypeScript ``flow.ts`` 的六批 API 分组。这里记录的是一次运行如何
+执行与生成 trace; 声明式 WorkflowGraph、计划生成和 human/agent/program
+executor 分派属于独立模块。
+"""
+
 from __future__ import annotations
 
 import json
@@ -38,12 +45,18 @@ from .runtime import current_run_context, stable_payload_hash
 T = TypeVar("T")
 R = TypeVar("R")
 
+# ============================================================
+# 第三批基础设施: 内建 evaluator agent + JSON 解析
+# ============================================================
+
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+# 默认 evaluator 只供 flow.evaluate/choice 内部使用, 不注册成用户 agent。
+# ponytail: SessionRunner 暂无结构化输出协议; 先用提示词约束, 再按旧 TS 规则解析和归一化。
 _EVALUATOR_SYSTEM_PROMPT = """你是一个严谨的结构化判断器。
 
 你只输出 JSON, 不要任何解释、前后缀或 Markdown 代码块。
 
-根据用户给出的 kind 字段, 输出对应格式:
+根据用户消息“输出格式”中的 kind 要求, 输出对应格式:
 
 - kind = "boolean": 输出 {"value": true} 或 {"value": false}
 - kind = "number": 输出 {"value": <number>}, 必须是数字字面量
@@ -51,6 +64,10 @@ _EVALUATOR_SYSTEM_PROMPT = """你是一个严谨的结构化判断器。
 
 如果信息不足以判断, 按你的最佳判断给出 value, 但保持 JSON 格式。
 绝对不要输出额外字段。"""
+
+# ============================================================
+# 内部注册类型与通用工具
+# ============================================================
 
 
 @dataclass(slots=True)
@@ -287,8 +304,25 @@ async def _run_parallel_tasks[T](
     return completed, tuple(selected_indexes)
 
 
+# ============================================================
+# FlowAPI 工厂
+# ============================================================
+
+
 class Flow:
+    """绑定当前 ``run(...)`` 上下文的动态工作流原语。
+
+    除 ``agent`` 外, 方法都在一次活动运行中使用。它们一边执行 Python callable,
+    一边记录 trace、binding 和可恢复元数据; 它们本身不是声明式图节点。
+    """
+
+    # ============================================================
+    # 第一批: 核心调用 (agent / session / service / call)
+    # ============================================================
+
     def agent(self, config: AgentConfig) -> AgentHandle:
+        """创建不可变的 agent 句柄; 此时不会调用模型或注册全局 agent。"""
+
         return AgentHandle(name=config.name, config=config)
 
     async def session(
@@ -299,6 +333,12 @@ class Flow:
         *,
         binding_name: str | None = None,
     ) -> str:
+        """通过注入的 runner 执行一次 agent session, 并持久化成功结果。
+
+        ``context_schema`` 存在时, context 的 key 必须精确匹配。恢复运行只会复用
+        agent 完整配置、prompt 与 context 哈希均一致的旧 binding。
+        """
+
         run = current_run_context()
         if run.runner is None:
             raise RuntimeError("flow.session requires an injected runner")
@@ -384,6 +424,8 @@ class Flow:
         params: Sequence[ServiceParam] = (),
         description: str | None = None,
     ) -> ServiceHandle:
+        """在当前运行中注册一个命名异步服务并返回句柄, 不立即执行服务体。"""
+
         run = current_run_context()
         handle = ServiceHandle(
             name=name,
@@ -410,6 +452,12 @@ class Flow:
         *,
         binding_name: str | None = None,
     ) -> str:
+        """校验参数并调用已注册服务, 然后持久化字符串结果。
+
+        恢复身份只包含 service 名称和参数, 不包含服务体代码; 同名服务实现发生变化
+        时, 旧结果仍可能被复用, 这是从 TS 版本保留下来的兼容语义。
+        """
+
         run = current_run_context()
         normalized_args = _normalize_string_mapping(args)
         registered = run.services.get(service.name)
@@ -477,6 +525,10 @@ class Flow:
                 await run._release_binding(reserved)
                 raise
 
+    # ============================================================
+    # 第二批: 控制流 (parallel / if_ / if_else / for_each / parallel_for_each)
+    # ============================================================
+
     async def parallel(
         self,
         tasks: Sequence[Callable[[], Awaitable[T]]],
@@ -484,6 +536,12 @@ class Flow:
         join: str = "all",
         any_count: int | None = None,
     ) -> list[T]:
+        """并发执行零参数异步任务, 并按 join 策略汇合。
+
+        ``all`` 等待全部并按输入顺序返回; ``first``/``any`` 按完成顺序选取结果,
+        达到数量后取消其余任务。任一已观察到的失败也会取消同组剩余任务。
+        """
+
         required = 0
         if join == "all":
             required = len(tasks)
@@ -525,6 +583,8 @@ class Flow:
         then_fn: Callable[[], Awaitable[T]],
         else_fn: Callable[[], Awaitable[T]] | None = None,
     ) -> T | None:
+        """按已经计算好的严格 bool 条件, 只执行 then 或 else 中的一个分支。"""
+
         if not isinstance(condition, bool):
             raise TypeError("condition must be bool")
         run = current_run_context()
@@ -553,6 +613,8 @@ class Flow:
         branches: Sequence[tuple[bool, Callable[[], Awaitable[T]]]],
         else_fn: Callable[[], Awaitable[T]] | None = None,
     ) -> T | None:
+        """依次选择第一个条件为真的分支; 均不命中时可执行 else。"""
+
         for index, (condition, _) in enumerate(branches):
             if not isinstance(condition, bool):
                 raise TypeError(f"branch {index} condition must be bool")
@@ -580,6 +642,8 @@ class Flow:
         items: Sequence[T],
         fn: Callable[[T, int], Awaitable[object]],
     ) -> None:
+        """按输入顺序逐项执行, 向回调传入元素与从 0 开始的索引。"""
+
         run = current_run_context()
         async with run._trace("forEach", "forEach", metadata={"parallel": False}) as trace:
             trace.metadata["item_count"] = len(items)
@@ -597,6 +661,8 @@ class Flow:
         items: Sequence[T],
         fn: Callable[[T, int], Awaitable[object]],
     ) -> None:
+        """并发处理所有元素并等待全部完成; 各回调的完成顺序不保证。"""
+
         run = current_run_context()
         async with run._trace(
             "forEach",
@@ -621,6 +687,11 @@ class Flow:
                 tasks.append(visit)
             await _run_parallel_tasks(tasks, join="all", required=len(tasks))
 
+    # ============================================================
+    # 第三批: 带 LLM 判断的高级控制流
+    # (evaluate / loop_until / loop_while / choice)
+    # ============================================================
+
     async def evaluate(
         self,
         *,
@@ -634,6 +705,13 @@ class Flow:
         integer: bool = False,
         binding_name: str | None = None,
     ) -> bool | int | float | str:
+        """让默认或指定 evaluator 判断 boolean、number 或 choice。
+
+        默认 evaluator 通过系统提示词要求 ``{"value": ...}``; 当前 runner 协议没有
+        provider 级 JSON Schema 通道, 因此仍由本地解析器按旧 TS 兼容规则校验、
+        取整和范围截断。结果会写入 binding, 但不会作为 resume 缓存直接复用。
+        """
+
         if kind not in {"boolean", "number", "choice"}:
             raise ValueError(f"unsupported evaluate kind: {kind}")
         if kind == "choice":
@@ -740,6 +818,11 @@ class Flow:
         *,
         max_iterations: int = 8,
     ) -> None:
+        """先执行循环体、再判断退出条件, 最多执行 ``max_iterations`` 次。
+
+        条件必须返回真正的 bool。达到上限时记录 warning 后正常返回, 不抛异常。
+        """
+
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
             raise ValueError("max_iterations must be a positive integer")
         run = current_run_context()
@@ -770,6 +853,11 @@ class Flow:
         *,
         max_iterations: int = 8,
     ) -> None:
+        """每轮先判断条件、为真才执行循环体, 最多执行 ``max_iterations`` 次。
+
+        条件必须返回真正的 bool。达到上限时记录 warning 后正常返回, 不抛异常。
+        """
+
         if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
             raise ValueError("max_iterations must be a positive integer")
         run = current_run_context()
@@ -803,6 +891,12 @@ class Flow:
         default_label: str | None = None,
         binding_name: str | None = None,
     ) -> T:
+        """先用 evaluator 选择标签, 再只执行对应分支。
+
+        为兼容旧 TS, ``default_label`` 会兜底 evaluate 阶段的任意普通异常 (包括
+        runner 或解析失败), 但不会兜底被选中分支自身的异常, 也不会吞掉取消。
+        """
+
         labels = [label for label, _ in branches]
         if not labels:
             raise ValueError("choice requires at least one branch")
@@ -846,11 +940,17 @@ class Flow:
                     return value
         raise ValueError(f"selected choice {selected!r} does not exist")
 
+    # ============================================================
+    # 第四批: 数据流原语 (map / pmap / filter / pfilter / reduce / pipeline)
+    # ============================================================
+
     async def map(
         self,
         items: Sequence[T],
         fn: Callable[[T, int], Awaitable[R]],
     ) -> list[R]:
+        """按输入顺序串行映射元素, 并向回调传入从 0 开始的索引。"""
+
         results: list[R] = []
 
         async def run_one(item: T, index: int) -> None:
@@ -864,6 +964,8 @@ class Flow:
         items: Sequence[T],
         fn: Callable[[T, int], Awaitable[R]],
     ) -> list[R]:
+        """并发映射元素, 但按原输入顺序重排并返回结果。"""
+
         results: dict[int, R] = {}
 
         async def run_one(item: T, index: int) -> None:
@@ -877,6 +979,8 @@ class Flow:
         items: Sequence[T],
         predicate: Callable[[T, int], Awaitable[object]],
     ) -> list[T]:
+        """串行计算 predicate, 并保持被保留元素的输入顺序。"""
+
         kept: list[T] = []
 
         async def decide(item: T, index: int) -> None:
@@ -891,6 +995,8 @@ class Flow:
         items: Sequence[T],
         predicate: Callable[[T, int], Awaitable[object]],
     ) -> list[T]:
+        """并发计算 predicate, 同时保持被保留元素的输入顺序。"""
+
         flags = await self.pmap(items, predicate)
         return [item for item, keep in zip(items, flags, strict=False) if bool(keep)]
 
@@ -900,6 +1006,8 @@ class Flow:
         fn: Callable[[R, T, int], Awaitable[R]],
         initial: R,
     ) -> R:
+        """从 ``initial`` 开始, 按顺序把元素折叠进累加值。"""
+
         value = initial
 
         async def accumulate(item: T, index: int) -> None:
@@ -914,6 +1022,8 @@ class Flow:
         value: T,
         steps: Sequence[PipelineStep],
     ) -> object:
+        """让值依次经过带标签的 ``PipelineStep``, 并记录每一步的输入输出 trace。"""
+
         run = current_run_context()
         current: object = value
         async with run._trace("pipeline", "pipeline") as trace:
@@ -932,6 +1042,10 @@ class Flow:
             trace.output_summary = _preview(current)
             return current
 
+    # ============================================================
+    # 第五批: 工程化 (retry / evaluate_static / use)
+    # ============================================================
+
     async def retry(
         self,
         operation: Callable[[], Awaitable[T]],
@@ -942,6 +1056,16 @@ class Flow:
         max_delay: float = 8.0,
         should_retry: Callable[[Exception, int], Awaitable[bool] | bool] | None = None,
     ) -> T:
+        """把一个工作流操作作为整体重试, 而不是给某个原语增加 retry 参数。
+
+        ``operation`` 必须是可重复调用的零参数异步函数; ``max_attempts`` 包含首次
+        执行。失败后按秒等待并指数退避, 等待时间始终不超过 ``max_delay``。
+        ``should_retry(error, attempt)`` 可按异常和从 1 开始的失败次数提前终止。
+
+        例如: ``await flow.retry(lambda: flow.session(agent, prompt))``。不要传
+        ``flow.session(...)`` 已创建出的单次 coroutine, 因为重试时无法再次调用它。
+        """
+
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
             raise ValueError("max_attempts must be a positive integer")
         for name, value in (
@@ -966,13 +1090,14 @@ class Flow:
                 "error_trail": [],
             },
         ) as trace:
-            delay = initial_delay
+            delay = min(initial_delay, max_delay)
             attempts = 0
             while True:
                 attempts += 1
                 trace.metadata["attempts"] = attempts
                 try:
                     value = await operation()
+                # AnyIO 取消异常继承 BaseException; 不能把取消误当成可重试失败。
                 except Exception as error:
                     error_trail = cast("list[str]", trace.metadata["error_trail"])
                     error_trail.append(f"attempt {attempts}: {error}")
@@ -998,6 +1123,8 @@ class Flow:
         rule: StaticRule,
         binding_name: str | None = None,
     ) -> bool:
+        """不调用 LLM, 按一种显式静态规则判断并持久化 JSON 结果。"""
+
         run = current_run_context()
         if not isinstance(
             rule,
@@ -1067,17 +1194,26 @@ class Flow:
         *,
         binding_name: str | None = None,
     ) -> str:
+        """按名称调用已注册服务, 是构造 ``ServiceHandle`` 再调用 ``call`` 的便捷写法。"""
+
         return await self.call(
             ServiceHandle(name=service_name),
             args,
             binding_name=binding_name,
         )
 
+    # ============================================================
+    # 第六批: 顶层结构与外部执行
+    # (block / define_block / run_block / repeat / input / output / exec)
+    # ============================================================
+
     async def block(
         self,
         label: str,
         fn: Callable[[], Awaitable[T]],
     ) -> T:
+        """立即执行一个内联分组, 并用 ``label`` 把其子 trace 包在 block 节点下。"""
+
         run = current_run_context()
         async with run._trace(
             "block",
@@ -1095,6 +1231,8 @@ class Flow:
         *,
         description: str | None = None,
     ) -> BlockHandle:
+        """在当前运行中注册可复用 block 并返回句柄, 不立即执行其 body。"""
+
         run = current_run_context()
         block = _RegisteredBlock(name=name, description=description, body=body)
         normalized = run._register(run.blocks, name, block, kind="block")
@@ -1105,6 +1243,8 @@ class Flow:
         block: BlockHandle | str,
         args: Mapping[str, str] | None = None,
     ) -> object:
+        """执行已注册 block, 并把全部字符串参数作为一个 dict 传给 body。"""
+
         run = current_run_context()
         name = block.name if isinstance(block, BlockHandle) else block
         registered = run.blocks.get(name)
@@ -1126,14 +1266,20 @@ class Flow:
         times: int,
         fn: Callable[[int], Awaitable[object]],
     ) -> None:
+        """按顺序精确执行 ``times`` 次, 向回调传入从 0 开始的轮次。"""
+
         if isinstance(times, bool) or not isinstance(times, int) or times < 0:
             raise ValueError("times must be a non-negative integer")
         await self.for_each(list(range(times)), lambda item, index: fn(item))
 
     async def input(self, name: str, default_value: str) -> str:
+        """读取运行注入值或默认值, 并把最终输入持久化为 binding。"""
+
         return await current_run_context().input(name, default_value)
 
     async def output(self, name: str, value: str) -> None:
+        """把字符串结果保存为指定 binding; 同一名称遵守单赋值约束。"""
+
         await current_run_context().save(name, value)
 
     async def exec(
@@ -1148,6 +1294,13 @@ class Flow:
         output_limit: int = 4 * 1024 * 1024,
         binding_name: str | None = None,
     ) -> ExecResult:
+        """直接执行 argv (不经过 shell), 成功后持久化 stdout。
+
+        stdout/stderr 会并发排空, 各自最多保留 ``output_limit`` 字节; 超时或外部取消
+        会终止并等待子进程。非零退出码抛出异常, 只有退出码 0 才提交 binding。
+        ``env`` 为 None 时继承父环境; 提供时在父环境上覆盖指定变量。
+        """
+
         normalized_name = assert_safe_name(name)
         if not argv:
             raise ValueError("argv must not be empty")

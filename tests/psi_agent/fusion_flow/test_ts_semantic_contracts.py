@@ -279,6 +279,43 @@ async def test_retry_passes_attempt_and_records_outcome_metadata(tmp_path) -> No
 
 
 @pytest.mark.anyio
+async def test_retry_caps_the_first_delay_at_max_delay(tmp_path, monkeypatch) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    async def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary")
+        return "ok"
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(anyio, "sleep", record_sleep)
+
+    async def program(_: RunContext) -> None:
+        assert (
+            await flow.retry(
+                operation,
+                initial_delay=10,
+                max_delay=1,
+            )
+            == "ok"
+        )
+
+    await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="retry-delay-cap",
+        throw_on_error=True,
+    )
+
+    assert delays == [1]
+
+
+@pytest.mark.anyio
 async def test_evaluate_static_uses_discriminated_rules_and_zero_arg_predicate(
     tmp_path,
 ) -> None:
