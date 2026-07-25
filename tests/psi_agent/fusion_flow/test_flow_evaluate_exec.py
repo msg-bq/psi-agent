@@ -230,6 +230,39 @@ async def test_evaluate_static_supports_each_rule_and_persists_trace(tmp_path) -
 
 
 @pytest.mark.anyio
+async def test_evaluate_static_reserves_binding_before_predicate(tmp_path) -> None:
+    calls = 0
+
+    def predicate() -> bool:
+        nonlocal calls
+        calls += 1
+        return True
+
+    async def program(_: RunContext) -> None:
+        await flow.evaluate_static(
+            question="first",
+            rule=PredicateRule(fn=predicate),
+            binding_name="static-result",
+        )
+        with pytest.raises(ValueError, match="already exists"):
+            await flow.evaluate_static(
+                question="second",
+                rule=PredicateRule(fn=predicate),
+                binding_name="static-result",
+            )
+
+    result = await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="static-binding-reservation",
+        throw_on_error=True,
+    )
+
+    assert calls == 1
+    assert result.status == "ok"
+
+
+@pytest.mark.anyio
 async def test_evaluate_static_validates_rule_shape_and_results(tmp_path) -> None:
     async def program(_: RunContext) -> None:
         with pytest.raises(TypeError, match="StaticRule"):

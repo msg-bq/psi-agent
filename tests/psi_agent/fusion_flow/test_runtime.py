@@ -182,6 +182,50 @@ async def test_run_propagates_cancellation_after_shielded_persistence(tmp_path) 
 
 
 @pytest.mark.anyio
+async def test_trace_cancelled_after_start_is_terminalized(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    start_written = anyio.Event()
+    original_record_progress = RunContext._record_progress
+
+    async def block_after_start(
+        context: RunContext,
+        trace,
+        event: str,
+    ) -> None:
+        await original_record_progress(context, trace, event)
+        if event == "node_start":
+            start_written.set()
+            await anyio.sleep_forever()
+
+    monkeypatch.setattr(RunContext, "_record_progress", block_after_start)
+
+    async def program(ctx: RunContext) -> None:
+        await ctx.input("topic", "python")
+
+    async def invoke() -> None:
+        await run(
+            program,
+            runs_dir=tmp_path,
+            run_id="cancelled-trace-start",
+        )
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(invoke)
+        await start_written.wait()
+        task_group.cancel_scope.cancel()
+
+    run_dir = anyio.Path(tmp_path, "cancelled-trace-start")
+    events = [json.loads(line) for line in (await anyio.Path(run_dir, "progress.jsonl").read_text()).splitlines()]
+    graph = json.loads(await anyio.Path(run_dir, "execution-graph.json").read_text())
+
+    assert [event["event"] for event in events] == ["node_start", "node_end"]
+    assert events[-1]["status"] == "cancelled"
+    assert graph["root"]["children"][0]["status"] == "cancelled"
+
+
+@pytest.mark.anyio
 async def test_input_and_binding_names_are_single_assignment(tmp_path) -> None:
     async def duplicate_input(ctx: RunContext) -> None:
         await ctx.input("topic", "first")
@@ -333,6 +377,20 @@ async def test_gc_runs_keeps_count_days_union_and_explicit_exclusion(
     assert await anyio.Path(root, "not-a-run.txt").exists()
 
 
+@pytest.mark.anyio
+async def test_gc_runs_is_disabled_when_both_limits_are_zero(tmp_path) -> None:
+    root = anyio.Path(tmp_path)
+    run_dir = anyio.Path(root, "keep-me")
+    marker = anyio.Path(run_dir, "artifact.txt")
+    await run_dir.mkdir()
+    await marker.write_text("keep")
+
+    deleted = await gc_runs(root, keep_count=0, keep_days=0)
+
+    assert deleted == ()
+    assert await marker.read_text() == "keep"
+
+
 async def _symlink_or_skip(
     link: anyio.Path,
     target: anyio.Path,
@@ -364,6 +422,42 @@ async def _directory_link_or_skip(
         pytest.skip(
             f"directory links are unavailable: {result.stderr.decode(errors='replace')}",
         )
+
+
+async def _junction_or_skip(
+    link: anyio.Path,
+    target: anyio.Path,
+) -> None:
+    if sys.platform != "win32":
+        pytest.skip("directory junctions are Windows-only")
+    result = await anyio.run_process(
+        ["cmd", "/d", "/c", "mklink", "/J", str(link), str(target)],
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(
+            f"directory junctions are unavailable: {result.stderr.decode(errors='replace')}",
+        )
+
+
+@pytest.mark.anyio
+async def test_gc_runs_removes_junction_without_following_target(tmp_path) -> None:
+    root = anyio.Path(tmp_path, "runs")
+    old_run = anyio.Path(root, "old-run")
+    kept_run = anyio.Path(root, "zz-kept")
+    outside = anyio.Path(tmp_path, "outside")
+    marker = anyio.Path(outside, "marker.txt")
+    await old_run.mkdir(parents=True)
+    await outside.mkdir()
+    await marker.write_text("keep")
+    await _junction_or_skip(anyio.Path(old_run, "linked"), outside)
+    await kept_run.mkdir()
+
+    deleted = await gc_runs(root, keep_count=1, keep_days=0)
+
+    assert deleted == ("old-run",)
+    assert not await old_run.exists()
+    assert await marker.read_text() == "keep"
 
 
 @pytest.mark.anyio
@@ -557,7 +651,7 @@ async def test_gc_runs_continues_after_one_directory_cannot_be_deleted(
     monkeypatch,
 ) -> None:
     root = anyio.Path(tmp_path)
-    for run_id in ("broken", "healthy"):
+    for run_id in ("broken", "healthy", "zz-kept"):
         await anyio.Path(root, run_id).mkdir()
         await anyio.Path(root, run_id, "artifact.txt").write_text(run_id)
 
@@ -572,12 +666,13 @@ async def test_gc_runs_continues_after_one_directory_cannot_be_deleted(
 
     monkeypatch.setattr(runtime_module, "_remove_tree", fail_one_directory)
 
-    deleted = await gc_runs(root, keep_count=0, keep_days=0)
+    deleted = await gc_runs(root, keep_count=1, keep_days=0)
 
     assert attempted == {"broken", "healthy"}
     assert deleted == ("healthy",)
     assert await anyio.Path(root, "broken").exists()
     assert not await anyio.Path(root, "healthy").exists()
+    assert await anyio.Path(root, "zz-kept").exists()
 
 
 @pytest.mark.anyio

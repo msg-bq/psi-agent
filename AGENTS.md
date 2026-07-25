@@ -43,7 +43,7 @@ JSONL 格式零依赖，逐行追加读写简单。文件按 `workspace/historie
 Python 版本坚持 AnyIO 结构化并发：`first` / `any` 取消落后任务后仍等待它们完成清理。这样 `run()` 返回时 binding 与 trace 已封口，不会再被后台任务修改。任务若吞掉取消信号而永久运行，整个并行节点也会继续等待；这是资源与状态一致性的有意取舍。
 
 **FusionFlow 的跨语言兼容边界是什么？**
-运行产物与核心语义优先兼容，包括 binding 恢复、配对的 `node_start` / `node_end` progress 事件、分组 token 汇总、程序快照和 `exec()` 截断标记。Python API 保持 snake_case，并由显式 `SessionRunner` 承担 provider 调用；不复制 TypeScript 的 camelCase 配置或内嵌 provider 选择。
+运行产物与核心语义优先兼容，包括 binding 恢复、配对的 `node_start` / `node_end` progress 事件、分组 token 汇总、程序快照和 `exec()` 截断标记。GC 保留策略同样遵循参考实现：`keep_count` 与 `keep_days` 同时为 `0` 表示禁用清理，而不是删除全部 run。Python API 保持 snake_case，并由显式 `SessionRunner` 承担 provider 调用；不复制 TypeScript 的 camelCase 配置或内嵌 provider 选择。
 
 ## 技术栈
 

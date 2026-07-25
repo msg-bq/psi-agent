@@ -1212,41 +1212,41 @@ class Flow:
             RegexRule | ContainsRule | EqualsRule | RangeRule | PredicateRule,
         ):
             raise TypeError("rule must be a StaticRule")
-        async with run._trace(
-            "evaluate",
-            "static",
-            input_summary=question,
-            metadata={
-                "kind": "static",
-                "question": question,
-                "static_rule": rule.kind,
-            },
-        ) as trace:
-            if isinstance(rule, RegexRule):
-                pattern = re.compile(rule.pattern) if isinstance(rule.pattern, str) else rule.pattern
-                result = pattern.search(rule.on) is not None
-            elif isinstance(rule, ContainsRule):
-                result = rule.needle in rule.on
-            elif isinstance(rule, EqualsRule):
-                result = rule.on == rule.expected
-            elif isinstance(rule, RangeRule):
-                result = True
-                if rule.minimum is not None:
-                    result = result and rule.value >= rule.minimum
-                if rule.maximum is not None:
-                    result = result and rule.value <= rule.maximum
-            else:
-                result = _ensure_bool(
-                    await _await_maybe(rule.fn()),
-                    label="predicate",
-                )
+        reserved = (
+            await run._reserve_binding(binding_name)
+            if binding_name is not None
+            else await run._reserve_auto_binding("evaluate.static")
+        )
+        try:
+            async with run._trace(
+                "evaluate",
+                "static",
+                input_summary=question,
+                metadata={
+                    "kind": "static",
+                    "question": question,
+                    "static_rule": rule.kind,
+                },
+            ) as trace:
+                if isinstance(rule, RegexRule):
+                    pattern = re.compile(rule.pattern) if isinstance(rule.pattern, str) else rule.pattern
+                    result = pattern.search(rule.on) is not None
+                elif isinstance(rule, ContainsRule):
+                    result = rule.needle in rule.on
+                elif isinstance(rule, EqualsRule):
+                    result = rule.on == rule.expected
+                elif isinstance(rule, RangeRule):
+                    result = True
+                    if rule.minimum is not None:
+                        result = result and rule.value >= rule.minimum
+                    if rule.maximum is not None:
+                        result = result and rule.value <= rule.maximum
+                else:
+                    result = _ensure_bool(
+                        await _await_maybe(rule.fn()),
+                        label="predicate",
+                    )
 
-            reserved = (
-                await run._reserve_binding(binding_name)
-                if binding_name is not None
-                else await run._reserve_auto_binding("evaluate.static")
-            )
-            try:
                 payload = json.dumps(
                     {"value": result, "rule": rule.kind},
                     ensure_ascii=False,
@@ -1264,9 +1264,9 @@ class Flow:
                     ),
                 )
                 return result
-            except BaseException:
-                await run._release_binding(reserved)
-                raise
+        except BaseException:
+            await run._release_binding(reserved)
+            raise
 
     async def use(
         self,

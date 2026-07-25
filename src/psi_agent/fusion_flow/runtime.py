@@ -106,9 +106,14 @@ async def _remove_tree(path: anyio.Path) -> None:
     if await path.is_symlink():
         await path.unlink()
         return
+    if await path.is_junction():
+        await path.rmdir()
+        return
     async for child in path.iterdir():
         if await child.is_symlink() or not await child.is_dir():
             await child.unlink()
+        elif await child.is_junction():
+            await child.rmdir()
         else:
             await _remove_tree(child)
     await path.rmdir()
@@ -582,17 +587,18 @@ class RunContext:
             metadata=dict(metadata or {}),
         )
         await self._append_child(parent, trace)
-        try:
-            await self._record_progress(trace, "node_start")
-        except Exception as progress_error:
-            # progress.jsonl 是尽力而为的观测信号, 不能阻断业务节点。
-            logger.error(
-                f"Failed to persist start event for trace {trace.trace_id}: {progress_error}",
-            )
-        # token 使嵌套 flow 操作自动继承此 trace, 并在退出时恢复父上下文。
-        token = _CURRENT_TRACE.set(trace)
         started = time.perf_counter()
+        token = None
         try:
+            try:
+                await self._record_progress(trace, "node_start")
+            except Exception as progress_error:
+                # progress.jsonl 是尽力而为的观测信号, 不能阻断业务节点。
+                logger.error(
+                    f"Failed to persist start event for trace {trace.trace_id}: {progress_error}",
+                )
+            # token 使嵌套 flow 操作自动继承此 trace, 并在退出时恢复父上下文。
+            token = _CURRENT_TRACE.set(trace)
             yield trace
         except BaseException as error:
             cancelled = isinstance(error, anyio.get_cancelled_exc_class())
@@ -623,7 +629,8 @@ class RunContext:
                 )
         finally:
             # 无论成功, 失败还是取消, 都不能把子 trace 泄漏给后续操作。
-            _CURRENT_TRACE.reset(token)
+            if token is not None:
+                _CURRENT_TRACE.reset(token)
 
     async def _seal(self) -> None:
         """封存 context, 阻止最终状态开始写入后继续注册新内容。"""
@@ -1015,6 +1022,8 @@ async def gc_runs(
         exclude_run_id = assert_safe_name(exclude_run_id)
     if keep_count < 0 or keep_days < 0:
         raise ValueError("keep_count and keep_days must be non-negative")
+    if keep_count == 0 and keep_days == 0:
+        return ()
 
     root = anyio.Path(runs_dir)
     if not await root.exists():
