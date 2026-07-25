@@ -207,6 +207,8 @@ SSE 流中的特殊字段：
 
 16. **消费 async generator 必须用 `aclosing()`**：`async for` 在提前退出或被 cancel 时不调用 generator 的 `aclose()`，导致 generator 内 `async with` 持有的资源（aiohttp 连接、文件句柄等）被遗弃给 GC。正确做法：`async with aclosing(gen) as g: async for chunk in g: ...`。对标 `ai/server.py` 的 `finally` + shielded `aclose()` 模式。参见 `agent.py`、`channel_adapter.py`、`schedule_registry.py`。
 
+17. **Windows batch 参数边界**：`fusion_flow.flow.exec()` 仅在目标显式以 `.cmd`/`.bat` 结尾时使用系统 shell，并对命令与参数整体加引号、延迟还原字面量 `%`；含双引号或换行的参数因无法安全无损地穿过 `cmd.exe` 而直接拒绝。Windows 非 batch 与其他平台始终保持 argv/no-shell 路径。
+
 ## 测试约定
 
 - **框架**: `pytest` + `pytest-asyncio`（`asyncio_mode = "auto"`，anyio backend）

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import cast
 
 import anyio
 import pytest
+from anyio.to_thread import run_sync as run_sync_in_worker_thread
 
 from psi_agent.fusion_flow import runtime as runtime_module
 from psi_agent.fusion_flow.flow import flow
@@ -98,11 +100,13 @@ async def test_run_context_exposes_package_flow(tmp_path) -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("filename", ["workflow.py", "workflow"])
 async def test_run_snapshots_sys_argv_entry_script_by_default(
     tmp_path,
     monkeypatch,
+    filename: str,
 ) -> None:
-    source = anyio.Path(tmp_path, "workflow.py")
+    source = anyio.Path(tmp_path, filename)
     content = "async def workflow(ctx):\n    return None\n"
     await source.write_text(content)
     monkeypatch.setattr(sys, "argv", [str(source)])
@@ -223,6 +227,80 @@ async def test_trace_cancelled_after_start_is_terminalized(
     assert [event["event"] for event in events] == ["node_start", "node_end"]
     assert events[-1]["status"] == "cancelled"
     assert graph["root"]["children"][0]["status"] == "cancelled"
+
+
+@pytest.mark.anyio
+async def test_trace_cancelled_while_attaching_child_is_terminalized(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    attached = anyio.Event()
+    original_append_child = RunContext._append_child
+
+    async def block_after_append(context: RunContext, parent, child) -> None:
+        await original_append_child(context, parent, child)
+        attached.set()
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr(RunContext, "_append_child", block_after_append)
+
+    async def program(ctx: RunContext) -> None:
+        await ctx.input("topic", "python")
+
+    async def invoke() -> None:
+        await run(
+            program,
+            runs_dir=tmp_path,
+            run_id="cancelled-trace-attachment",
+        )
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(invoke)
+        await attached.wait()
+        task_group.cancel_scope.cancel()
+
+    run_dir = anyio.Path(tmp_path, "cancelled-trace-attachment")
+    graph = json.loads(await anyio.Path(run_dir, "execution-graph.json").read_text())
+    events = [json.loads(line) for line in (await anyio.Path(run_dir, "progress.jsonl").read_text()).splitlines()]
+
+    assert graph["root"]["children"][0]["status"] == "cancelled"
+    assert [event["event"] for event in events] == ["node_end"]
+    assert events[0]["status"] == "cancelled"
+
+
+@pytest.mark.anyio
+async def test_trace_cancelled_before_attaching_child_emits_no_events(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    append_started = anyio.Event()
+
+    async def block_before_append(_: RunContext, __, ___) -> None:
+        append_started.set()
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr(RunContext, "_append_child", block_before_append)
+
+    async def program(ctx: RunContext) -> None:
+        await ctx.input("topic", "python")
+
+    async def invoke() -> None:
+        await run(
+            program,
+            runs_dir=tmp_path,
+            run_id="cancelled-before-trace-attachment",
+        )
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(invoke)
+        await append_started.wait()
+        task_group.cancel_scope.cancel()
+
+    run_dir = anyio.Path(tmp_path, "cancelled-before-trace-attachment")
+    graph = json.loads(await anyio.Path(run_dir, "execution-graph.json").read_text())
+
+    assert graph["root"]["children"] == []
+    assert not await anyio.Path(run_dir, "progress.jsonl").exists()
 
 
 @pytest.mark.anyio
@@ -375,6 +453,23 @@ async def test_gc_runs_keeps_count_days_union_and_explicit_exclusion(
     assert await anyio.Path(root, "20260103-c").exists()
     assert await anyio.Path(root, "20260104-d").exists()
     assert await anyio.Path(root, "not-a-run.txt").exists()
+
+
+@pytest.mark.anyio
+async def test_gc_runs_keep_count_uses_run_id_not_mtime(tmp_path) -> None:
+    root = anyio.Path(tmp_path)
+    old_run = anyio.Path(root, "20260101-old")
+    new_run = anyio.Path(root, "20260102-new")
+    await old_run.mkdir()
+    await new_run.mkdir()
+    await run_sync_in_worker_thread(os.utime, str(old_run), (2, 2))
+    await run_sync_in_worker_thread(os.utime, str(new_run), (1, 1))
+
+    deleted = await gc_runs(root, keep_count=1, keep_days=0)
+
+    assert deleted == ("20260101-old",)
+    assert not await old_run.exists()
+    assert await new_run.exists()
 
 
 @pytest.mark.anyio

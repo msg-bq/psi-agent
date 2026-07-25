@@ -415,13 +415,12 @@ async def test_legacy_agent_is_an_async_callable_using_the_injected_runner(
         )
 
     async def program(_: RunContext) -> None:
-        result = await legacy(
-            AgentInvocation(
-                prompt="question",
-                context={"topic": "Python"},
-            )
+        invocation = AgentInvocation(
+            prompt="question",
+            context={"topic": "Python"},
         )
-        assert result == "answer:Python"
+        assert await legacy(invocation) == "answer:Python"
+        assert await legacy(invocation) == "answer:Python"
 
     result = await run(
         program,
@@ -438,20 +437,104 @@ async def test_legacy_agent_is_an_async_callable_using_the_injected_runner(
                 prompt="question",
                 context={"topic": "Python"},
             ),
-        )
+        ),
+        (
+            config,
+            AgentInvocation(
+                prompt="question",
+                context={"topic": "Python"},
+            ),
+        ),
     ]
-    assert (
-        await anyio.Path(
-            result.run_dir,
-            "bindings",
-            "legacy.md",
-        ).read_text()
-        == "answer:Python"
-    )
+    run_dir = anyio.Path(result.run_dir)
+    first_trace = json.loads(await anyio.Path(run_dir, "trace", "legacy.json").read_text())
+    second_trace = json.loads(await anyio.Path(run_dir, "trace", "legacy.2.json").read_text())
+    assert first_trace["output_summary"] == "answer:Python"
+    assert first_trace["tokens"] == {"calls": 1, "input": 3, "output": 2}
+    assert first_trace["duration_ms"] is not None
+    assert second_trace["output_summary"] == "answer:Python"
+    assert not await anyio.Path(run_dir, "bindings", "legacy.md").exists()
+    graph = json.loads(await anyio.Path(run_dir, "execution-graph.json").read_text())
+    assert graph["root"]["children"] == []
+    assert not await anyio.Path(run_dir, "progress.jsonl").exists()
 
 
 @pytest.mark.anyio
-async def test_agent_with_explicit_runner_is_callable_outside_run() -> None:
+async def test_legacy_agent_prefers_explicit_runner_inside_run(tmp_path) -> None:
+    calls: list[str] = []
+    config = AgentConfig(name="explicit", system="Answer directly.")
+
+    async def explicit_runner(
+        _: AgentConfig,
+        __: AgentInvocation,
+    ) -> str:
+        calls.append("explicit")
+        return "explicit answer"
+
+    async def active_runner(
+        _: AgentConfig,
+        __: AgentInvocation,
+    ) -> str:
+        calls.append("active")
+        return "active answer"
+
+    agent = Agent(config, runner=explicit_runner)
+
+    async def program(_: RunContext) -> None:
+        assert await agent(AgentInvocation(prompt="question")) == "explicit answer"
+
+    result = await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="legacy-explicit-runner",
+        runner=active_runner,
+    )
+
+    assert calls == ["explicit"]
+    assert await anyio.Path(result.run_dir, "trace", "explicit.json").exists()
+
+
+@pytest.mark.anyio
+async def test_legacy_agent_shares_successful_ordinals_with_session(tmp_path) -> None:
+    calls = 0
+    config = AgentConfig(name="shared", system="Answer directly.")
+    legacy = Agent(config)
+    handle = flow.agent(config)
+
+    async def runner(
+        _: AgentConfig,
+        invocation: AgentInvocation,
+    ) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient")
+        return invocation.prompt
+
+    async def program(_: RunContext) -> None:
+        with pytest.raises(RuntimeError, match="transient"):
+            await legacy(AgentInvocation(prompt="failed"))
+        assert await legacy(AgentInvocation(prompt="legacy")) == "legacy"
+        assert await flow.session(handle, "session") == "session"
+
+    result = await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="legacy-shared-ordinal",
+        runner=runner,
+    )
+    run_dir = anyio.Path(result.run_dir)
+
+    assert await anyio.Path(run_dir, "trace", "shared.json").exists()
+    assert await anyio.Path(run_dir, "trace", "shared.2.json").exists()
+    assert not await anyio.Path(run_dir, "bindings", "shared.md").exists()
+    assert await anyio.Path(run_dir, "bindings", "shared.2.md").read_text() == "session"
+    graph = json.loads(await anyio.Path(run_dir, "execution-graph.json").read_text())
+    assert [node["label"] for node in graph["root"]["children"]] == ["shared"]
+
+
+@pytest.mark.anyio
+async def test_standalone_agent_with_explicit_runner_is_callable_outside_run() -> None:
     received: list[tuple[AgentConfig, AgentInvocation]] = []
     config = AgentConfig(name="standalone", system="Answer directly.")
 

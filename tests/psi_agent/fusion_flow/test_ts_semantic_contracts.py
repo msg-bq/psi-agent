@@ -38,6 +38,115 @@ async def _binding_metadata(run_dir: str, name: str) -> dict[str, object]:
 
 
 @pytest.mark.anyio
+async def test_binding_metadata_includes_typescript_aliases(tmp_path) -> None:
+    config = AgentConfig(name="writer", system="Write.")
+    agent = flow.agent(config)
+
+    async def runner(_: AgentConfig, __: AgentInvocation) -> str:
+        return "draft"
+
+    async def program(_: RunContext) -> None:
+        await flow.session(agent, "hello")
+
+    result = await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="typescript-metadata-aliases",
+        runner=runner,
+        throw_on_error=True,
+    )
+    metadata = await _binding_metadata(result.run_dir, "writer")
+
+    assert metadata["producedBy"] == metadata["produced_by"]
+    assert metadata["producedAt"] == metadata["produced_at"]
+    assert metadata["sourceNode"] == metadata["source_node"]
+    assert metadata["inputHash"] == metadata["cache_key"]
+
+
+@pytest.mark.anyio
+async def test_resume_accepts_typescript_metadata_only_with_matching_hash(
+    tmp_path,
+) -> None:
+    calls = 0
+    config = AgentConfig(name="worker", system="Work.")
+    agent = flow.agent(config)
+
+    async def runner(_: AgentConfig, __: AgentInvocation) -> str:
+        nonlocal calls
+        calls += 1
+        return "fresh"
+
+    async def program(_: RunContext) -> None:
+        await flow.session(agent, "same")
+
+    result = await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="typescript-resume-metadata",
+        runner=runner,
+        throw_on_error=True,
+    )
+    metadata = await _binding_metadata(result.run_dir, "worker")
+    ts_metadata = {
+        "name": "worker",
+        "producedBy": metadata["produced_by"],
+        "producedAt": metadata["produced_at"],
+        "sourceNode": metadata["source_node"],
+        "inputHash": metadata["cache_key"],
+    }
+    await anyio.Path(
+        result.run_dir,
+        "bindings",
+        "worker.meta.json",
+    ).write_text(json.dumps(ts_metadata))
+    calls = 0
+
+    await run(
+        program,
+        runs_dir=tmp_path,
+        resume_from_run_id="typescript-resume-metadata",
+        runner=runner,
+        throw_on_error=True,
+    )
+
+    assert calls == 0
+
+    ts_metadata["inputHash"] = "mismatched"
+    await anyio.Path(
+        result.run_dir,
+        "bindings",
+        "worker.meta.json",
+    ).write_text(json.dumps(ts_metadata))
+    await run(
+        program,
+        runs_dir=tmp_path,
+        resume_from_run_id="typescript-resume-metadata",
+        runner=runner,
+        throw_on_error=True,
+    )
+
+    assert calls == 1
+
+    ts_metadata["inputHash"] = metadata["cache_key"]
+    ts_metadata["operation"] = "call"
+    await anyio.Path(
+        result.run_dir,
+        "bindings",
+        "worker.meta.json",
+    ).write_text(json.dumps(ts_metadata))
+    calls = 0
+    await run(
+        program,
+        runs_dir=tmp_path,
+        resume_from_run_id="typescript-resume-metadata",
+        runner=runner,
+        throw_on_error=True,
+    )
+
+    assert calls == 1
+
+
+@pytest.mark.anyio
 async def test_evaluate_builds_a_typed_json_prompt_and_forwards_context(
     tmp_path,
 ) -> None:

@@ -11,6 +11,7 @@ import json
 import math
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
@@ -210,7 +211,7 @@ def _parse_evaluate_result(
     if kind == "number":
         if value is None:
             number = 0.0
-        elif isinstance(value, bool | int | float):
+        elif isinstance(value, int | float) and not isinstance(value, bool):
             number = float(value)
         elif isinstance(value, str):
             try:
@@ -1375,11 +1376,12 @@ class Flow:
         output_limit: int | float = 4 * 1024 * 1024,
         binding_name: str | None = None,
     ) -> ExecResult:
-        """直接执行 argv (不经过 shell), 成功后持久化 stdout。
+        """直接执行 argv, 成功后持久化 stdout。
 
         stdout/stderr 和 stdin 从进程启动起并发处理。有限 ``output_limit`` 只约束
         stdout: 一旦越界立即杀进程, 返回保留的前缀并在 binding 中追加截断标记;
         ``0`` 或正无穷关闭上限。超时或外部取消也会杀进程并等待回收。
+        Windows 上显式的 ``.cmd``/``.bat`` 目标经转义后交给系统 shell。
         """
 
         normalized_name = assert_safe_name(name)
@@ -1400,9 +1402,22 @@ class Flow:
 
         run = current_run_context()
         command = list(argv)
+        process_command: str | list[str] = command
+        internal_env: dict[str, str] = {}
+        if sys.platform == "win32" and command[0].casefold().endswith((".cmd", ".bat")):
+            if any('"' in argument or "\r" in argument or "\n" in argument for argument in command):
+                raise ValueError('Windows batch argv cannot contain double quotes (") or line breaks')
+            percent_variable = "PSI_AGENT_EXEC_LITERAL_PERCENT"
+            internal_env[percent_variable] = "%"
+            percent_reference = f"%{percent_variable}%"
+            process_command = " ".join(f'"{argument.replace("%", percent_reference)}"' for argument in command)
         merged_env = None
-        if env is not None:
-            merged_env = {**environ, **_normalize_string_mapping(env)}
+        if env is not None or internal_env:
+            merged_env = {
+                **environ,
+                **_normalize_string_mapping(env),
+                **internal_env,
+            }
         reserved = (
             await run._reserve_binding(binding_name)
             if binding_name is not None
@@ -1418,7 +1433,7 @@ class Flow:
             ) as trace:
                 started = time.perf_counter()
                 process = await anyio.open_process(
-                    command,
+                    process_command,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

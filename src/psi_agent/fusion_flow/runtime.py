@@ -253,15 +253,23 @@ class RunContext:
     ) -> dict[str, object]:
         """构建绑定持久化和恢复校验所需的元数据。"""
         trace = _CURRENT_TRACE.get() or self.root_trace
+        produced_at = _now_iso()
         metadata: dict[str, object] = {
             "name": name,
             "produced_by": produced_by,
-            "produced_at": _now_iso(),
+            "produced_at": produced_at,
             "source_node": trace.trace_id,
+            "producedBy": produced_by,
+            "producedAt": produced_at,
+            "sourceNode": trace.trace_id,
         }
         if tokens is not None:
             metadata["tokens"] = dict(tokens)
         metadata.update(details)
+        if "cache_key" in metadata:
+            metadata["inputHash"] = metadata["cache_key"]
+        elif "input_hash" in metadata:
+            metadata["inputHash"] = metadata["input_hash"]
         return metadata
 
     async def _read_input(self, name: str, default_value: str) -> str:
@@ -505,10 +513,15 @@ class RunContext:
         metadata = self._resume_binding_metadata(binding_name)
         if metadata is None:
             return None
-        if metadata.get("operation") != operation:
+        stored_operation = metadata.get("operation")
+        if stored_operation is not None and stored_operation != operation:
             return None
-        if cache_key is not None and metadata.get("cache_key") != cache_key:
-            return None
+        if cache_key is not None:
+            stored_cache_key = metadata.get("cache_key")
+            if stored_cache_key is None:
+                stored_cache_key = metadata.get("inputHash")
+            if stored_cache_key != cache_key:
+                return None
         return cached
 
     def _register(
@@ -586,10 +599,10 @@ class RunContext:
             input_summary=input_summary,
             metadata=dict(metadata or {}),
         )
-        await self._append_child(parent, trace)
         started = time.perf_counter()
         token = None
         try:
+            await self._append_child(parent, trace)
             try:
                 await self._record_progress(trace, "node_start")
             except Exception as progress_error:
@@ -601,6 +614,8 @@ class RunContext:
             token = _CURRENT_TRACE.set(trace)
             yield trace
         except BaseException as error:
+            if not any(child is trace for child in parent.children):
+                raise
             cancelled = isinstance(error, anyio.get_cancelled_exc_class())
             # 取消也要写下终态; shield 防止取消信号打断这次诊断持久化。
             with anyio.CancelScope(shield=cancelled):
@@ -651,6 +666,31 @@ class RunContext:
             )
         except Exception as error:
             logger.error(f'Failed to persist diagnostic trace "{name}": {error}')
+
+    async def _write_legacy_trace_file(
+        self,
+        name: str,
+        trace: ExecutionTrace,
+    ) -> None:
+        """按共享调用序号写入不属于执行图或 binding 的旧版 Agent trace。"""
+        normalized = assert_safe_name(name)
+        try:
+            async with self._lock:
+                self._ensure_open()
+                ordinals = self._call_ordinals.setdefault(normalized, set())
+                count = 1
+                while count in ordinals:
+                    count += 1
+                trace_name = normalized if count == 1 else f"{normalized}.{count}"
+                path = anyio.Path(self._path, "trace", f"{trace_name}.json")
+                while await path.exists():
+                    count += 1
+                    trace_name = f"{normalized}.{count}"
+                    path = anyio.Path(self._path, "trace", f"{trace_name}.json")
+                await _atomic_write_json(path, trace.to_dict())
+                ordinals.add(count)
+        except Exception as error:
+            logger.error(f'Failed to persist legacy Agent trace "{name}": {error}')
 
 
 def current_run_context() -> RunContext:
@@ -884,7 +924,7 @@ async def run(
                 snapshot_status = str(source)
             else:
                 snapshot_status = f"unavailable: {source}"
-        elif sys.argv and sys.argv[0].lower().endswith(".py"):
+        elif sys.argv:
             # Python 的入口脚本对应 TypeScript 的 process.argv[1]。默认路径
             # 只做尽力而为快照, 不能让 REPL、pytest 等宿主环境阻断运行。
             source = anyio.Path(sys.argv[0])
@@ -1045,7 +1085,7 @@ async def gc_runs(
         stat = await child.stat(follow_symlinks=False)
         candidates.append((child.name, stat.st_mtime, child))
 
-    candidates.sort(key=lambda item: (item[1], item[0]), reverse=True)
+    candidates.sort(key=lambda item: item[0], reverse=True)
     keep: set[str] = set()
     if keep_count > 0:
         keep.update(name for name, _, _ in candidates[:keep_count])

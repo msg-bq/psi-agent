@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import json
 import math
 import sys
@@ -160,6 +161,24 @@ async def test_failed_evaluate_does_not_commit_a_binding(tmp_path) -> None:
         "bindings",
         "invalid-evaluation.md",
     ).exists()
+
+
+@pytest.mark.anyio
+async def test_number_evaluate_rejects_boolean_result(tmp_path) -> None:
+    async def runner(_: AgentConfig, __: AgentInvocation) -> str:
+        return '{"value": true}'
+
+    async def program(_: RunContext) -> None:
+        await flow.evaluate(question="number?", kind="number")
+
+    with pytest.raises(TypeError, match="number"):
+        await run(
+            program,
+            runs_dir=tmp_path,
+            runner=runner,
+            run_id="boolean-number",
+            throw_on_error=True,
+        )
 
 
 @pytest.mark.anyio
@@ -381,6 +400,62 @@ async def test_exec_uses_argv_and_captures_stdin_stdout_stderr(tmp_path) -> None
     trace = graph["root"]["children"][0]
     assert trace["kind"] == "exec"
     assert trace["metadata"]["argv"][-1] == literal
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows batch files use cmd.exe")
+@pytest.mark.parametrize(
+    "literal",
+    (
+        "literal&whoami",
+        "literal %USERNAME%! value (100%) &whoami | marker <input> >output",
+        "literal ^caret^ and trailing\\",
+    ),
+)
+async def test_exec_escapes_windows_batch_arguments(tmp_path, literal: str) -> None:
+    script_dir = anyio.Path(tmp_path, "%USERNAME% & batch")
+    await script_dir.mkdir()
+    script = script_dir / "echo-arg.cmd"
+    await script.write_text(
+        "@echo off\r\n"
+        "setlocal DisableDelayedExpansion\r\n"
+        'set "PSI_AGENT_TEST_ARG=%~1"\r\n'
+        f'"{sys.executable}" -c "import os;print(os.environ[\'PSI_AGENT_TEST_ARG\'])"\r\n',
+        encoding="utf-8",
+    )
+    observed: list[ExecResult] = []
+
+    async def program(_: RunContext) -> None:
+        observed.append(await flow.exec("batch-argument", (str(script), literal)))
+
+    await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="batch-argument",
+        throw_on_error=True,
+    )
+
+    assert observed[0].stdout == literal
+    assert getpass.getuser().casefold() not in observed[0].stdout.casefold()
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows batch files use cmd.exe")
+@pytest.mark.parametrize("literal", ('unsafe"&whoami', "unsafe\r\n&whoami"))
+async def test_exec_rejects_unsafe_windows_batch_argument(tmp_path, literal: str) -> None:
+    script = anyio.Path(tmp_path, "echo-arg.cmd")
+    await script.write_text("@echo off\r\n")
+
+    async def program(_: RunContext) -> None:
+        await flow.exec("batch-argument", (str(script), literal))
+
+    with pytest.raises(ValueError, match=r"double quotes.*line breaks"):
+        await run(
+            program,
+            runs_dir=tmp_path,
+            run_id="quoted-batch-argument",
+            throw_on_error=True,
+        )
 
 
 @pytest.mark.anyio
