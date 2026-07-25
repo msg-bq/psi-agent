@@ -1,14 +1,14 @@
 ---
 name: flow
-description: For authoring and running FusionFlow multi-agent workflows. Use when the task involves FusionFlow source or an existing `.flow.ts`, an explicit mention of "agent-flow"/"Fuclaw"/"@agent-flow/core", or a request to coordinate multiple agents, run sub-tasks in parallel, build a multi-step pipeline, or inspect a prior workflow run. Not for `.prose` files. Activated by task intent, not by slash commands.
+description: Use when authoring or running FusionFlow G4 multi-agent workflows, when the user mentions FusionFlow, agent-flow, Fuclaw, or @agent-flow/core, or when a task needs coordinated agents, parallel sub-tasks, a multi-step pipeline, or inspection or resumption of a prior workflow run. Not for .prose files. Activated by task intent, not by slash commands.
 metadata: { "openclaw": { "emoji": "🐾", "homepage": "https://github.com/fuclaw" } }
 ---
 
-# FusionFlow Skill (Fuclaw)
+# FusionFlow G4 Skill (Fuclaw)
 
-This skill is the author + run protocol for **FusionFlow** on **`@agent-flow/core`** (alias: Fuclaw). The LLM authors declarative FusionFlow source; the workflow toolchain validates it and the existing runtime executes it with a full **execution graph** for replay. Unlike OpenProse, where the LLM *is* the VM, here the VM is a Node.js process; the LLM orchestrates the run and reads its artifacts.
+This skill is the author + run protocol for **FusionFlow G4 workflows** on **`@agent-flow/core`** (alias: Fuclaw). The LLM authors declarative, G4-conformant FusionFlow source; the configured runner executes it with a full **execution graph** for replay. Unlike OpenProse, where the LLM *is* the VM, here the VM is a Node.js process; the LLM orchestrates the run and reads its artifacts.
 
-> **What you're working in.** The normal delivery is a **self-contained bundle**: the user copied the `fusion-flow/` folder somewhere, ran `npm install` once, and works inside it. Call that directory `<workDir>`. Everything below — workflow source, the `.env`, and `runs/` artifacts — lives **relative to `<workDir>`**, NOT inside an unrelated checkout. This skill runs in any long-context LLM client (Claude Code / Cursor / Cherry Studio / Claude.ai); it does not depend on OpenClaw or any plugin install.
+> **What you're working in.** The normal delivery is a **self-contained bundle**: the user copied the `fusion-flow/` folder somewhere, ran `npm install` once, and works inside it. Call that directory `<workDir>`. Everything below — G4 workflow source, the `.env`, and `runs/` artifacts — lives **relative to `<workDir>`**, NOT inside an unrelated checkout. This skill runs in any long-context LLM client (Claude Code / Cursor / Cherry Studio / Claude.ai); it does not depend on OpenClaw or any plugin install.
 
 > **No slash commands.** This skill is triggered by **natural-language intent**, never by a `/flow xxx` command. The user just talks: "帮我写个并行调研的工作流" / "跑一下刚生成的那个" / "刚才那个跑完了吗". Do NOT teach, suggest, or expect any `/flow run` / `/flow show` / `/flow author` syntax — those slash commands do not exist and printing them to the user is a bug (a user in an environment without this skill installed will see "命令没找到"). Map what the user *means* to the actions below.
 
@@ -16,7 +16,7 @@ This skill is the author + run protocol for **FusionFlow** on **`@agent-flow/cor
 
 Activate this skill when the user:
 
-- Asks to run a FusionFlow workflow or an existing `.flow.ts` they already have ("跑一下这个 / 帮我跑 / 执行"). This skill does **not** ship runnable demo examples; "run" always means a concrete workflow the user has.
+- Asks to run a FusionFlow G4 workflow they already have ("跑一下这个 / 帮我跑 / 执行"). This skill does **not** ship runnable demo examples; "run" always means a concrete workflow the user has.
 - Asks to see the result of a previous run ("跑完了吗 / 看看结果 / 上次那个怎么样了")
 - Mentions "agent-flow", "Fuclaw", or "@agent-flow/core"
 - **Describes any task that needs a multi-agent workflow or agent collaboration**, even without saying "flow" — e.g. "让几个 agent 分别审一遍再汇总", "并行跑 N 个子任务再合并", "一步接一步处理(先 A 再 B 再 C)", "多角度评审 / 打分选边", "把这件事拆成多个 agent 协作". If the task clearly benefits from orchestrating more than one agent / parallel branches / a multi-step pipeline, enter **Authoring Mode** (below) and offer to build a flow.
@@ -25,7 +25,7 @@ When in doubt about whether a task is "workflow-shaped": if it would take **two 
 
 ### HARD RULE: when you recognize a multi-agent task, your job is to BUILD A FLOW — not to do it yourself
 
-Once a task is workflow-shaped (multiple agents / parallel branches / multi-step pipeline / judge-then-branch), your **one default action** is to enter Authoring Mode and build a FusionFlow workflow. That is the entire point of this skill — the flow runtime spawns and coordinates the sub-agents; **you do not play those sub-agents yourself**.
+Once a task is workflow-shaped (multiple agents / parallel branches / multi-step pipeline / judge-then-branch), your **one default action** is to enter Authoring Mode and build a FusionFlow G4 workflow. That is the entire point of this skill — the flow runtime spawns and coordinates the sub-agents; **you do not play those sub-agents yourself**.
 
 Do **NOT** offer "我直接帮你做这一次" as an option, and especially do **NOT** make it the default. Building the flow IS how you help — there is no faster "just do it manually" path that's better; doing it by hand throws away the runtime (parallelism, the execution graph, replay, the reusable artifact) and contradicts "one intent = one flow".
 
@@ -39,10 +39,10 @@ Do **not** activate this skill for `.prose` files — those belong to OpenProse.
 
 ## Architectural Difference vs OpenProse
 
-| Aspect | OpenProse | OpenFlow (Fuclaw) |
+| Aspect | OpenProse | FusionFlow G4 (Fuclaw) |
 | --- | --- | --- |
 | VM substrate | LLM session simulating prose.md | Node.js running the `@agent-flow/core` runtime |
-| Program format | `.prose` markdown DSL | declarative FusionFlow source |
+| Program format | `.prose` markdown DSL | declarative FusionFlow G4 source |
 | Sub-agent spawn | OpenClaw `sessions_spawn` | `@agent-flow/core` shelling out to an external agent CLI (claude / openclaw / hermes / psi) |
 | State directory | `.prose/runs/<id>/` | `<workDir>/runs/<id>/` |
 | Replay artifact | `bindings/*.md` + `state.md` | `bindings/` + `trace/` + **`execution-graph.json`** |
@@ -50,7 +50,7 @@ Do **not** activate this skill for `.prose` files — those belong to OpenProse.
 
 The skill's job is to:
 
-1. Turn the user's intent into valid FusionFlow source, or resolve the concrete workflow they pointed to.
+1. Turn the user's intent into valid FusionFlow G4 source, or resolve the concrete G4 workflow they pointed to.
 2. Submit it to the configured workflow runner.
 3. Surface the resulting `runs/<id>/` and explain the execution graph.
 
@@ -61,91 +61,69 @@ The user talks in natural language. Map what they **mean** to one of these actio
 | What the user says (examples) | Action |
 | --- | --- |
 | "我能用这个干嘛 / 你能帮我做什么" | Describe capabilities in plain language (see "Capabilities" at the bottom) + offer to build a flow |
-| "跑一下这个 / 帮我跑 X / 执行这个 workflow" | Run the concrete FusionFlow source or legacy `.flow.ts` the user points at, then surface `runId` + key bindings. **This skill no longer ships runnable demo examples** — there is no keyword→example catalog to resolve against. |
+| "跑一下这个 / 帮我跑 X / 执行这个 workflow" | Run the concrete FusionFlow G4 source the user points at, then surface `runId` + key bindings. **This skill does not ship runnable demo examples** — there is no keyword→example catalog to resolve against. |
 | "接着上次那个跑 / 只重跑改动的部分" | (v0.6) Re-run reusing the old `runs/<runId>/`; cached bindings skip the LLM. See "Resume" section |
 | "看看结果 / 刚才那个跑完了吗 / 上次跑得怎么样" | Read `<workDir>/runs/<runId>/execution-graph.json` (or the most recent run) and walk the user through it |
 | "环境齐不齐 / 能不能跑 / 帮我检查下" | Verify Node, the configured runner, the engine CLI on PATH, and authoring readiness (`<workDir>` has `node_modules`); run `npm run doctor` if present |
-| **"帮我写个工作流做 X / 帮我编排 / 我想让几个 agent ..."** | **Author a new FusionFlow workflow from natural language. See "Authoring Mode" below.** |
+| **"帮我写个工作流做 X / 帮我编排 / 我想让几个 agent ..."** | **Author a new FusionFlow G4 workflow from natural language. See "Authoring Mode" below.** |
 | Anything else workflow-shaped | Interpret intent against this table |
 
 ## Running a Program
 
-For FusionFlow source, use the workspace's configured workflow runner. It validates and executes the workflow as one operation; do not expose internal runtime artifacts to the user. In the psi-agent workspace, use the `flow_run` protocol described under "A flow run is long".
+Use the workspace's configured workflow runner for FusionFlow G4 source. It validates and executes the workflow as one operation; do not expose internal runtime artifacts to the user. In the psi-agent workspace, use the `flow_run` protocol described under "A flow run is long".
 
-The direct `tsx` command below remains valid only when the user explicitly gives you a legacy `.flow.ts`:
+### G4-only boundary
 
-```bash
-# Inside <workDir> (the folder the user copied + ran `npm install` in), with .env present if needed
-cd <workDir>
-npx tsx <path-to-flow-file>
-```
+Only author and run FusionFlow G4 source. If the user points to any non-G4 workflow file, do not execute it, treat it as supported, or translate it implicitly. State that this skill accepts G4 source only. If the user explicitly asks to migrate that workflow, enter Authoring Mode and author one new G4 workflow from its intent.
 
 `<workDir>` is **the directory the user is working in** — almost always the copied `fusion-flow/` bundle folder. How to resolve it:
 
-1. **Default: it's the bundle folder.** If you see `runtime/agent-flow-core.bundle.mjs` + a sibling `examples/` (and a `package.json` with `"name": "fusion-flow"`), that folder IS `<workDir>`. Authored workflows go in `<workDir>/examples/`, artifacts land in `<workDir>/runs/`. No config, no plugin, nothing to look up.
-2. **Source-repo case:** if instead you see `core/src/index.ts`, the user is inside a cloned Fuclaw repo — then `<workDir>` is the `core/` directory.
-3. **psi-agent workspace case:** if the workspace system prompt assigns a path such as `flows/<task-slug>/`, use that workspace-managed path instead of `<workDir>/examples/`. The workspace instruction wins; do not relocate the source beside the runtime.
-4. **If you genuinely can't tell which folder to work in** (e.g. several candidates), ask the user once in plain language: "你把 fusion-flow 文件夹拷到哪了？我在那个目录里帮你跑。" Then **remember it for the rest of this session** — don't re-ask.
+1. **Bundle or source-repo case:** use the directory that owns the configured FusionFlow runner, active catalog, `examples/`, and `runs/`. Authored G4 workflows go in `<workDir>/examples/`; artifacts land in `<workDir>/runs/`.
+2. **psi-agent workspace case:** if the workspace system prompt assigns a path such as `flows/<task-slug>/`, use that workspace-managed path instead of `<workDir>/examples/`. The workspace instruction wins; do not relocate the source beside the runtime.
+3. **If you genuinely can't tell which folder to work in** (e.g. several candidates), ask the user once in plain language: "你把 fusion-flow 文件夹拷到哪了？我在那个目录里帮你跑。" Then **remember it for the rest of this session** — don't re-ask.
 
 Never guess a path without verification. Never hardcode `D:/...` or any machine-specific path. Don't go scanning the filesystem for "a flow project" — work in the folder the user is actually in (see Hard-stop #4 in Authoring Mode).
 
-To pass `flow.input` overrides, append `--input.<name>=<value>` after the file path:
+Pass named workflow inputs through the configured runner's input-override mechanism. Do not rewrite the G4 source just to inject one run's values.
 
-```bash
-npx tsx examples/flow-author-20260606-001.flow.ts --input.question="MySQL 还是 Postgres？" --input.context="..."
-```
-
-After the run, the script prints two lines you must capture:
-
-```
-[run] <runId>
-[run] dir: <abs-path-to-runs/runId>
-```
+Capture the `runId` and run directory returned by the runner.
 
 Use that `runId` to walk the user through the run (see "Reading a Run").
 
-### Resume (`--resume`) — v0.6
+### Resume
 
-If a run blew up halfway, or the user wants to re-execute only the parts whose inputs changed, append `--resume=<runId>` to the `tsx` command:
-
-```bash
-npx tsx examples/flow-author-20260606-001.flow.ts --resume=20260529-030614-slnw7h
-npx tsx examples/flow-author-20260606-001.flow.ts --resume=last        # latest run in <workDir>/runs/
-```
+If a run stopped halfway, or the user wants to re-execute only the parts whose inputs changed, submit the same G4 workflow through the configured runner with the prior `runId` as its resume target.
 
 How it behaves:
 
 - The same `runDir` is reused — no new `runs/<id>/` directory is created.
-- For each `flow.session` / `flow.call`, the runtime computes an `inputHash` over `(provider, model, system, userPrompt, temperature, maxTokens)` for sessions, or `(serviceName, args)` for calls.
-- If `bindings/<name>.md` exists **and** the meta's `inputHash` matches, the LLM call is skipped — the cached content is returned, and the graph node is marked `cached: true`.
-- If the user changed a prompt, model, or `--input.*`, the hash mismatches and that node re-runs. Downstream nodes that depend on it will also re-run (their inputs differ now).
-- Old runs from before v0.6 don't have `inputHash` in their meta. `--resume` falls back to lenient mode: name-only match. After the first re-run, those bindings get hashes written and become strict.
+- For each cacheable Step, the runtime computes an input fingerprint from its resolved instruction, executor configuration, named inputs, and upstream artifacts.
+- If `bindings/<name>.md` exists **and** its recorded fingerprint matches, that Step is skipped and the graph node is marked `cached: true`.
+- If the G4 assertions, catalog identities, named inputs, or upstream artifacts changed, the fingerprint changes and that Step re-runs. Dependent downstream Steps re-run as their inputs change.
+- If the prior run lacks the required fingerprint metadata, do not claim it is reusable; report that resume is unavailable for that run.
 
 When recommending a resume run to the user, surface what will be reused vs re-run by reading the existing `bindings/*.meta.json` files first — never promise "everything cached" without checking.
 
-Caveats to mention if asked:
+Tokens reported in `meta.json` only count new calls. Total cost across the original and resumed execution is the sum of both.
 
-- `flow.service` body changes are invisible to the hash. If the user rewrites a service implementation, tell them to either rename the service or delete its `bindings/*.md` first.
-- Tokens reported in `meta.json` only count *new* calls. Total cost across the original + resume is the sum of both runs' meta.
+## Running an Agent-backed G4 Workflow: Pre-flight
 
-## Running an LLM Flow: Pre-flight
-
-Before executing anything that calls the LLM (a FusionFlow workflow or a legacy `.flow.ts` using agent/session/evaluation steps):
+Before executing a FusionFlow G4 workflow with Agent-backed Steps:
 
 1. Confirm the configured engine CLI is on PATH (`claude --version` for the default). v0.7 auth is the engine CLI's own config, not a key in `<workDir>/.env`.
 2. Internally estimate cost/latency from the flow's node count (each LLM call is a CLI subprocess, ~3-10s each; a fan-out with N reviewer sessions ≈ N calls). Fold that into the single plain-language heads-up line ("预计几分钟") — don't dump the per-node math on the user.
 3. Say the one heads-up line, then **run — do not ask "要不要跑" or wait for approval.** The user already asked for the task; building + running the flow is how you do it. (Only exception: they explicitly said "只生成别跑".)
 
-A flow whose LLM calls are all replaced by `flow.service` mocks (no `flow.agent` / `flow.session`) hits no network and can skip the pre-flight.
+A workflow whose Steps all use local deterministic Executors and no Agent can skip the LLM pre-flight.
 
 ### Running is the runtime's job, not yours
 
-When the user asks to run a workflow, your ENTIRE job is: resolve `<workDir>`, submit the target to the configured runner, then report what the runtime printed. For a legacy `.flow.ts`, the runner command is `cd <workDir> && npx tsx <file>`. The runtime spawns subprocesses (`uv`, `python`, etc.) under its own designed environment — git-bash autodetect, clean-env baseline, Windows shell handling. **You do not pre-flight the subprocess environment.** Specifically, before running:
+When the user asks to run a workflow, your ENTIRE job is: resolve `<workDir>`, submit the G4 source to the configured runner, then report what the runtime returned. The runtime spawns subprocesses under its own designed environment — git-bash autodetect, clean-env baseline, Windows shell handling. **You do not pre-flight the subprocess environment.** Specifically, before running:
 
 - Do NOT check whether `uv` / `python` / `claude` is "on PATH" in your shell. Your PATH is not the runtime's PATH. A missing binary in your shell does NOT mean the flow will fail.
 - Do NOT `pip install` / `npm install` / modify PATH to "fix" a tool you think is missing.
-- Do NOT inspect or second-guess the flow's `command:` field. If `flow.exec` says `command: "uv"`, run the flow as-is and let the runtime resolve it.
-- Do NOT run ad-hoc interactive probes such as bare `node`, bare `python`, or bare `npx`. They can open a REPL/prompt and appear to hang.
+- Do NOT inspect or second-guess a catalog-backed external Executor's command. Run the workflow as-is and let the runtime resolve it.
+- Do NOT run ad-hoc interactive probes such as bare `node` or bare `python`. They can open a REPL/prompt and appear to hang.
 
 Just run the flow. If it actually fails, then go to "When a run fails".
 
@@ -154,11 +132,11 @@ Just run the flow. If it actually fails, then go to "When a run fails".
 A workflow run is not a quick shell command. Every LLM step is an external CLI subprocess (10–20s cold start), and parallel or multi-step work routinely takes minutes. Two hard rules:
 
 1. **If your client exposes a background/long-running run tool, use it — do NOT run the flow through a foreground shell tool that has a short default timeout.** In the psi-agent workspace this tool is `flow_run`: call `flow_run(action="start", flow_path=...)` to launch the flow in the background, then loop `flow_run(action="status", run_token=...)` — each call blocks until the next node finishes, the flow ends, or a keepalive window elapses — and report progress from what it returns; when it reports done, call `flow_run(action="result", run_token=...)`. This is the ONLY correct way to run a flow there.
-2. **If no background run tool exists** (plain terminal client), use the configured FusionFlow runner with the longest timeout your run tool allows. For a legacy `.flow.ts`, run `cd <workDir> && npx tsx <file>`. The runtime writes node-level progress to `runs/<runId>/progress.jsonl` (one JSON line per node start/end, with the node label) while it runs — read that file to report progress, do not assume a silent run is stuck.
+2. **If no background run tool exists** (plain terminal client), use the configured FusionFlow runner with the longest timeout your run tool allows. The runtime writes node-level progress to `runs/<runId>/progress.jsonl` (one JSON line per node start/end, with the node label) while it runs — read that file to report progress, do not assume a silent run is stuck.
 
 ### When a run fails
 
-A non-zero exit (or a `flow.exec` non-zero `exitCode`) is a **STOP-and-report point**. Do exactly these three steps, in order, then stop:
+A non-zero runner exit or failed external-execution Step is a **STOP-and-report point**. Do exactly these three steps, in order, then stop:
 
 1. Report the exit code, the `runId`, and the error tail the runtime already printed.
 2. Read AT MOST two files to explain it: `runs/<runId>/meta.json` and the failed node's `bindings/<name>.md`.
@@ -196,21 +174,20 @@ Then summarize for the user. **Default (non-technical user): keep it short and f
 
 ## File Locations
 
-Paths below are relative to `<workDir>` (the bundle folder, or `core/` in a source repo). The two runtime modes differ only in where the runtime code lives:
+Paths below are relative to the resolved `<workDir>`:
 
 | File | Location | Purpose |
 | --- | --- | --- |
-| runtime code | bundle: `runtime/agent-flow-core.bundle.mjs` (single file) · source repo: `core/src/` | Workflow execution runtime |
-| `<workDir>/examples/` | standalone bundle or source-repo workflow source | Authored flow programs |
-| `flows/<task-slug>/` | psi-agent workspace source location when assigned by the workspace system prompt | Authored flow programs in workspace mode |
+| `<workDir>/examples/` | bundle or source-repo G4 workflow source | Authored FusionFlow G4 programs |
+| `flows/<task-slug>/` | psi-agent workspace source location when assigned by the workspace system prompt | Authored FusionFlow G4 programs in workspace mode |
 | `<workDir>/runs/<runId>/` | created by each run | Per-run artifacts (graph, bindings, trace) |
 | `<workDir>/.env` | user responsibility (optional) | FLOW_ENGINE selection + optional ANTHROPIC_* passthrough for claude engine + FLOW_PSI_* for psi-agent |
 
 ## Authoring Mode
 
-This is the flagship: turn a natural-language intent into a runnable FusionFlow workflow. The user just describes what they want in plain words ("帮我写个工作流做 X") — there is no command to invoke and no implementation format to explain.
+This is the flagship: turn a natural-language intent into a runnable FusionFlow G4 workflow. The user just describes what they want in plain words ("帮我写个工作流做 X") — there is no command to invoke and no implementation format to explain.
 
-> **NO-MOCK RULE (global, applies to all of Authoring Mode).** When you build a flow for the user, author **exactly one** real FusionFlow workflow and NEVER fabricate a mock/offline/simplified twin to "test" or "demonstrate" it. A twin with hardcoded sample output, fake numbers, or a fake executor standing in for the real work is a **forgery** — it always "passes" regardless of what the real flow does, so it proves nothing and misleads the user. Validate the one real workflow, then actually run it. If the user *explicitly* later asks for an offline twin, that's a separate request you confirm first — never self-initiate one.
+> **NO-MOCK RULE (global, applies to all of Authoring Mode).** When you build a flow for the user, author **exactly one** real FusionFlow G4 workflow and NEVER fabricate a mock/offline/simplified twin to "test" or "demonstrate" it. A twin with hardcoded sample output, fake numbers, or a fake executor standing in for the real work is a **forgery** — it always "passes" regardless of what the real flow does, so it proves nothing and misleads the user. Validate the one real workflow, then actually run it. If the user *explicitly* later asks for an offline twin, that's a separate request you confirm first — never self-initiate one.
 >
 > (This rule is about flows **you author for the user**. Repository-owned offline examples are sanctioned test infrastructure; the ban is on *fabricating a new mock of the user's flow*.)
 
@@ -218,14 +195,14 @@ This is the flagship: turn a natural-language intent into a runnable FusionFlow 
 
 - User describes a workflow they want built: "帮我写个工作流 ..." / "make a flow that ..." / "帮我编排 ..." / similar.
 - User asks "帮我写一个 flow ..." / "make a flow that ..." / similar in any LLM client.
-- User edits existing FusionFlow source and asks you to "rewrite" or "扩展".
+- User edits existing FusionFlow G4 source and asks you to "rewrite" or "扩展".
 - **User describes a workflow-shaped task without naming "flow"** — anything needing two or more coordinated agents / parallel branches / a multi-step pipeline / judge-then-branch (see "When to Activate"). In that case, don't wait for the word "flow": offer to build one, then run the author loop below.
 
 ### The 5-step author loop
 
-1. **Understand intent** — restate the user's goal in 1 sentence. If genuinely ambiguous, ask **one** clarifying question (don't grill them). Note whether the user looks like a *developer* (asked to edit FusionFlow source or mentioned G4/operators) — that's the only case where you show technical detail later. Everyone else gets the minimal plain-language summary.
+1. **Understand intent** — restate the user's goal in 1 sentence. If genuinely ambiguous, ask **one** clarifying question (don't grill them). Note whether the user looks like a *developer* (asked to edit FusionFlow G4 source or mentioned operators) — that's the only case where you show technical detail later. Everyone else gets the minimal plain-language summary.
 2. **Model the workflow** — match the intent to one of the reference patterns below. Identify inputs, outputs, steps, executors, artifacts, dependencies, concurrency, retries, timeouts, and any catalog-provided operation the task needs.
-3. **Author one FusionFlow source** — use only declarations, assertions, terms, and operators allowed by `grammar/FusionFlow.g4` and the active catalog. Use the workspace-provided target path; never invent a second copy.
+3. **Author one FusionFlow G4 source** — use only declarations, assertions, terms, and operators allowed by `grammar/FusionFlow.g4` and the active catalog. Use the workspace-provided target path; never invent a second copy.
 4. **Validate** — run the workspace's FusionFlow validation entry point. Fix reported syntax, arity, type, or capability errors yourself, up to **3 rounds**. After 3 failed rounds, stop and tell the user what remains.
 5. **Run it directly** — the user asked you to do a task, not to receive an implementation artifact. Once validation passes, say ONE friendly heads-up line ("🚀 方案定了，正在帮你跑，预计几分钟…" — a notice, NOT a question), then immediately run the flow. **Do NOT ask "要不要跑 / 跑不跑" and do NOT wait for `跑`.** The only exception is when the user explicitly says "只生成别跑 / 先给我看看别执行".
 
@@ -273,7 +250,7 @@ Keep this **minimal**. A real investor ("悠悠") and an internal teammate ("张
 🚀 我来帮你做：<一句话讲清楚要产出什么，e.g. "并行调研 5 个 AI 方向，汇总打分后给你一份带『重点关注 / 投资机会』的总报告">，预计几分钟，这就开始。
 ```
 
-That's it — one line, then you run. Do **not** add `做什么 / 要多久 / 你会拿到` as separate fields, do not list steps, do not show 🔧/🎯/📝 lines, do not show the file path, do not ask for approval. If the user is clearly a **developer** (asked to edit FusionFlow source, mentioned G4/operators, or explicitly asks "用了哪些语法 / 给我看结构 / 文件在哪"), you may then show technical detail **on demand**:
+That's it — one line, then you run. Do **not** add `做什么 / 要多久 / 你会拿到` as separate fields, do not list steps, do not show 🔧/🎯/📝 lines, do not show the file path, do not ask for approval. If the user is clearly a **developer** (asked to edit FusionFlow G4 source, mentioned operators, or explicitly asks "用了哪些语法 / 给我看结构 / 文件在哪"), you may then show technical detail **on demand**:
 
 ```
 🔧 3 个 reviewer step 共用输入，1 个 synthesize step 汇总 ｜ `max_concurrency = 3`
@@ -299,7 +276,7 @@ Token estimate rule of thumb: each ordinary LLM work step ≈ 1500 input + 800 o
 
 ### Reference Patterns (the 5 archetypes)
 
-Match the user's intent to one of these five shapes, then express it with FusionFlow declarations, assertions, catalog operators, and artifact dependencies. `grammar/FusionFlow.g4` is authoritative. Do not copy TypeScript patterns into the source and do not invent an imperative keyword.
+Match the user's intent to one of these five shapes, then express it with FusionFlow declarations, assertions, catalog operators, and artifact dependencies. `grammar/FusionFlow.g4` is authoritative. Do not copy imperative API patterns into the source and do not invent a keyword.
 
 | Pattern | FusionFlow shape | When to use |
 | --- | --- | --- |
@@ -506,7 +483,7 @@ All four `*_multi` operators return ordinary List terms. Ordinary preset and ext
 - Configure concurrency, retries, timeouts, resources, and agent limits with the corresponding preset operators.
 - Use `if` only to select a term. Content-based scoring or routing needs a catalog operator that produces the compared value.
 - Variables, quantifiers, rules, implications, biconditionals, query/SAT/optimization requests, local concept declarations, local operator declarations, and imperative blocks are outside this language.
-- Never emit TypeScript, imports, `flow.*` calls, `run(...)`, or invented `parallel`/`pipeline`/`for` blocks.
+- Never emit imports, imperative runtime calls, `run(...)`, or invented `parallel`/`pipeline`/`for` blocks.
 
 #### Worked example: homogeneous per-item work + one summary
 
@@ -560,7 +537,7 @@ Do not place command strings, code, prompts, or secrets in the DSL. They belong 
 
 ### Anti-patterns to refuse
 
-1. **Hand-writing TypeScript or `flow.*` calls.** The authored program is FusionFlow source.
+1. **Hand-writing imports or imperative runtime calls.** The authored program is FusionFlow G4 source.
 2. **Inventing a keyword or operator.** Flexible call syntax does not make unknown names valid.
 3. **Using `==` inside a condition or `=` for a workflow assertion.** These have different grammar roles.
 4. **Treating quoted constants as prompt strings.** They are restricted IDs; use catalog-backed `Instruction` identities.
@@ -615,7 +592,7 @@ Re-run validation after each repair. Stop after 3 failed rounds and report the r
 
 ### Running it (automatic, right after validation)
 
-1. Submit the validated FusionFlow source to the configured workflow runner (no approval step — this follows directly from step 5 of the author loop). In psi-agent, use `flow_run(action="start", flow_path=...)`, then `status`, then `result`.
+1. Submit the validated FusionFlow G4 source to the configured workflow runner (no approval step — this follows directly from step 5 of the author loop). In psi-agent, use `flow_run(action="start", flow_path=...)`, then `status`, then `result`.
 2. Capture `[run] <runId>` and `[run] dir: ...` from stdout (these are for *you*, not for the user).
 3. After completion (or on error), fall back to the "Reading a Run" protocol — summarize the run for the user in plain business language. Lead with the result, not the file or the metrics.
 4. Only if the user asks how to re-run it later, tell them the workspace-specific invocation. Do not volunteer the source path or internal execution details.
@@ -624,19 +601,18 @@ Re-run validation after each repair. Stop after 3 failed rounds and report the r
 
 - It is **not** a guarantee the workflow gets good *content*. We control structure, validation, and execution; the task instructions still depend on the user's domain.
 - It is **not** auto-iterating on content. The user reads the result and asks for changes, but there is no "要不要跑" gate between validation and the first run.
-- It is **not** a reason to show implementation details to a business user. Technical users can ask for the FusionFlow source and structure on demand.
+- It is **not** a reason to show implementation details to a business user. Technical users can ask for the FusionFlow G4 source and structure on demand.
 
 ## Doctor Checks
 
 When the user asks to check their environment ("环境齐不齐 / 能不能跑"): in the bundle, the quickest path is `cd <workDir> && npm run doctor` (the bundle ships a `doctor.mjs`). Prefer that over hand-written shell checks.
 
-All manual checks must be non-interactive and bounded. Never run a command that can wait for user input, especially bare `node`, bare `python`, bare `npx`, or package-install fallbacks such as `npx tsc` after dependencies are missing.
+All manual checks must be non-interactive and bounded. Never run a command that can wait for user input, especially bare `node` or bare `python`, and never install missing packages as part of a doctor check.
 
 If `npm run doctor` is not present, check manually:
 
 ```bash
 command -v node && node --version        # need >= 20; never run bare `node`
-command -v npx && npx -y tsx --version   # any; never run bare `npx`
 test -f <workDir>/.env                   # optional in v0.7 (FLOW_ENGINE config); the engine CLI's own auth is what matters
 test -d <workDir>/node_modules           # must exist; if missing, report "run npm install in <workDir>" and stop
 claude --version                         # the configured FLOW_ENGINE CLI must be on PATH (default: claude)
@@ -666,7 +642,7 @@ Otherwise:
 
 ### Engine readiness (v0.7)
 
-In v0.7 every LLM call (`flow.session` / `flow.evaluate` / `flow.choice`) shells out to an external agent CLI (`FLOW_ENGINE`, default `claude`). Check the configured engine's CLI is on PATH. `flow.exec` needs no preflight (any command goes).
+In v0.7 every Agent-backed G4 Step shells out to an external agent CLI (`FLOW_ENGINE`, default `claude`). Check the configured engine's CLI is on PATH. A Step using only a local deterministic or external catalog Executor needs no LLM-engine preflight.
 
 ```bash
 claude --version                                    # if FLOW_ENGINE=claude (default)
@@ -710,7 +686,7 @@ If on Windows and no git-bash found in any candidate path, the runtime will best
 When the user asks what this skill can do ("你能帮我做什么 / 我能用这个干嘛"), describe these in plain language — never as slash commands. The user just talks naturally and you map intent (see "Intent Routing"):
 
 ```
-🐾 FusionFlow — Fuclaw / @agent-flow/core
+🐾 FusionFlow G4 — Fuclaw / @agent-flow/core
 用自然语言驱动多 agent 工作流，带完整执行图回放。直接跟我说就行，不用记任何命令：
 
   • "帮我写个工作流做 X / 帮我编排 ..."           → 用大白话描述需求，我帮你搭好并运行
@@ -725,4 +701,4 @@ When the user asks what this skill can do ("你能帮我做什么 / 我能用这
 
 ## Security + Approvals
 
-Workflows run with the privileges of the process executing them. When a user points to an existing local workflow for the first time, show them the source before execution and review its requested tools, external commands, file access, and secret/config references. This does not add an approval gate to a workflow authored for the user's current request. For remote URLs, refuse: running workflow source directly from a URL is intentionally unsupported.
+Workflows run with the privileges of the process executing them. When a user points to existing local FusionFlow G4 source for the first time, show it before execution and review its requested tools, external commands, file access, and secret/config references. This does not add an approval gate to a workflow authored for the user's current request. For remote URLs, refuse: running workflow source directly from a URL is intentionally unsupported.
