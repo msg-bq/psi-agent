@@ -1,4 +1,5 @@
 from .checker import check_workflow
+from .compiler import CoreIRCompiler
 from .contracts import (
     CheckResult,
     Diagnostic,
@@ -22,7 +23,12 @@ from .core_ir import (
     Workflow,
     WorkflowFile,
 )
-from .parser import parse_workflow
+from .graph_compiler import (
+    WorkflowGraphCompilation,
+    WorkflowGraphCompilationError,
+    WorkflowGraphCompiler,
+)
+from .parser import ParseContext, parse_workflow
 from .planning import (
     PlannedStep,
     PlannedSyntax,
@@ -37,6 +43,7 @@ __all__ = [
     "Concept",
     "ConnectiveFormula",
     "Constant",
+    "CoreIRCompiler",
     "Diagnostic",
     "DiagnosticSeverity",
     "Formula",
@@ -44,6 +51,7 @@ __all__ = [
     "ListTerm",
     "LogicalConnective",
     "Operator",
+    "ParseContext",
     "ParseResult",
     "PlannedStep",
     "PlannedSyntax",
@@ -53,6 +61,9 @@ __all__ = [
     "Term",
     "Workflow",
     "WorkflowFile",
+    "WorkflowGraphCompilation",
+    "WorkflowGraphCompilationError",
+    "WorkflowGraphCompiler",
     "check_planned_steps",
     "check_workflow",
     "parse_workflow",

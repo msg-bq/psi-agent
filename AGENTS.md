@@ -103,6 +103,9 @@ src/
     │   ├── model.py                # Agent、规则、trace、binding 等运行模型
     │   ├── runtime.py              # run 生命周期、持久化与恢复
     │   └── flow.py                 # 29 个 flow.* 执行原语
+    ├── workflow_graph/
+    │   ├── __init__.py             # 声明式图模型 API
+    │   └── model.py                # 允许有环的 Step–Artifact 静态图
     └── gateway/
         ├── AGENTS.md                # Gateway 层设计文档
         ├── __init__.py              # Gateway dataclass + run()
@@ -128,6 +131,7 @@ src/
 - **Session 层**: `src/psi_agent/session/AGENTS.md` — workspace 启动、agent loop、tool 加载调用、schedule 机制、history 持久化
 - **Channel 层**: `src/psi_agent/channel/AGENTS.md` — ChannelCore 公共部件、REPL/CLI/Telegram/Feishu 约定
 - **Gateway 层**: `src/psi_agent/gateway/AGENTS.md` — 生命周期管理、REST API、Web Console SPA、CI 打包
+- **Workflow Graph**: `docs/architecture/workflow/2026-07-23-workflow-graph-design.zh.md` — 允许有环的声明式 Step–Artifact 图及待讨论语义；具体 Core IR 后端位于 `examples/haitun-workspace/skills/fusion-flow-next/fusion_flow_next/graph_compiler.py`
 
 ## 核心通信协议
 
@@ -208,6 +212,8 @@ SSE 流中的特殊字段：
 16. **消费 async generator 必须用 `aclosing()`**：`async for` 在提前退出或被 cancel 时不调用 generator 的 `aclose()`，导致 generator 内 `async with` 持有的资源（aiohttp 连接、文件句柄等）被遗弃给 GC。正确做法：`async with aclosing(gen) as g: async for chunk in g: ...`。对标 `ai/server.py` 的 `finally` + shielded `aclose()` 模式。参见 `agent.py`、`channel_adapter.py`、`schedule_registry.py`。
 
 17. **Windows batch 参数边界**：`fusion_flow.flow.exec()` 仅在目标显式以 `.cmd`/`.bat` 结尾时使用系统 shell，并对命令与参数整体加引号、延迟还原字面量 `%`；含双引号或换行的参数因无法安全无损地穿过 `cmd.exe` 而直接拒绝。Windows 非 batch 与其他平台始终保持 argv/no-shell 路径。
+
+18. **`WorkflowEdge` 是封闭 union**：`WorkflowGraph` 只接受 `ConsumesEdge`、`ProducesEdge`、`ForeachEdge` 的精确类型，不接受子类。子类会破坏 dataclass 基于精确类型的相等性去重，也能覆盖序列化使用的 `kind`。新增边类型时应显式更新 union、校验和序列化。
 
 ## 测试约定
 
