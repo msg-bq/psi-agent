@@ -182,8 +182,9 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         if len(graph_fact_candidates) > 1:
             raise WorkflowGraphCompilationError("one equality cannot declare multiple graph facts")
 
-        # The candidate already normalizes either source orientation into the
-        # single functional shape graph_call = value.
+        # HACK: Every graph assertion currently pairs exactly one call with one
+        # value, so positional normalization is sufficient.  If the vocabulary
+        # gains call-to-call relations, dispatch must interpret that shape.
         call_term, value_term = graph_fact_candidates[0]
 
         # Recognized operators are compiled recursively and fail closed on an
