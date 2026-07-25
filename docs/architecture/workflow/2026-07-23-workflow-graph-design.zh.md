@@ -285,6 +285,10 @@ operator 默认可能为 0，不能代表应用实参数量。
 
 ### 7.3 mapping
 
+`Assertion` 表示等式而不是赋值。已知图算子可以位于等式任意一侧；compiler 先将唯一的
+图算子规范化为 `graph_call = value`，再复用同一 lowering 路径。若等式两侧都是已知
+图算子，则显式抛出 `WorkflowGraphCompilationError`，不能进入 residual。
+
 | Core IR assertion | WorkflowGraph |
 | --- | --- |
 | `input_workflow(w, a) = True` | `ArtifactNode(a, is_input=True)` |
@@ -327,8 +331,8 @@ WorkflowGraphCompilation
 本身不是持久化 payload；需要持久化时，调用者分别保存原始 Core IR 和
 `graph.to_dict()`。
 
-未知 compound operator 或非 compound assertion 可以进入 residual；已识别但形状
-错误的关系和共享编译器不支持的递归节点必须显式失败。
+两侧顶层都没有已知图算子的 assertion（包括普通 equality 和未知 compound operator）
+可以进入 residual；已识别但形状错误的关系和共享编译器不支持的递归节点必须显式失败。
 
 ## 8. ListTerm multi 的信息边界
 

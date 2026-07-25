@@ -123,7 +123,7 @@ construct，不能给普通关系边偷偷增加 position。
 ### 4.2 backend support
 
 - 已知 dependency assertion 编译为图节点、边或 policy；
-- 未知 compound operator 或非 compound assertion 保留为 residual；
+- 两侧顶层均无已知图算子的 assertion 保留为 residual；
 - 已识别但 arity、owner、RHS 或类型形状错误的关系直接报错；
 - `IfTerm` 等未支持递归节点沿 `CoreIRCompiler` 的默认 hook fail closed。
 

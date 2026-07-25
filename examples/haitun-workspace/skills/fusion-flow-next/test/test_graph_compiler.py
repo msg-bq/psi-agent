@@ -206,13 +206,60 @@ def test_unknown_assertions_remain_residual() -> None:
         (Constant("files"),),
         ListTerm((Constant("a"), Constant("b"))),
     )
+    reversed_unknown = Assertion(
+        lhs=Constant("value"),
+        rhs=CompoundTerm(
+            operator=Operator("value_assignment"),
+            arguments=(Constant("files"),),
+        ),
+    )
     ordinary_equality = Assertion(lhs=Constant("left"), rhs=Constant("right"))
 
-    compilation = _compile((unknown, ordinary_equality))
+    compilation = _compile((unknown, reversed_unknown, ordinary_equality))
 
     assert compilation.graph.steps == ()
     assert compilation.graph.artifacts == ()
-    assert compilation.residual_assertions == (unknown, ordinary_equality)
+    assert compilation.residual_assertions == (
+        unknown,
+        reversed_unknown,
+        ordinary_equality,
+    )
+
+
+def test_supported_graph_operator_on_rhs_is_lowered_as_equality() -> None:
+    reversed_input = Assertion(
+        lhs=Constant("True"),
+        rhs=CompoundTerm(
+            operator=Operator("input_workflow"),
+            arguments=(Constant("workflow1"), Constant("artifact2")),
+        ),
+    )
+
+    compilation = _compile((reversed_input,), workflow_id="workflow1")
+
+    assert compilation.residual_assertions == ()
+    assert tuple(
+        (artifact.artifact_id, artifact.is_input, artifact.is_output) for artifact in compilation.graph.artifacts
+    ) == (("artifact2", True, False),)
+
+
+def test_graph_operators_on_both_sides_are_rejected() -> None:
+    assertion = Assertion(
+        lhs=CompoundTerm(
+            operator=Operator("input_workflow"),
+            arguments=(Constant("workflow"), Constant("input")),
+        ),
+        rhs=CompoundTerm(
+            operator=Operator("output_workflow"),
+            arguments=(Constant("workflow"), Constant("output")),
+        ),
+    )
+
+    with pytest.raises(
+        WorkflowGraphCompilationError,
+        match="graph operators on both sides",
+    ):
+        _compile((assertion,))
 
 
 def test_supported_operator_with_unsupported_term_fails_closed() -> None:

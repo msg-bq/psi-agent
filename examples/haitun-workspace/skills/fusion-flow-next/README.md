@@ -45,6 +45,10 @@ become graph nodes, edges, or policy; unknown well-formed assertions remain in
 terms fail explicitly. The graph is serializable, but the compilation is not a
 replacement for the original Core IR.
 
+Because `Assertion` is equality, one recognized graph call may appear on either
+side. The backend normalizes that call before lowering and explicitly rejects an
+equality containing recognized graph calls on both sides.
+
 The package exports `WorkflowGraphCompiler`, `WorkflowGraphCompilation`, and
 `WorkflowGraphCompilationError`.
 

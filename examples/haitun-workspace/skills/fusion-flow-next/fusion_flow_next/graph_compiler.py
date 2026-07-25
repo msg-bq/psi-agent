@@ -144,27 +144,43 @@ class WorkflowGraphCompiler(CoreIRCompiler):
     def _compile_assertion(self, assertion: Assertion) -> object:
         """Classify one equality as a graph assertion or residual Core IR.
 
-        Only a recognized compound term on the left-hand side belongs to this
-        backend.  Unknown operators stay completely untouched: notably, their
-        children are not traversed and therefore cannot fail graph compilation.
+        A recognized graph call may occur on either side because ``Assertion``
+        models equality, not assignment.  Unknown operators stay completely
+        untouched: notably, their children are not traversed and therefore
+        cannot fail graph compilation.
         """
 
-        # Plain equality has no graph operator to dispatch.
-        if not isinstance(assertion.lhs, CompoundTerm):
+        # Inspect both top-level terms symmetrically.  Nested graph calls inside
+        # an unknown outer operator still belong to that operator's backend.
+        lhs_is_graph_call = (
+            isinstance(assertion.lhs, CompoundTerm) and assertion.lhs.operator.name in self._GRAPH_OPERATORS
+        )
+        rhs_is_graph_call = (
+            isinstance(assertion.rhs, CompoundTerm) and assertion.rhs.operator.name in self._GRAPH_OPERATORS
+        )
+
+        # An equality with no graph call must survive as exact residual IR.
+        if not lhs_is_graph_call and not rhs_is_graph_call:
             return _CompiledAssertion(source=assertion)
-        # An operator owned by another backend must survive as exact residual IR.
-        if assertion.lhs.operator.name not in self._GRAPH_OPERATORS:
-            return _CompiledAssertion(source=assertion)
+
+        # Two graph calls do not have a call/value orientation and cannot map to
+        # one graph fact without inventing target semantics.
+        if lhs_is_graph_call and rhs_is_graph_call:
+            raise WorkflowGraphCompilationError("graph assertion cannot contain graph operators on both sides")
+
+        # Normalize equality direction before entering the existing lowering
+        # path: graph_call = value and value = graph_call are equivalent.
+        call_term, value_term = (assertion.lhs, assertion.rhs) if lhs_is_graph_call else (assertion.rhs, assertion.lhs)
 
         # Recognized operators are compiled recursively and fail closed on an
         # unsupported child such as IfTerm.
-        call = self._compile_term(assertion.lhs)
+        call = self._compile_term(call_term)
         if not isinstance(call, _CompiledCall):
             raise TypeError("compound term hook returned an invalid graph call")
         return _CompiledAssertion(
             source=assertion,
             call=call,
-            rhs=self._compile_term(assertion.rhs),
+            rhs=self._compile_term(value_term),
         )
 
     def _build_workflow(
