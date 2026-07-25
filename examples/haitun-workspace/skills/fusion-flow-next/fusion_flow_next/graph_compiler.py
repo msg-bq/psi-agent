@@ -202,6 +202,12 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         if len(graph_fact_candidates) > 1:
             raise WorkflowGraphCompilationError("one equality cannot declare multiple graph facts")
 
+        # FIXME(#20): Before built-in operators grow or the workflow scheduler
+        # is added, give each assertion an operator-specific compile attr/handler
+        # and carry its full Assertion/Formula context through graph lowering and
+        # scheduling.  The compiler and scheduler must consume the same operator
+        # metadata instead of maintaining separate dispatch tables.
+        #
         # HACK: Every graph operator currently forms a declaration-shaped fact:
         # one recognized call plus one term treated as its value.  That makes
         # both this positional split and the flat _GraphFact(call, value) record
