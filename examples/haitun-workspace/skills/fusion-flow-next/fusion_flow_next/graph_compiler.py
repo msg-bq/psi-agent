@@ -39,7 +39,12 @@ class WorkflowGraphCompilation:
 
 @dataclass(frozen=True, slots=True)
 class _CompiledCall:
-    """A compound Core IR term reduced to the data needed for op dispatch."""
+    """Transient result of the ``CompoundTerm`` compiler hook.
+
+    ``_build_workflow`` consumes this operator name and its recursively
+    compiled arguments to dispatch graph lowering.  This is not a public graph
+    node and never appears in ``WorkflowGraph`` or its serialized payload.
+    """
 
     operator_name: str
     arguments: tuple[object, ...]
@@ -47,17 +52,26 @@ class _CompiledCall:
 
 @dataclass(frozen=True, slots=True)
 class _CompiledList:
-    """A compiled ``ListTerm`` kept distinct from a call's argument tuple."""
+    """Transient result of the ``ListTerm`` compiler hook.
+
+    The wrapper preserves the Core IR list boundary while its items are being
+    compiled; a bare tuple would be indistinguishable from a call's argument
+    tuple.  It is consumed during lowering and is not a graph Artifact or any
+    other public ``WorkflowGraph`` value.
+    """
 
     items: tuple[object, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class _CompiledAssertion:
-    """An assertion classified for graph lowering.
+    """Transient assertion classification used while assembling one graph.
 
     ``call is None`` means that the assertion does not use the graph
     vocabulary.  Its untouched ``source`` is then returned as residual IR.
+    Otherwise ``call`` and ``rhs`` hold the normalized ``graph_call = value``
+    form consumed by ``_build_workflow``.  This record is compiler state, not
+    an assertion stored in or exposed by ``WorkflowGraph``.
     """
 
     source: Assertion
