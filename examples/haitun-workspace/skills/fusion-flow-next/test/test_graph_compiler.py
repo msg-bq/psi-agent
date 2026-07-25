@@ -292,6 +292,17 @@ def test_oversized_integer_is_reported_as_a_graph_compilation_error() -> None:
     assert isinstance(caught.value.__cause__, ValueError)
 
 
+def test_explicit_one_does_not_hide_duplicate_max_attempts() -> None:
+    with pytest.raises(WorkflowGraphCompilationError, match="duplicate max_attempts"):
+        _compile(
+            (
+                *_step_declarations(),
+                _assertion("max_attempts", (Constant("step"),), Constant("1")),
+                _assertion("max_attempts", (Constant("step"),), Constant("2")),
+            )
+        )
+
+
 def test_cycle_compilation_is_order_independent() -> None:
     true = Constant("True")
     assertions = (

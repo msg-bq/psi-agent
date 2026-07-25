@@ -7,7 +7,7 @@ facts, and finally builds the immutable Step-Artifact graph.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from psi_agent.workflow_graph.model import (
     ArtifactNode,
@@ -16,6 +16,7 @@ from psi_agent.workflow_graph.model import (
     ProducesEdge,
     ResourceRequirement,
     StepNode,
+    WorkflowEdge,
     WorkflowGraph,
     WorkflowGraphError,
     WorkflowPolicy,
@@ -75,6 +76,25 @@ class _GraphFact:
     operator_name: str
     arguments: tuple[object, ...]
     value: object
+
+
+@dataclass(slots=True)
+class _StepDraft:
+    """Mutable StepNode payload until required fields are fully known.
+
+    ``WorkflowGraph`` values are frozen and validated eagerly, so step facts
+    accumulate here until every order-independent assertion has been seen.
+    Complete sub-values such as ``ResourceRequirement`` are stored directly.
+    """
+
+    name_id: str | None = None
+    executor_id: str | None = None
+    instruction_id: str | None = None
+    timeout_seconds: int | None = None
+    # None means the assertion was absent; an explicit value of 1 must still
+    # make a second max_attempts assertion a duplicate.
+    max_attempts: int | None = None
+    resources: dict[str, ResourceRequirement] = field(default_factory=dict)
 
 
 class WorkflowGraphCompiler(CoreIRCompiler):
@@ -206,37 +226,18 @@ class WorkflowGraphCompiler(CoreIRCompiler):
     ) -> object:
         """Collect graph facts, validate cross-op invariants, and build one graph.
 
-        The first pass records identity, metadata, edges, and policies in
-        duplicate-detecting containers.  Construction is deferred until every
-        assertion has been seen because graph validity depends on facts spread
-        across multiple operators.
+        Frozen public graph values are created as soon as one fact fully
+        determines them: artifacts, edges, and resource requirements never need
+        tuple/ID shadow state.  Only incomplete step fields stay mutable until
+        the final order-independent validation pass.
         """
 
-        # Identities are discovered from any operator, not from declarations.
-        step_ids: set[str] = set()
-        artifact_ids: set[str] = set()
-        input_ids: set[str] = set()
-        output_ids: set[str] = set()
-
-        # Step metadata is keyed by step so each scalar property can occur once.
-        step_names: dict[str, str] = {}
-        step_instructions: dict[str, str] = {}
-        step_executors: dict[str, str] = {}
-        step_timeouts: dict[str, int] = {}
-        step_attempts: dict[str, int] = {}
-
-        # Edges and resources use composite keys to reject exact duplicates.
-        resources: dict[tuple[str, str], int] = {}
-        consumes: set[tuple[str, str]] = set()
-        produces: set[tuple[str, str]] = set()
-
-        # A foreach step has one source and creates one step-local item binding.
-        foreach_by_step: dict[str, tuple[str, str]] = {}
-        binding_owners: dict[str, str] = {}
+        step_drafts: dict[str, _StepDraft] = {}
+        artifacts: dict[str, ArtifactNode] = {}
+        edges: set[WorkflowEdge] = set()
 
         # Workflow-wide policies are optional but singular.
-        max_concurrency: int | None = None
-        workflow_timeout: int | None = None
+        policy = WorkflowPolicy()
 
         # Assertions outside the graph vocabulary remain available to callers.
         residual: list[Assertion] = []
@@ -257,55 +258,69 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             arguments = compiled.arguments
             fact_value = compiled.value
 
-            # Multi operators encode their artifact collection as one RHS List:
-            #   input_workflow_multi(workflow) = List(...)
-            #   consumes_multi(step) = List(...)
+            # Boundary facts directly update the target ArtifactNode.  Scalar
+            # and multi spellings differ only in how they supply artifact IDs.
             if operator_name in {
+                "input_workflow",
                 "input_workflow_multi",
+                "output_workflow",
                 "output_workflow_multi",
-                "consumes_multi",
-                "produces_multi",
             }:
-                self._require_arity(arguments, 1, operator_name)
-                item_ids = self._list_symbols(fact_value, operator_name)
-                owner_id = self._symbol(arguments[0], f"{operator_name} owner")
-                if operator_name in {"input_workflow_multi", "output_workflow_multi"}:
-                    # Workflow boundary lists must name the workflow being built.
+                if operator_name.endswith("_multi"):
+                    self._require_arity(arguments, 1, operator_name)
+                    artifact_ids = self._list_symbols(fact_value, operator_name)
+                    owner_id = self._symbol(arguments[0], f"{operator_name} owner")
                     self._require_owner(owner_id, workflow.name, operator_name)
-                    target = input_ids if operator_name == "input_workflow_multi" else output_ids
-                    for artifact_id in item_ids:
-                        self._add_unique(target, artifact_id, operator_name)
-                        artifact_ids.add(artifact_id)
-                    continue
+                else:
+                    self._require_arity(arguments, 2, operator_name)
+                    owner_id = self._symbol(arguments[0], f"{operator_name} owner")
+                    self._require_owner(owner_id, workflow.name, operator_name)
+                    artifact_ids = (self._symbol(arguments[1], f"{operator_name} artifact"),)
+                    self._require_true(fact_value, operator_name)
 
-                # Step multi-edge operators discover the step and expand each
-                # list item into one ordinary graph edge.
-                step_ids.add(owner_id)
-                for artifact_id in item_ids:
-                    if operator_name == "consumes_multi":
-                        # Core IR: consumes_multi(step) = List(artifacts)
-                        # Graph:   artifact --consumes--> step
-                        self._add_unique(consumes, (artifact_id, owner_id), operator_name)
+                is_input = operator_name.startswith("input_workflow")
+                for artifact_id in artifact_ids:
+                    artifact = artifacts.setdefault(artifact_id, ArtifactNode(artifact_id=artifact_id))
+                    # Input and output are independent flags, but repeating the
+                    # same boundary fact remains invalid Core IR.
+                    if is_input:
+                        if artifact.is_input:
+                            raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {artifact_id!r}")
+                        artifacts[artifact_id] = replace(artifact, is_input=True)
                     else:
-                        # Core IR: produces_multi(step) = List(artifacts)
-                        # Graph:   step --produces--> artifact
-                        self._add_unique(produces, (owner_id, artifact_id), operator_name)
-                    artifact_ids.add(artifact_id)
+                        if artifact.is_output:
+                            raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {artifact_id!r}")
+                        artifacts[artifact_id] = replace(artifact, is_output=True)
                 continue
 
-            # Scalar boundary assertions use an explicit True RHS:
-            #   input_workflow(workflow, artifact) = True
-            #   output_workflow(workflow, artifact) = True
-            if operator_name in {"input_workflow", "output_workflow"}:
-                self._require_arity(arguments, 2, operator_name)
-                owner_id = self._symbol(arguments[0], f"{operator_name} owner")
-                self._require_owner(owner_id, workflow.name, operator_name)
-                artifact_id = self._symbol(arguments[1], f"{operator_name} artifact")
-                self._require_true(fact_value, operator_name)
-                target = input_ids if operator_name == "input_workflow" else output_ids
-                self._add_unique(target, artifact_id, operator_name)
-                # Boundary-only artifacts still need a graph node.
-                artifact_ids.add(artifact_id)
+            # Scalar and multi dataflow facts both lower immediately to real
+            # graph edges; only their artifact-ID source differs.
+            if operator_name in {"consumes", "consumes_multi", "produces", "produces_multi"}:
+                if operator_name.endswith("_multi"):
+                    self._require_arity(arguments, 1, operator_name)
+                    artifact_ids = self._list_symbols(fact_value, operator_name)
+                    step_id = self._symbol(arguments[0], f"{operator_name} owner")
+                else:
+                    self._require_arity(arguments, 2, operator_name)
+                    step_id = self._symbol(arguments[0], f"{operator_name} step")
+                    relation = "produced" if operator_name == "produces" else "consumed"
+                    artifact_ids = (self._symbol(arguments[1], f"{relation} artifact"),)
+                    self._require_true(fact_value, operator_name)
+
+                step_drafts.setdefault(step_id, _StepDraft())
+                is_produces = operator_name.startswith("produces")
+                for artifact_id in artifact_ids:
+                    artifacts.setdefault(artifact_id, ArtifactNode(artifact_id=artifact_id))
+                    edge: WorkflowEdge
+                    if is_produces:
+                        # Core IR: produces[_multi](step, artifact) = True/List
+                        # Graph:   step --produces--> artifact
+                        edge = ProducesEdge(step_id=step_id, artifact_id=artifact_id)
+                    else:
+                        # Core IR: consumes[_multi](step, artifact) = True/List
+                        # Graph:   artifact --consumes--> step
+                        edge = ConsumesEdge(artifact_id=artifact_id, step_id=step_id)
+                    self._add_unique(edges, edge, operator_name)
                 continue
 
             # Workflow policies are positive integer properties of this workflow:
@@ -318,161 +333,136 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 value = self._positive_integer(fact_value, operator_name)
                 if operator_name == "max_concurrency":
                     # None distinguishes "not supplied" from a duplicate value.
-                    if max_concurrency is not None:
+                    if policy.max_concurrency is not None:
                         raise WorkflowGraphCompilationError("duplicate max_concurrency")
-                    max_concurrency = value
+                    policy = replace(policy, max_concurrency=value)
                 else:
-                    if workflow_timeout is not None:
+                    if policy.timeout_seconds is not None:
                         raise WorkflowGraphCompilationError("duplicate workflow_timeout")
-                    workflow_timeout = value
+                    policy = replace(policy, timeout_seconds=value)
                 continue
 
             # The remaining vocabulary is step-scoped.  Metadata/policy
-            # operators are unary; edge/resource operators take a second ID.
+            # operators are unary; foreach/resource operators take a second ID.
             if operator_name in {"step_name", "step_instruction", "step_executor", "step_timeout", "max_attempts"}:
                 self._require_arity(arguments, 1, operator_name)
             else:
                 self._require_arity(arguments, 2, operator_name)
             step_id = self._symbol(arguments[0], f"{operator_name} step")
             # A step may first appear in any one of its assertions.
-            step_ids.add(step_id)
+            step_draft = step_drafts.setdefault(step_id, _StepDraft())
 
             if operator_name == "step_name":
                 # step_name(step) = display_name
-                self._set_once(step_names, step_id, self._symbol(fact_value, "step_name value"), operator_name)
+                name_id = self._symbol(fact_value, "step_name value")
+                if step_draft.name_id is not None:
+                    raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                step_draft.name_id = name_id
             elif operator_name == "step_instruction":
                 # step_instruction(step) = instruction_identity
-                self._set_once(
-                    step_instructions,
-                    step_id,
-                    self._symbol(fact_value, "step_instruction value"),
-                    operator_name,
-                )
+                instruction_id = self._symbol(fact_value, "step_instruction value")
+                if step_draft.instruction_id is not None:
+                    raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                step_draft.instruction_id = instruction_id
             elif operator_name == "step_executor":
                 # step_executor(step) = executor_identity
                 # Concept tags, when present, also select exactly one executor kind.
                 executor = self._constant(fact_value, "step_executor value")
                 self._validate_executor_concepts(executor)
-                self._set_once(step_executors, step_id, executor.symbol, operator_name)
-            elif operator_name == "consumes":
-                # consumes(step, artifact) = True
-                artifact_id = self._symbol(arguments[1], "consumed artifact")
-                self._require_true(fact_value, operator_name)
-                self._add_unique(consumes, (artifact_id, step_id), operator_name)
-                artifact_ids.add(artifact_id)
-            elif operator_name == "produces":
-                # produces(step, artifact) = True
-                artifact_id = self._symbol(arguments[1], "produced artifact")
-                self._require_true(fact_value, operator_name)
-                self._add_unique(produces, (step_id, artifact_id), operator_name)
-                artifact_ids.add(artifact_id)
+                if step_draft.executor_id is not None:
+                    raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                step_draft.executor_id = executor.symbol
             elif operator_name == "foreach_item":
                 # foreach_item(step, collection_artifact) = item_binding
                 # The binding is a local artifact owned by exactly this step.
                 source_id = self._symbol(arguments[1], "foreach source")
                 binding_id = self._symbol(fact_value, "foreach item binding")
-                if step_id in foreach_by_step:
+                # ponytail: keep the edge collection as the source of truth;
+                # add a foreach index only if large workflows make this scan hot.
+                if any(isinstance(edge, ForeachEdge) and edge.step_id == step_id for edge in edges):
                     raise WorkflowGraphCompilationError(f"duplicate foreach_item for step {step_id!r}")
-                if binding_id in binding_owners:
+                binding_artifact = artifacts.setdefault(binding_id, ArtifactNode(artifact_id=binding_id))
+                if binding_artifact.binding_step_id is not None:
                     raise WorkflowGraphCompilationError(f"duplicate foreach item binding {binding_id!r}")
-                foreach_by_step[step_id] = (source_id, binding_id)
-                binding_owners[binding_id] = step_id
-                artifact_ids.update((source_id, binding_id))
+                artifacts.setdefault(source_id, ArtifactNode(artifact_id=source_id))
+                artifacts[binding_id] = replace(binding_artifact, binding_step_id=step_id)
+                edges.add(
+                    ForeachEdge(
+                        artifact_id=source_id,
+                        step_id=step_id,
+                        item_binding_id=binding_id,
+                    )
+                )
             elif operator_name == "step_timeout":
                 # step_timeout(step) = seconds
-                self._set_once(
-                    step_timeouts,
-                    step_id,
-                    self._positive_integer(fact_value, operator_name),
-                    operator_name,
-                )
+                timeout_seconds = self._positive_integer(fact_value, operator_name)
+                if step_draft.timeout_seconds is not None:
+                    raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                step_draft.timeout_seconds = timeout_seconds
             elif operator_name == "max_attempts":
                 # max_attempts(step) = count
-                self._set_once(
-                    step_attempts,
-                    step_id,
-                    self._positive_integer(fact_value, operator_name),
-                    operator_name,
-                )
+                max_attempts = self._positive_integer(fact_value, operator_name)
+                if step_draft.max_attempts is not None:
+                    raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                step_draft.max_attempts = max_attempts
             else:
                 # The only remaining graph operator is:
                 #   resource_requirement(step, resource) = positive_amount
                 resource_id = self._symbol(arguments[1], "resource identity")
-                self._set_once(
-                    resources,
-                    (step_id, resource_id),
-                    self._positive_integer(fact_value, operator_name),
-                    operator_name,
+                amount = self._positive_integer(fact_value, operator_name)
+                if resource_id in step_draft.resources:
+                    raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, resource_id)!r}")
+                step_draft.resources[resource_id] = ResourceRequirement(
+                    resource_id=resource_id,
+                    amount=amount,
                 )
 
-        # Name and executor are the two required StepNode fields not derivable
-        # from identity.  Check them after collecting every assertion so source
-        # ordering never affects acceptance.
-        for step_id in sorted(step_ids):
-            if step_id not in step_names:
-                raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_name")
-            if step_id not in step_executors:
-                raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_executor")
-
         try:
-            # Sort every identity-derived collection for deterministic graph
-            # equality and serialization independent of assertion order.
-            graph = WorkflowGraph(
-                workflow_id=workflow.name,
-                steps=tuple(
+            # A StepNode becomes valid only after its required name and executor
+            # facts are known.  Construct it once here instead of maintaining a
+            # second set of completed step IDs.
+            steps: list[StepNode] = []
+            for step_id, step_draft in sorted(step_drafts.items()):
+                if step_draft.name_id is None:
+                    raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_name")
+                if step_draft.executor_id is None:
+                    raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_executor")
+                steps.append(
                     StepNode(
                         step_id=step_id,
-                        name_id=step_names[step_id],
-                        executor_id=step_executors[step_id],
-                        instruction_id=step_instructions.get(step_id),
-                        timeout_seconds=step_timeouts.get(step_id),
+                        name_id=step_draft.name_id,
+                        executor_id=step_draft.executor_id,
+                        instruction_id=step_draft.instruction_id,
+                        timeout_seconds=step_draft.timeout_seconds,
                         # The graph model defaults retries to one when the DSL
                         # omits max_attempts.
-                        max_attempts=step_attempts.get(step_id, 1),
+                        max_attempts=step_draft.max_attempts if step_draft.max_attempts is not None else 1,
                         resources=tuple(
-                            # Resource facts are stored globally while parsing;
-                            # attach only those owned by the current step.
-                            ResourceRequirement(resource_id=resource_id, amount=amount)
-                            for (owner_id, resource_id), amount in sorted(resources.items())
-                            if owner_id == step_id
+                            step_draft.resources[resource_id] for resource_id in sorted(step_draft.resources)
                         ),
                     )
-                    for step_id in sorted(step_ids)
-                ),
-                artifacts=tuple(
-                    ArtifactNode(
-                        artifact_id=artifact_id,
-                        # One artifact may be both a workflow input and output.
-                        is_input=artifact_id in input_ids,
-                        is_output=artifact_id in output_ids,
-                        # Only foreach item bindings have a local owner.
-                        binding_step_id=binding_owners.get(artifact_id),
-                    )
-                    for artifact_id in sorted(artifact_ids)
-                ),
-                edges=(
-                    # Keep edge kinds in a stable consumes/foreach/produces order.
-                    tuple(
-                        ConsumesEdge(artifact_id=artifact_id, step_id=step_id)
-                        for artifact_id, step_id in sorted(consumes)
-                    )
-                    + tuple(
-                        ForeachEdge(
-                            artifact_id=source_id,
-                            step_id=step_id,
-                            item_binding_id=binding_id,
-                        )
-                        for step_id, (source_id, binding_id) in sorted(foreach_by_step.items())
-                    )
-                    + tuple(
-                        ProducesEdge(step_id=step_id, artifact_id=artifact_id)
-                        for step_id, artifact_id in sorted(produces)
+                )
+
+            # All other collections already contain target graph values.  Sort
+            # only to make equality and serialization independent of IR order.
+            graph = WorkflowGraph(
+                workflow_id=workflow.name,
+                steps=tuple(steps),
+                artifacts=tuple(artifacts[artifact_id] for artifact_id in sorted(artifacts)),
+                # Kind order is consumes, foreach, produces.  Within each kind,
+                # preserve the backend's previous deterministic endpoint order.
+                edges=tuple(
+                    sorted(
+                        edges,
+                        key=lambda edge: (
+                            edge.kind,
+                            edge.artifact_id if isinstance(edge, ConsumesEdge) else edge.step_id,
+                            edge.step_id if isinstance(edge, ConsumesEdge) else edge.artifact_id,
+                            edge.item_binding_id if isinstance(edge, ForeachEdge) else "",
+                        ),
                     )
                 ),
-                policy=WorkflowPolicy(
-                    max_concurrency=max_concurrency,
-                    timeout_seconds=workflow_timeout,
-                ),
+                policy=policy,
             )
         except WorkflowGraphError as error:
             # Present target-model invariant failures through the compiler's
@@ -593,16 +583,3 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         if value in values:
             raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {value!r}")
         values.add(value)
-
-    @staticmethod
-    def _set_once[K, V](
-        values: dict[K, V],
-        key: K,
-        value: V,
-        operator_name: str,
-    ) -> None:
-        """Assign one scalar/composite-key property exactly once."""
-
-        if key in values:
-            raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {key!r}")
-        values[key] = value
