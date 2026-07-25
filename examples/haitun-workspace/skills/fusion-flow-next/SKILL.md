@@ -19,17 +19,17 @@ Activate this skill when the user:
 - Asks to run a FusionFlow G4 workflow they already have ("跑一下这个 / 帮我跑 / 执行"). This skill does **not** ship runnable demo examples; "run" always means a concrete workflow the user has.
 - Asks to see the result of a previous run ("跑完了吗 / 看看结果 / 上次那个怎么样了")
 - Mentions "agent-flow", "Fuclaw", or "@agent-flow/core"
-- **Describes any task that needs a multi-agent workflow or agent collaboration**, even without saying "flow" — e.g. "让几个 agent 分别审一遍再汇总", "并行跑 N 个子任务再合并", "一步接一步处理(先 A 再 B 再 C)", "多角度评审 / 打分选边", "把这件事拆成多个 agent 协作". If the task clearly benefits from orchestrating more than one agent / parallel branches / a multi-step pipeline, enter **Authoring Mode** (below) and offer to build a flow.
+- **Describes any task that needs a multi-agent workflow or agent collaboration**, even without saying "flow" — e.g. "让几个 agent 分别审一遍再汇总", "并行跑 N 个子任务再合并", "一步接一步处理(先 A 再 B 再 C)", "多角度评审后汇总", "把这件事拆成多个 agent 协作". If the task clearly benefits from orchestrating more than one agent / parallel branches / a multi-step pipeline, enter **Authoring Mode** (below) and offer to build a flow.
 
-When in doubt about whether a task is "workflow-shaped": if it would take **two or more coordinated LLM steps** (fan-out, pipeline, loop, or judge-then-branch), it qualifies — activate and propose a flow. A single one-shot question does not.
+When in doubt about whether a task is "workflow-shaped": if it would take **two or more coordinated LLM steps** (fan-out/fan-in, an artifact pipeline, or per-item work), it qualifies — activate and propose a flow. A single one-shot question does not.
 
 ### HARD RULE: when you recognize a multi-agent task, your job is to BUILD A FLOW — not to do it yourself
 
-Once a task is workflow-shaped (multiple agents / parallel branches / multi-step pipeline / judge-then-branch), your **one default action** is to enter Authoring Mode and build a FusionFlow G4 workflow. That is the entire point of this skill — the flow runtime spawns and coordinates the sub-agents; **you do not play those sub-agents yourself**.
+Once a task is workflow-shaped (multiple agents / parallel branches / multi-step pipeline / per-item work), your **one default action** is to enter Authoring Mode and build a FusionFlow G4 workflow. That is the entire point of this skill — the flow runtime spawns and coordinates the sub-agents; **you do not play those sub-agents yourself**.
 
 Do **NOT** offer "我直接帮你做这一次" as an option, and especially do **NOT** make it the default. Building the flow IS how you help — there is no faster "just do it manually" path that's better; doing it by hand throws away the runtime (parallelism, the execution graph, replay, the reusable artifact) and contradicts "one intent = one flow".
 
-❌ **Real failure to never repeat** (observed in testing): user said "让几个 AI 从安全/性能/可读性分别审一段代码再汇总". The agent replied with "方式 A：我直接帮你审这次代码 / 方式 B：给你做成可复用工作流" — offering to personally act as the three reviewers, with the manual path listed first as the default. **Wrong.** The correct response is to go straight into Authoring Mode and build the review flow: three reviewer steps consume the same input, then one synthesizer consumes all three review artifacts. No A/B menu, no "I'll just review it myself".
+❌ **Real failure to never repeat** (observed in testing): user said "让几个 AI 从安全/性能/可读性分别审一段代码再汇总". The agent replied with "方式 A：我直接帮你审这次代码 / 方式 B：给你做成可复用工作流" — offering to personally act as the three reviewers, with the manual path listed first as the default. **Wrong.** The correct response is to go straight into Authoring Mode and build the review flow: three reviewer Steps consume the same input, then one final Step consumes all three review artifacts. No A/B menu, no "I'll just review it myself".
 
 ✅ **Correct shape**: "🐾 这是个多 agent 协作任务，我来帮你搭一个工作流：3 个审查 agent（安全/性能/可读性）并行审 → 一个汇总 agent 合并成带严重等级的报告。" Then run the author loop (understand → model → author → validate → one heads-up line → **run it**).
 
@@ -46,7 +46,7 @@ Do **not** activate this skill for `.prose` files — those belong to OpenProse.
 | Sub-agent spawn | OpenClaw `sessions_spawn` | `@agent-flow/core` shelling out to an external agent CLI (claude / openclaw / hermes / psi) |
 | State directory | `.prose/runs/<id>/` | `<workDir>/runs/<id>/` |
 | Replay artifact | `bindings/*.md` + `state.md` | `bindings/` + `trace/` + **`execution-graph.json`** |
-| Control flow | Prose VM keywords | workflow assertions, catalog operators, and artifact dependencies |
+| Control flow | Prose VM keywords | workflow assertions, preset operators, and artifact dependencies |
 
 The skill's job is to:
 
@@ -78,7 +78,7 @@ Only author and run FusionFlow G4 source. If the user points to any non-G4 workf
 
 `<workDir>` is **the directory the user is working in** — almost always the copied `fusion-flow/` bundle folder. How to resolve it:
 
-1. **Bundle or source-repo case:** use the directory that owns the configured FusionFlow runner, active catalog, `examples/`, and `runs/`. Authored G4 workflows go in `<workDir>/examples/`; artifacts land in `<workDir>/runs/`.
+1. **Bundle or source-repo case:** use the directory that owns the configured FusionFlow runner, `grammar/FusionFlow.g4`, `examples/`, and `runs/`. Authored G4 workflows go in `<workDir>/examples/`; artifacts land in `<workDir>/runs/`.
 2. **psi-agent workspace case:** if the workspace system prompt assigns a path such as `flows/<task-slug>/`, use that workspace-managed path instead of `<workDir>/examples/`. The workspace instruction wins; do not relocate the source beside the runtime.
 3. **If you genuinely can't tell which folder to work in** (e.g. several candidates), ask the user once in plain language: "你把 fusion-flow 文件夹拷到哪了？我在那个目录里帮你跑。" Then **remember it for the rest of this session** — don't re-ask.
 
@@ -196,13 +196,13 @@ This is the flagship: turn a natural-language intent into a runnable FusionFlow 
 - User describes a workflow they want built: "帮我写个工作流 ..." / "make a flow that ..." / "帮我编排 ..." / similar.
 - User asks "帮我写一个 flow ..." / "make a flow that ..." / similar in any LLM client.
 - User edits existing FusionFlow G4 source and asks you to "rewrite" or "扩展".
-- **User describes a workflow-shaped task without naming "flow"** — anything needing two or more coordinated agents / parallel branches / a multi-step pipeline / judge-then-branch (see "When to Activate"). In that case, don't wait for the word "flow": offer to build one, then run the author loop below.
+- **User describes a workflow-shaped task without naming "flow"** — anything needing two or more coordinated agents / parallel branches / a multi-step pipeline / per-item work (see "When to Activate"). In that case, don't wait for the word "flow": offer to build one, then run the author loop below.
 
 ### The 5-step author loop
 
 1. **Understand intent** — restate the user's goal in 1 sentence. If genuinely ambiguous, ask **one** clarifying question (don't grill them). Note whether the user looks like a *developer* (asked to edit FusionFlow G4 source or mentioned operators) — that's the only case where you show technical detail later. Everyone else gets the minimal plain-language summary.
-2. **Model the workflow** — match the intent to one of the reference patterns below. Identify inputs, outputs, steps, executors, artifacts, dependencies, concurrency, retries, timeouts, and any catalog-provided operation the task needs.
-3. **Author one FusionFlow G4 source** — use only declarations, assertions, terms, and operators allowed by `grammar/FusionFlow.g4` and the active catalog. Use the workspace-provided target path; never invent a second copy.
+2. **Model the workflow** — match the intent to one of the reference patterns below. Identify inputs, outputs, Steps, Executors, Artifacts, dependencies, concurrency, retries, and timeouts.
+3. **Author one FusionFlow G4 source** — before writing, read `grammar/FusionFlow.g4` completely and treat it as the sole source of truth for FusionFlow syntax and preset operators. Use only declarations, assertions, terms, and operators documented there. Use the workspace-provided target path; never invent a second copy.
 4. **Validate** — run the workspace's FusionFlow validation entry point. Fix reported syntax, arity, type, or capability errors yourself, up to **3 rounds**. After 3 failed rounds, stop and tell the user what remains.
 5. **Run it directly** — the user asked you to do a task, not to receive an implementation artifact. Once validation passes, say ONE friendly heads-up line ("🚀 方案定了，正在帮你跑，预计几分钟…" — a notice, NOT a question), then immediately run the flow. **Do NOT ask "要不要跑 / 跑不跑" and do NOT wait for `跑`.** The only exception is when the user explicitly says "只生成别跑 / 先给我看看别执行".
 
@@ -253,7 +253,7 @@ Keep this **minimal**. A real investor ("悠悠") and an internal teammate ("张
 That's it — one line, then you run. Do **not** add `做什么 / 要多久 / 你会拿到` as separate fields, do not list steps, do not show 🔧/🎯/📝 lines, do not show the file path, do not ask for approval. If the user is clearly a **developer** (asked to edit FusionFlow G4 source, mentioned operators, or explicitly asks "用了哪些语法 / 给我看结构 / 文件在哪"), you may then show technical detail **on demand**:
 
 ```
-🔧 3 个 reviewer step 共用输入，1 个 synthesize step 汇总 ｜ `max_concurrency = 3`
+🔧 3 个审查 Step 共用输入，1 个汇总 Step 消费三个结果 ｜ `max_concurrency = 3`
 ```
 
 Only show that line when a developer explicitly asks for it. Never push it at a business user, and never volunteer the file path unprompted.
@@ -262,35 +262,33 @@ Only show that line when a developer explicitly asks for it. Never push it at a 
 
 | 框架黑话（别说） | 业务语言（要这么说） |
 | --- | --- |
-| 原语 / primitive | 步骤 |
-| session | 一次调研 / 一次分析 |
-| evaluate / choice | 打分 / 选出重点 |
-| pmap / parallel | 同时做 / 并行处理 |
-| reduce | 逐层汇总 |
-| pipeline | 一步接一步 |
+| G4 / operator | 工作流结构 |
+| Step | 一次处理 |
+| Artifact | 中间结果 |
+| `max_concurrency` | 同时处理 |
+| `consumes_multi` | 汇总多个结果 |
 | 异构复合工作流 | 多方向 + 分层汇总 |
 | token / LLM 调用 | （折成）几分钟 / 花多少钱 |
 
 
 Token estimate rule of thumb: each ordinary LLM work step ≈ 1500 input + 800 output tokens; each structured judgement step ≈ 2000 input + 50 output. Sum, then convert to RMB at the provider's listed rate (火山 ARK Agent Plan 包月里这是 0 元，flag it as "≈ 0 (Agent Plan)").
 
-### Reference Patterns (the 5 archetypes)
+### Reference patterns
 
-Match the user's intent to one of these five shapes, then express it with FusionFlow declarations, assertions, catalog operators, and artifact dependencies. `grammar/FusionFlow.g4` is authoritative. Do not copy imperative API patterns into the source and do not invent a keyword.
+Read `grammar/FusionFlow.g4` completely before using these patterns. The grammar is authoritative; these patterns illustrate artifact dependencies and do not add syntax or operators.
 
 | Pattern | FusionFlow shape | When to use |
 | --- | --- | --- |
-| **Heterogeneous fan-out + verdict** | N reviewer steps consume the same input; a final step consumes all review artifacts. Set `max_concurrency` for the workflow. | PR review, multi-perspective audit, content moderation. |
-| **Multi-step pipeline + final gate** | Each step produces the artifact consumed by the next; put `max_attempts` on the final quality-gate step. | Writing process, ETL, refine-and-check work. |
-| **Homogeneous per-item + merge** | Use `foreach_item` for the repeated step and a downstream synthesizer for the resulting artifacts. | N PRs, issues, docs, or log records into one report. |
-| **LLM-decided bounded iteration** | Use an active-catalog stop/score operator with `if(...)` and an explicit bound such as `max_attempts`. | Hypothesis generation, alternatives, exploratory analysis. |
-| **Composite workflow** | Combine artifact chains, fan-out/fan-in, per-item work, and catalog-provided reusable workflow relations. | When one simple pattern does not cover the task. |
+| **Fan-out + fan-in** | Several Steps consume the same Artifact; one final Step uses `consumes_multi` to consume their result Artifacts. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
+| **Artifact pipeline** | Each Step produces the Artifact consumed by the next Step. Use `max_attempts` only as the attempt limit for a configured Step. | Writing process, ETL, refine-and-check work. |
+| **Per-item work + merge** | Use `foreach_item` for the repeated Step, `produces_multi` for its result List, and `consumes_multi` on the merge Step. | N PRs, issues, docs, or log records into one report. |
+| **Composite workflow** | Combine only the artifact chains, fan-out/fan-in, and per-item relations above. | When one simple pattern does not cover the task. |
 
-If a required operation is not one of the preset operators below, use it only when the active catalog confirms its name and signature. Never invent an operator just to make the source look complete.
+If the task cannot be expressed with syntax and preset operators documented in `grammar/FusionFlow.g4`, report the missing capability. Never invent a keyword or operator to make the source look complete.
 
 #### Full-featured in-context example
 
-This is the canonical review shape from the activation example: three independent reviewers consume the same source, then one synthesizer consumes their outputs.
+This is the canonical review shape from the activation example: three independent review Steps consume the same source, then one final Step consumes their outputs.
 
 ```fusionflow
 -- SCENARIO: security, performance, and readability review followed by one report
@@ -376,101 +374,9 @@ workflow code_review {
 }
 ```
 
-### FusionFlow syntax rules
+### G4 source of truth
 
-#### File structure and declarations
-
-A source contains optional global identity declarations followed by one or more workflow blocks:
-
-```fusionflow
-const input_artifact: Artifact;
-const output_artifact: Artifact;
-const work_step: Step;
-const work_name: StepName;
-const work_instruction: Instruction;
-const worker: Agent, Executor;
-
-workflow workflow_name {
-  input_workflow(workflow_name, input_artifact) == True;
-  output_workflow(workflow_name, output_artifact) == True;
-  step_name(work_step) == work_name;
-  step_instruction(work_step) == work_instruction;
-  step_executor(work_step) == worker;
-  consumes(work_step, input_artifact) == True;
-  produces(work_step, output_artifact) == True;
-}
-```
-
-- All `const` declarations precede all workflows.
-- Every declaration and assertion ends with `;`.
-- Workflow and unquoted constant names start lowercase. Concept names start uppercase.
-- A constant may have more than one catalog concept, as in `const worker: Agent, Executor;`.
-- Quoted constants are restricted IDs, not free-form prompt strings: no whitespace or escape sequences.
-- Prompts, step names, tools, models, engines, and other domain values are catalog identities.
-- Concepts and operator signatures come from the active catalog; source files do not declare them.
-- Line comments start with `--`; block comments use `/* ... */`.
-
-#### Assertions, terms, formulas, lists, and `if`
-
-- Workflow blocks contain assertions only: `term == term;`.
-- Top-level assertion equality is `==`.
-- Comparisons inside formulas use `=`, `!=`, `<`, `<=`, `>`, or `>=`. Do not interchange `==` and `=`.
-- Formulas combine comparisons with `!`, `AND`, and `OR`. Precedence is `!`, then `AND`, then `OR`; parentheses override it. `and`/`&` and `or`/`|` are accepted aliases.
-- A bare term is not a formula. Conditions must bottom out at a comparison.
-- Terms may be operator calls, constants, booleans, lists, parenthesized terms, arithmetic, or `if(...)`.
-- Arithmetic precedence is unary `+`/`-`, right-associative `^`, `*`/`/`/`%`, then `+`/`-`.
-- Lists are ordinary ordered terms: `[]` or `[item_a, item_b]`.
-- `if(condition, then_term, else_term)` is a value expression with exactly three arguments. It selects a value; it is not a Step, loop, or imperative branch.
-- Prefer `True` and `False` for booleans.
-
-### Preset operator catalog
-
-Use these exact preset names and signatures.
-
-#### Workflow
-
-| Operator | Signature | Arity |
-| --- | --- | ---: |
-| `input_workflow` | `(Workflow, Artifact) -> Bool` | 2 |
-| `input_workflow_multi` | `(Workflow) -> List` | 1 |
-| `output_workflow` | `(Workflow, Artifact) -> Bool` | 2 |
-| `output_workflow_multi` | `(Workflow) -> List` | 1 |
-| `max_concurrency` | `(Workflow) -> Integer` | 1 |
-| `workflow_timeout` | `(Workflow) -> Integer` | 1 |
-
-#### Step
-
-| Operator | Signature | Arity |
-| --- | --- | ---: |
-| `step_name` | `(Step) -> StepName` | 1 |
-| `step_instruction` | `(Step) -> Instruction` | 1 |
-| `step_executor` | `(Step) -> Executor` | 1 |
-| `step_timeout` | `(Step) -> Integer` | 1 |
-| `max_attempts` | `(Step) -> Integer` | 1 |
-
-#### Data, iteration, and resources
-
-| Operator | Signature | Arity |
-| --- | --- | ---: |
-| `consumes` | `(Step, Artifact) -> Bool` | 2 |
-| `consumes_multi` | `(Step) -> List` | 1 |
-| `produces` | `(Step, Artifact) -> Bool` | 2 |
-| `produces_multi` | `(Step) -> List` | 1 |
-| `foreach_item` | `(Step, List) -> Artifact` | 2 |
-| `resource_requirement` | `(Step, Resource) -> Integer` | 2 |
-
-#### Agent
-
-| Operator | Signature | Arity |
-| --- | --- | ---: |
-| `agent_config` | `(Agent, Model, Engine, ApiBase) -> Bool` | 4 |
-| `allowed_tool` | `(Agent, Tool) -> Bool` | 2 |
-| `max_output_tokens` | `(Agent) -> Integer` | 1 |
-| `temperature` | `(Agent) -> ComplexNumber` | 1 |
-| `reasoning_effort` | `(Agent) -> ReasoningEffort` | 1 |
-| `max_turns` | `(Agent) -> Integer` | 1 |
-
-All four `*_multi` operators return ordinary List terms. Ordinary preset and external catalog calls share the same call syntax, but the catalog still enforces names, arity, concepts, values, and workflow legality.
+Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole authority for file structure, declarations, assertions, formulas, terms, `if(...)`, and preset operator names and signatures. Examples in this skill illustrate modeling only; they do not add syntax or operators. If this skill conflicts with the grammar, follow the grammar.
 
 ### Modeling rules
 
@@ -481,7 +387,7 @@ All four `*_multi` operators return ordinary List terms. Ordinary preset and ext
 - Model per-item work with `foreach_item(step, items) == item_result;`.
 - Bind each step to its executor with `step_executor`.
 - Configure concurrency, retries, timeouts, resources, and agent limits with the corresponding preset operators.
-- Use `if` only to select a term. Content-based scoring or routing needs a catalog operator that produces the compared value.
+- Use `if` only to select a term. It is not a Step, loop, quality gate, or scoring mechanism.
 - Variables, quantifiers, rules, implications, biconditionals, query/SAT/optimization requests, local concept declarations, local operator declarations, and imperative blocks are outside this language.
 - Never emit imports, imperative runtime calls, `run(...)`, or invented `parallel`/`pipeline`/`for` blocks.
 
@@ -522,26 +428,17 @@ workflow summarize_items {
 }
 ```
 
-The repeated step is declared once. The synthesizer receives the complete List and produces one final artifact.
+The repeated Step is declared once. The merge Step consumes the complete List and produces one final Artifact.
 
-#### Decision: LLM work, structured judgement, local logic, or external execution
-
-| Need | FusionFlow representation |
-| --- | --- |
-| LLM research, writing, or review | A Step with `step_instruction` and an Agent/Executor bound by `step_executor` |
-| Structured score or decision | A judgement Step plus a catalog operator that exposes the compared value; use `if` only to select the result |
-| Local deterministic logic | A Step bound to the catalog's deterministic Executor |
-| External command or tool | A Step bound to the catalog's external Executor, with `allowed_tool` and `resource_requirement` as needed |
-
-Do not place command strings, code, prompts, or secrets in the DSL. They belong to catalog/config identities.
+Do not encode free-form command strings, code, prompts, or secrets as quoted constants. `grammar/FusionFlow.g4` defines quoted constants as restricted IDs, not general strings.
 
 ### Anti-patterns to refuse
 
 1. **Hand-writing imports or imperative runtime calls.** The authored program is FusionFlow G4 source.
 2. **Inventing a keyword or operator.** Flexible call syntax does not make unknown names valid.
 3. **Using `==` inside a condition or `=` for a workflow assertion.** These have different grammar roles.
-4. **Treating quoted constants as prompt strings.** They are restricted IDs; use catalog-backed `Instruction` identities.
-5. **Unbounded retry or iteration.** Use `max_attempts` or an explicit catalog limit.
+4. **Treating quoted constants as prompt strings.** They are restricted IDs, not free-form text.
+5. **Treating `max_attempts` as a workflow loop or score gate.** It only sets the attempt limit for one Step.
 6. **Agentic/external execution over a large item list without a cost check.** Each item may start a subprocess; keep expensive executors for work that needs them.
 7. **Inlining a large document into an instruction identity or runtime argument.** Store the document under `<workDir>` and pass a path to a read-enabled executor.
 8. **Relaying an external tool's secret through workflow source.** Let the tool read its own configuration; never encode credentials in constants.
@@ -574,7 +471,7 @@ workflow workflow_name {
 }
 ```
 
-Extend this skeleton only with syntax and catalog operators required by the user's task.
+Extend this skeleton only with syntax and preset operators documented in `grammar/FusionFlow.g4`.
 
 ### Validation self-repair
 
@@ -584,7 +481,7 @@ Run the workspace's FusionFlow validation entry point after authoring. Fix diagn
 - assertion/formula errors → check `==` versus comparison operators;
 - arity errors → use the exact preset signature;
 - concept/type errors → correct the declared concept or operator argument;
-- unknown capability/operator → use a confirmed catalog operator or report the unmet requirement; never approximate it.
+- unknown capability/operator → report the unmet requirement; never approximate or invent it.
 
 Re-run validation after each repair. Stop after 3 failed rounds and report the remaining diagnostic instead of looping indefinitely.
 
@@ -622,7 +519,7 @@ Report each as ✓ / ✗. Never echo any API key value. In v0.7 `<workDir>/.env`
 
 ### Authoring readiness
 
-Authoring no longer depends on any external reference workflow — the full-featured example is **inlined in this SKILL.md** ("Reference Patterns" → "Full-featured in-context example"). Readiness requires the workspace's FusionFlow validation entry point and active catalog.
+Authoring no longer depends on any external reference workflow — the full-featured example is **inlined in this SKILL.md** ("Reference patterns" → "Full-featured in-context example"). Readiness requires readable `grammar/FusionFlow.g4` and the workspace's FusionFlow validation entry point.
 
 Validate the inlined canonical example through the same entry point used for authored workflows. This is an internal readiness check; do not describe its implementation stages to the user.
 
@@ -637,7 +534,7 @@ If validation errors, report:
 Otherwise:
 
 ```
-✓ Authoring Mode ready (inlined reference valid, catalog available)
+✓ Authoring Mode ready (G4 source read, inlined example valid)
 ```
 
 ### Engine readiness (v0.7)
