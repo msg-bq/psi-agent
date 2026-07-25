@@ -384,8 +384,8 @@ WorkflowGraphCompilation
 
 这保证 hash、diff、snapshot 和缓存稳定。
 
-第一版只提供 `to_dict()`，不在没有真实跨进程消费者前提前冻结 `from_dict()` 和
-schema migration。是否加入 `schema_version` 记录在待讨论文档。
+第一版只提供 `to_dict()`，不在没有真实跨进程消费者前提前冻结 `from_dict()`、
+schema migration 或 `schema_version`。
 
 ## 11. Foreach 静态合同
 
@@ -476,5 +476,4 @@ failure、结果聚合与提交由未来 runtime 负责。
 - 直接构造和编译构造都能确定性序列化；
 - tests、Ruff、ty 通过；
 - 根 AGENTS 的代码结构和设计说明同步；
-- 中文待讨论文档完整记录未闭合语义；
 - 不提前实现 planner/executor。
