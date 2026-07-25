@@ -206,7 +206,9 @@ class WorkflowGraph:
             raise WorkflowGraphError("steps must contain only StepNode")
         if not all(isinstance(artifact, ArtifactNode) for artifact in self.artifacts):
             raise WorkflowGraphError("artifacts must contain only ArtifactNode")
-        if not all(isinstance(edge, (ConsumesEdge, ProducesEdge, ForeachEdge)) for edge in self.edges):
+        # WorkflowEdge is a closed union: subclasses would break dataclass
+        # equality-based deduplication and could override the serialized kind.
+        if not all(type(edge) in (ConsumesEdge, ProducesEdge, ForeachEdge) for edge in self.edges):
             raise WorkflowGraphError("edges must contain only workflow edges")
 
         # Step pass: validate required identities, positive policies, unique

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import FrozenInstanceError
-from typing import cast
+from dataclasses import FrozenInstanceError, dataclass, field
+from typing import Literal, cast
 
 import pytest
 
@@ -17,6 +17,19 @@ from psi_agent.workflow_graph.model import (
     WorkflowGraphError,
     WorkflowPolicy,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _DerivedConsumesEdge(ConsumesEdge):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class _RelabeledConsumesEdge(ConsumesEdge):
+    kind: Literal["consumes"] = field(
+        default=cast(Literal["consumes"], "produces"),
+        init=False,
+    )
 
 
 def test_cycle_is_valid_and_serialization_is_deterministic() -> None:
@@ -209,6 +222,31 @@ def test_wrong_component_types_use_public_graph_error(
 ) -> None:
     with pytest.raises(WorkflowGraphError, match=message):
         factory()
+
+
+@pytest.mark.parametrize(
+    "edges",
+    [
+        (
+            ConsumesEdge("input", "step"),
+            _DerivedConsumesEdge("input", "step"),
+        ),
+        (_RelabeledConsumesEdge("input", "step"),),
+    ],
+)
+def test_edge_subclasses_are_rejected(
+    edges: tuple[ConsumesEdge, ...],
+) -> None:
+    with pytest.raises(
+        WorkflowGraphError,
+        match="edges must contain only workflow edges",
+    ):
+        WorkflowGraph(
+            "flow",
+            (StepNode("step", "name", "agent"),),
+            (ArtifactNode("input", is_input=True),),
+            edges,
+        )
 
 
 @pytest.mark.parametrize(
