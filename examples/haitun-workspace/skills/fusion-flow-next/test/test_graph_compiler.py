@@ -243,7 +243,7 @@ def test_supported_graph_operator_on_rhs_is_lowered_as_equality() -> None:
     ) == (("artifact2", True, False),)
 
 
-def test_graph_operators_on_both_sides_are_rejected() -> None:
+def test_one_equality_cannot_declare_multiple_graph_facts() -> None:
     assertion = Assertion(
         lhs=CompoundTerm(
             operator=Operator("input_workflow"),
@@ -257,7 +257,7 @@ def test_graph_operators_on_both_sides_are_rejected() -> None:
 
     with pytest.raises(
         WorkflowGraphCompilationError,
-        match="graph operators on both sides",
+        match="one equality cannot declare multiple graph facts",
     ):
         _compile((assertion,))
 

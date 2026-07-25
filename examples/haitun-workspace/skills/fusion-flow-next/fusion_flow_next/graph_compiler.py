@@ -64,19 +64,17 @@ class _CompiledList:
 
 
 @dataclass(frozen=True, slots=True)
-class _CompiledAssertion:
-    """Transient assertion classification used while assembling one graph.
+class _GraphFact:
+    """One graph-vocabulary equality normalized for workflow assembly.
 
-    ``call is None`` means that the assertion does not use the graph
-    vocabulary.  Its untouched ``source`` is then returned as residual IR.
-    Otherwise ``call`` and ``rhs`` hold the normalized ``graph_call = value``
-    form consumed by ``_build_workflow``.  This record is compiler state, not
-    an assertion stored in or exposed by ``WorkflowGraph``.
+    The Core IR equality may put its graph call on either side.  This private
+    work item records the functional shape ``operator(arguments...) = value``
+    consumed by ``_build_workflow``; it is not part of ``WorkflowGraph``.
     """
 
-    source: Assertion
-    call: _CompiledCall | None = None
-    rhs: object | None = None
+    operator_name: str
+    arguments: tuple[object, ...]
+    value: object
 
 
 class WorkflowGraphCompiler(CoreIRCompiler):
@@ -156,45 +154,47 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             raise WorkflowGraphCompilationError(str(error)) from error
 
     def _compile_assertion(self, assertion: Assertion) -> object:
-        """Classify one equality as a graph assertion or residual Core IR.
+        """Compile one equality into a graph fact or untouched residual IR.
 
-        A recognized graph call may occur on either side because ``Assertion``
-        models equality, not assignment.  Unknown operators stay completely
-        untouched: notably, their children are not traversed and therefore
-        cannot fail graph compilation.
+        Equality is symmetric, so position does not select the graph call.
+        Zero recognized calls means this backend does not own the assertion;
+        exactly one defines a graph fact; more than one would try to encode
+        multiple graph facts in a single equality and is rejected.
         """
 
-        # Inspect both top-level terms symmetrically.  Nested graph calls inside
-        # an unknown outer operator still belong to that operator's backend.
-        lhs_is_graph_call = (
-            isinstance(assertion.lhs, CompoundTerm) and assertion.lhs.operator.name in self._GRAPH_OPERATORS
+        # Pair each possible graph call with the value on the other side.
+        # Nested calls inside an unknown outer operator remain residual because
+        # only top-level terms can declare a graph fact.
+        graph_fact_candidates = tuple(
+            (term, value)
+            for term, value in (
+                (assertion.lhs, assertion.rhs),
+                (assertion.rhs, assertion.lhs),
+            )
+            if isinstance(term, CompoundTerm) and term.operator.name in self._GRAPH_OPERATORS
         )
-        rhs_is_graph_call = (
-            isinstance(assertion.rhs, CompoundTerm) and assertion.rhs.operator.name in self._GRAPH_OPERATORS
-        )
 
-        # An equality with no graph call must survive as exact residual IR.
-        if not lhs_is_graph_call and not rhs_is_graph_call:
-            return _CompiledAssertion(source=assertion)
+        # Returning the original object makes residual IR explicit: it was not
+        # compiled into any graph-specific representation.
+        if not graph_fact_candidates:
+            return assertion
 
-        # Two graph calls do not have a call/value orientation and cannot map to
-        # one graph fact without inventing target semantics.
-        if lhs_is_graph_call and rhs_is_graph_call:
-            raise WorkflowGraphCompilationError("graph assertion cannot contain graph operators on both sides")
+        if len(graph_fact_candidates) > 1:
+            raise WorkflowGraphCompilationError("one equality cannot declare multiple graph facts")
 
-        # Normalize equality direction before entering the existing lowering
-        # path: graph_call = value and value = graph_call are equivalent.
-        call_term, value_term = (assertion.lhs, assertion.rhs) if lhs_is_graph_call else (assertion.rhs, assertion.lhs)
+        # The candidate already normalizes either source orientation into the
+        # single functional shape graph_call = value.
+        call_term, value_term = graph_fact_candidates[0]
 
         # Recognized operators are compiled recursively and fail closed on an
         # unsupported child such as IfTerm.
         call = self._compile_term(call_term)
         if not isinstance(call, _CompiledCall):
             raise TypeError("compound term hook returned an invalid graph call")
-        return _CompiledAssertion(
-            source=assertion,
-            call=call,
-            rhs=self._compile_term(value_term),
+        return _GraphFact(
+            operator_name=call.operator_name,
+            arguments=call.arguments,
+            value=self._compile_term(value_term),
         )
 
     def _build_workflow(
@@ -241,21 +241,20 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         residual: list[Assertion] = []
 
         for compiled in assertions:
-            # CoreIRCompiler must feed this backend only values returned by
-            # _compile_assertion; a different value signals a broken hook contract.
-            if not isinstance(compiled, _CompiledAssertion):
-                raise TypeError("workflow graph compiler received an invalid compiled assertion")
-
-            # Unknown/non-compound assertions are intentionally not interpreted.
-            if compiled.call is None:
-                residual.append(compiled.source)
+            # Residual assertions are the untouched Core IR objects returned by
+            # _compile_assertion when this backend owns no graph fact.
+            if isinstance(compiled, Assertion):
+                residual.append(compiled)
                 continue
 
-            # All recognized graph assertions have the normalized shape
-            # operator(arguments...) = rhs.
-            operator_name = compiled.call.operator_name
-            arguments = compiled.call.arguments
-            rhs = compiled.rhs
+            # Every other value must be one normalized graph fact produced by
+            # _compile_assertion; anything else breaks the compiler hook contract.
+            if not isinstance(compiled, _GraphFact):
+                raise TypeError("workflow graph compiler received an invalid graph fact")
+
+            operator_name = compiled.operator_name
+            arguments = compiled.arguments
+            fact_value = compiled.value
 
             # Multi operators encode their artifact collection as one RHS List:
             #   input_workflow_multi(workflow) = List(...)
@@ -267,7 +266,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 "produces_multi",
             }:
                 self._require_arity(arguments, 1, operator_name)
-                item_ids = self._list_symbols(rhs, operator_name)
+                item_ids = self._list_symbols(fact_value, operator_name)
                 owner_id = self._symbol(arguments[0], f"{operator_name} owner")
                 if operator_name in {"input_workflow_multi", "output_workflow_multi"}:
                     # Workflow boundary lists must name the workflow being built.
@@ -301,7 +300,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 owner_id = self._symbol(arguments[0], f"{operator_name} owner")
                 self._require_owner(owner_id, workflow.name, operator_name)
                 artifact_id = self._symbol(arguments[1], f"{operator_name} artifact")
-                self._require_true(rhs, operator_name)
+                self._require_true(fact_value, operator_name)
                 target = input_ids if operator_name == "input_workflow" else output_ids
                 self._add_unique(target, artifact_id, operator_name)
                 # Boundary-only artifacts still need a graph node.
@@ -315,7 +314,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 self._require_arity(arguments, 1, operator_name)
                 owner_id = self._symbol(arguments[0], f"{operator_name} owner")
                 self._require_owner(owner_id, workflow.name, operator_name)
-                value = self._positive_integer(rhs, operator_name)
+                value = self._positive_integer(fact_value, operator_name)
                 if operator_name == "max_concurrency":
                     # None distinguishes "not supplied" from a duplicate value.
                     if max_concurrency is not None:
@@ -339,38 +338,38 @@ class WorkflowGraphCompiler(CoreIRCompiler):
 
             if operator_name == "step_name":
                 # step_name(step) = display_name
-                self._set_once(step_names, step_id, self._symbol(rhs, "step_name value"), operator_name)
+                self._set_once(step_names, step_id, self._symbol(fact_value, "step_name value"), operator_name)
             elif operator_name == "step_instruction":
                 # step_instruction(step) = instruction_identity
                 self._set_once(
                     step_instructions,
                     step_id,
-                    self._symbol(rhs, "step_instruction value"),
+                    self._symbol(fact_value, "step_instruction value"),
                     operator_name,
                 )
             elif operator_name == "step_executor":
                 # step_executor(step) = executor_identity
                 # Concept tags, when present, also select exactly one executor kind.
-                executor = self._constant(rhs, "step_executor value")
+                executor = self._constant(fact_value, "step_executor value")
                 self._validate_executor_concepts(executor)
                 self._set_once(step_executors, step_id, executor.symbol, operator_name)
             elif operator_name == "consumes":
                 # consumes(step, artifact) = True
                 artifact_id = self._symbol(arguments[1], "consumed artifact")
-                self._require_true(rhs, operator_name)
+                self._require_true(fact_value, operator_name)
                 self._add_unique(consumes, (artifact_id, step_id), operator_name)
                 artifact_ids.add(artifact_id)
             elif operator_name == "produces":
                 # produces(step, artifact) = True
                 artifact_id = self._symbol(arguments[1], "produced artifact")
-                self._require_true(rhs, operator_name)
+                self._require_true(fact_value, operator_name)
                 self._add_unique(produces, (step_id, artifact_id), operator_name)
                 artifact_ids.add(artifact_id)
             elif operator_name == "foreach_item":
                 # foreach_item(step, collection_artifact) = item_binding
                 # The binding is a local artifact owned by exactly this step.
                 source_id = self._symbol(arguments[1], "foreach source")
-                binding_id = self._symbol(rhs, "foreach item binding")
+                binding_id = self._symbol(fact_value, "foreach item binding")
                 if step_id in foreach_by_step:
                     raise WorkflowGraphCompilationError(f"duplicate foreach_item for step {step_id!r}")
                 if binding_id in binding_owners:
@@ -383,7 +382,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 self._set_once(
                     step_timeouts,
                     step_id,
-                    self._positive_integer(rhs, operator_name),
+                    self._positive_integer(fact_value, operator_name),
                     operator_name,
                 )
             elif operator_name == "max_attempts":
@@ -391,7 +390,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 self._set_once(
                     step_attempts,
                     step_id,
-                    self._positive_integer(rhs, operator_name),
+                    self._positive_integer(fact_value, operator_name),
                     operator_name,
                 )
             else:
@@ -401,7 +400,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 self._set_once(
                     resources,
                     (step_id, resource_id),
-                    self._positive_integer(rhs, operator_name),
+                    self._positive_integer(fact_value, operator_name),
                     operator_name,
                 )
 
