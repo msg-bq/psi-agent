@@ -72,29 +72,39 @@ _EVALUATOR_SYSTEM_PROMPT = """你是一个严谨的结构化判断器。
 
 @dataclass(slots=True)
 class _RegisteredService:
+    """保存已注册服务的公开句柄及其异步实现。"""
+
     handle: ServiceHandle
     body: Callable[[dict[str, str]], Awaitable[str]]
 
 
 @dataclass(slots=True)
 class _RegisteredBlock:
+    """保存已注册 block 的名称、说明及其异步实现。"""
+
     name: str
     description: str | None
     body: Callable[[dict[str, str]], Awaitable[object]]
 
 
 async def _await_maybe(value: object) -> object:
+    """等待 awaitable 值, 其他值原样返回。"""
+
     if isinstance(value, Awaitable):
         return await value
     return value
 
 
 def _preview(value: object) -> str:
+    """生成长度受限的 trace 摘要。"""
+
     text = repr(value)
     return text if len(text) <= 60 else f"{text[:57]}..."
 
 
 def _normalize_string_mapping(value: Mapping[str, str] | None) -> dict[str, str]:
+    """复制可选字符串映射, 并在边界处验证键和值类型。"""
+
     if value is None:
         return {}
     normalized: dict[str, str] = {}
@@ -106,6 +116,8 @@ def _normalize_string_mapping(value: Mapping[str, str] | None) -> dict[str, str]
 
 
 def _config_payload(config: AgentConfig) -> dict[str, object]:
+    """提取参与 session 缓存键计算的稳定 agent 配置字段。"""
+
     return {
         "name": config.name,
         "system": config.system,
@@ -131,6 +143,8 @@ def _build_evaluate_prompt(
     maximum: float | None,
     integer: bool,
 ) -> str:
+    """按 evaluator 类型和约束构造结构化判断提示。"""
+
     lines = ["# 任务", question, ""]
     if context:
         lines.append("# 上下文")
@@ -157,12 +171,16 @@ def _build_evaluate_prompt(
 
 
 def _ensure_bool(value: object, *, label: str) -> bool:
+    """确认回调返回严格的 bool, 而非依赖真值转换。"""
+
     if not isinstance(value, bool):
         raise TypeError(f"{label} must return bool")
     return value
 
 
 def _extract_json_payload(text: str) -> object:
+    """解析完整 JSON 文本, 或 Markdown JSON fence 中的完整内容。"""
+
     fenced = _JSON_FENCE.search(text)
     payload = fenced.group(1) if fenced is not None else text
     return json.loads(payload)
@@ -177,6 +195,8 @@ def _parse_evaluate_result(
     maximum: float | None,
     integer: bool,
 ) -> bool | int | float | str:
+    """解析 evaluator JSON, 并按 kind 归一化和约束 value。"""
+
     payload = _extract_json_payload(text)
     if not isinstance(payload, dict) or "value" not in payload:
         raise ValueError("evaluate result must be a JSON object with value")
@@ -202,6 +222,7 @@ def _parse_evaluate_result(
         if not math.isfinite(number):
             raise ValueError("number evaluate must resolve to a finite number")
         if integer:
+            # 先整数化, 再应用上下界, 保持旧版 evaluator 的处理顺序。
             number = math.floor(number + 0.5)
         if minimum is not None:
             number = max(number, minimum)
@@ -215,6 +236,7 @@ def _parse_evaluate_result(
         if text in choices:
             return text
         lowered = text.casefold()
+        # 仅接受唯一的大小写无关候选, 避免模糊匹配改变分支选择。
         matches = [choice for choice in choices if choice.casefold() == lowered]
         if len(matches) == 1:
             return matches[0]
@@ -225,8 +247,11 @@ def _parse_evaluate_result(
 async def _drain_stream(
     stream: Any,
     *,
-    limit: int,
+    limit: int | None,
+    on_limit: Callable[[], None] | None = None,
 ) -> tuple[bytes, bool]:
+    """读取至 EOF, 保留上限内字节并标记是否截断。"""
+
     if stream is None:
         return b"", False
     chunks: list[bytes] = []
@@ -237,14 +262,23 @@ async def _drain_stream(
             chunk = await stream.receive()
         except anyio.EndOfStream:
             break
+        if limit is None:
+            chunks.append(chunk)
+            continue
         if kept < limit:
             remaining = limit - kept
             chunks.append(chunk[:remaining])
             kept += min(len(chunk), remaining)
             if len(chunk) > remaining:
                 truncated = True
+                if on_limit is not None:
+                    on_limit()
+                    on_limit = None
         elif chunk:
             truncated = True
+            if on_limit is not None:
+                on_limit()
+                on_limit = None
     return b"".join(chunks), truncated
 
 
@@ -254,6 +288,9 @@ async def _run_parallel_tasks[T](
     join: str,
     required: int,
 ) -> tuple[list[T], tuple[int, ...]]:
+    """并发运行任务, 按 join 策略聚合结果与选中输入索引。"""
+
+    # 事件依次为输入索引、成功标志和结果或异常。
     send_stream, receive_stream = anyio.create_memory_object_stream[tuple[int, bool, object]](
         len(tasks),
     )
@@ -263,6 +300,8 @@ async def _run_parallel_tasks[T](
         task: Callable[[], Awaitable[T]],
         sender: Any,
     ) -> None:
+        """执行一个任务, 并将其成功值或异常发送给汇聚端。"""
+
         async with sender:
             try:
                 value = await task()
@@ -292,9 +331,11 @@ async def _run_parallel_tasks[T](
                 results[index] = value
                 completed.append(value)
             else:
+                # first/any 的结果按完成顺序保留, 而不是按输入索引重排。
                 selected_indexes.append(index)
                 completed.append(value)
         if join != "all" or failure is not None:
+            # 已满足 first/any, 或观察到失败后不再等待同组任务。
             task_group.cancel_scope.cancel()
 
     if failure is not None:
@@ -359,27 +400,38 @@ class Flow:
                 "context": normalized_context,
             }
         )
-        candidate = binding_name
-        if candidate is None and run.resumed:
-            candidate = await run._next_call_name(agent.name)
-        async with run._trace("session", agent.name, input_summary=prompt) as trace:
-            if candidate is not None:
-                cached = run._resume_lookup(
-                    candidate,
-                    cache_key=cache_key,
-                    operation="session",
+        async with run._trace(
+            "session",
+            agent.name,
+            input_summary=prompt,
+            metadata={"agent": agent.name},
+        ) as trace:
+            reserved, call_base, call_count = await run._reserve_call_binding(
+                agent.name,
+                binding_name,
+            )
+            # 名称和序号是一笔事务: 缓存命中或结果完整落盘才提交;
+            # runner 失败则释放预留, 让同一逻辑调用的重试继续使用原序号。
+            try:
+                cached = (
+                    run._resume_lookup(
+                        reserved,
+                        cache_key=cache_key,
+                        operation="session",
+                    )
+                    if run.resumed
+                    else None
                 )
                 if cached is not None:
                     trace.cached = True
                     trace.output_summary = cached
+                    await run._commit_reserved_call(
+                        reserved,
+                        call_base,
+                        call_count,
+                    )
                     return cached
 
-            reserved = (
-                await run._reserve_binding(binding_name)
-                if binding_name is not None
-                else await run._reserve_auto_binding(agent.name)
-            )
-            try:
                 raw = await run.runner(
                     agent.config,
                     AgentInvocation(prompt=prompt, context=normalized_context or None),
@@ -409,10 +461,17 @@ class Flow:
                     reserved,
                     result.text,
                     metadata=metadata,
+                    call_base=call_base,
+                    call_count=call_count,
                 )
             except BaseException:
-                await run._release_binding(reserved)
+                await run._release_binding(
+                    reserved,
+                    call_base=call_base,
+                    call_count=call_count,
+                )
                 raise
+        # 诊断 trace 仅在业务结果已成功提交后落盘。
         await run._write_trace_file(reserved, trace)
         return result.text
 
@@ -480,31 +539,35 @@ class Flow:
                 "args": normalized_args,
             }
         )
-        candidate = binding_name
-        if candidate is None and run.resumed:
-            candidate = await run._next_call_name(service.name)
         async with run._trace(
             "call",
             service.name,
             input_summary=_preview(normalized_args),
         ) as trace:
-            if candidate is not None:
-                cached = run._resume_lookup(
-                    candidate,
-                    cache_key=cache_key,
-                    operation="call",
+            reserved, call_base, call_count = await run._reserve_call_binding(
+                service.name,
+                binding_name,
+            )
+            try:
+                cached = (
+                    run._resume_lookup(
+                        reserved,
+                        cache_key=cache_key,
+                        operation="call",
+                    )
+                    if run.resumed
+                    else None
                 )
                 if cached is not None:
                     trace.cached = True
                     trace.output_summary = cached
+                    await run._commit_reserved_call(
+                        reserved,
+                        call_base,
+                        call_count,
+                    )
                     return cached
 
-            reserved = (
-                await run._reserve_binding(binding_name)
-                if binding_name is not None
-                else await run._reserve_auto_binding(service.name)
-            )
-            try:
                 result = await registered.body(dict(normalized_args))
                 if not isinstance(result, str):
                     raise TypeError("service body must return a string")
@@ -519,10 +582,16 @@ class Flow:
                         service=service.name,
                         cache_key=cache_key,
                     ),
+                    call_base=call_base,
+                    call_count=call_count,
                 )
                 return result
             except BaseException:
-                await run._release_binding(reserved)
+                await run._release_binding(
+                    reserved,
+                    call_base=call_base,
+                    call_count=call_count,
+                )
                 raise
 
     # ============================================================
@@ -676,6 +745,8 @@ class Flow:
                     item: T = item,
                     index: int = index,
                 ) -> object:
+                    """为一个并发元素记录 iteration trace 并调用回调。"""
+
                     async with run._trace(
                         "iteration",
                         str(index),
@@ -745,6 +816,7 @@ class Flow:
             maximum=maximum,
             integer=integer,
         )
+        # 提示, 解析和 binding 提交严格串行, 避免持久化未经约束的模型文本。
         reserved = (
             await run._reserve_binding(binding_name)
             if binding_name is not None
@@ -759,6 +831,7 @@ class Flow:
                     "kind": kind,
                     "question": question,
                     "evaluator": evaluator.name,
+                    "evaluator_agent": evaluator.name,
                     "options": list(choices),
                     "minimum": minimum,
                     "maximum": maximum,
@@ -954,6 +1027,8 @@ class Flow:
         results: list[R] = []
 
         async def run_one(item: T, index: int) -> None:
+            """映射一个元素并按串行执行顺序追加结果。"""
+
             results.append(await fn(item, index))
 
         await self.for_each(items, run_one)
@@ -969,6 +1044,8 @@ class Flow:
         results: dict[int, R] = {}
 
         async def run_one(item: T, index: int) -> None:
+            """映射一个元素并按输入索引暂存结果。"""
+
             results[index] = await fn(item, index)
 
         await self.parallel_for_each(items, run_one)
@@ -984,6 +1061,8 @@ class Flow:
         kept: list[T] = []
 
         async def decide(item: T, index: int) -> None:
+            """判定一个元素是否保留。"""
+
             if bool(await predicate(item, index)):
                 kept.append(item)
 
@@ -1011,6 +1090,8 @@ class Flow:
         value = initial
 
         async def accumulate(item: T, index: int) -> None:
+            """把一个元素折叠进当前累加值。"""
+
             nonlocal value
             value = await fn(value, item, index)
 
@@ -1291,14 +1372,14 @@ class Flow:
         cwd: str | PathLike[str] | None = None,
         env: Mapping[str, str] | None = None,
         timeout_seconds: float = 300.0,
-        output_limit: int = 4 * 1024 * 1024,
+        output_limit: int | float = 4 * 1024 * 1024,
         binding_name: str | None = None,
     ) -> ExecResult:
         """直接执行 argv (不经过 shell), 成功后持久化 stdout。
 
-        stdout/stderr 会并发排空, 各自最多保留 ``output_limit`` 字节; 超时或外部取消
-        会终止并等待子进程。非零退出码抛出异常, 只有退出码 0 才提交 binding。
-        ``env`` 为 None 时继承父环境; 提供时在父环境上覆盖指定变量。
+        stdout/stderr 和 stdin 从进程启动起并发处理。有限 ``output_limit`` 只约束
+        stdout: 一旦越界立即杀进程, 返回保留的前缀并在 binding 中追加截断标记;
+        ``0`` 或正无穷关闭上限。超时或外部取消也会杀进程并等待回收。
         """
 
         normalized_name = assert_safe_name(name)
@@ -1308,8 +1389,14 @@ class Flow:
             raise TypeError("argv items must be strings")
         if isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
-        if isinstance(output_limit, bool) or not isinstance(output_limit, int) or output_limit < 1:
-            raise ValueError("output_limit must be a positive integer")
+        if output_limit == math.inf:
+            stdout_limit = None
+        elif isinstance(output_limit, int) and not isinstance(output_limit, bool) and output_limit >= 0:
+            stdout_limit = output_limit or None
+        else:
+            raise ValueError(
+                "output_limit must be a non-negative integer or positive infinity",
+            )
 
         run = current_run_context()
         command = list(argv)
@@ -1332,22 +1419,21 @@ class Flow:
                 started = time.perf_counter()
                 process = await anyio.open_process(
                     command,
-                    stdin=subprocess.PIPE if stdin is not None else None,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     cwd=cwd,
                     env=merged_env,
                 )
-                if stdin is not None and process.stdin is not None:
-                    payload = stdin.encode("utf-8") if isinstance(stdin, str) else stdin
-                    await process.stdin.send(payload)
-                    await process.stdin.aclose()
+                payload = stdin.encode("utf-8") if isinstance(stdin, str) else stdin
+                # 计时和两条输出 pipe 的消费必须先于 stdin 发送, 否则双方同时
+                # 写满 pipe 时会互相等待, 而超时计时器也永远启动不了。
                 with anyio.move_on_after(timeout_seconds) as scope:
-                    stdout_bytes, stdout_truncated, stderr_bytes, stderr_truncated = await _read_process_streams(
+                    stdout_bytes, stdout_truncated, stderr_bytes, return_code = await _read_process_streams(
                         process,
-                        output_limit=output_limit,
+                        stdin_payload=payload,
+                        output_limit=stdout_limit,
                     )
-                    return_code = await process.wait()
                 if scope.cancel_called:
                     raise TimeoutError(f"process timed out after {timeout_seconds}s")
                 raw = stdout_bytes.decode("utf-8", errors="replace")
@@ -1358,16 +1444,25 @@ class Flow:
                     stderr=stderr_text,
                     exit_code=return_code,
                     duration_ms=(time.perf_counter() - started) * 1_000,
-                    truncated=stdout_truncated or stderr_truncated,
+                    truncated=stdout_truncated,
                 )
-                if result.exit_code != 0:
+                # stdout 越界产生的非零退出码来自本运行时主动 kill, 属于携带
+                # 部分结果的成功; 其他非零退出仍按执行失败处理。
+                if result.exit_code != 0 and not result.truncated:
                     raise RuntimeError(
                         f"command exited with code {result.exit_code}: {result.stderr or result.stdout}",
                     )
+                truncation_note = (
+                    f"\n\n... [truncated at {output_limit} bytes by "
+                    "flow.exec output_limit; subprocess killed. raise output_limit "
+                    "or narrow the command's output.]"
+                    if result.truncated
+                    else ""
+                )
                 trace.output_summary = result.stdout
                 await run._commit_reserved_binding(
                     reserved,
-                    result.stdout,
+                    result.stdout + truncation_note,
                     metadata=run._binding_metadata(
                         reserved,
                         produced_by=normalized_name,
@@ -1381,9 +1476,10 @@ class Flow:
             await run._release_binding(reserved)
             if process is not None:
                 with anyio.CancelScope(shield=True):
+                    # 超时, 异常或取消时终止并等待子进程, 避免遗留进程。
                     if process.returncode is None:
                         with suppress(ProcessLookupError):
-                            process.terminate()
+                            process.kill()
                     await process.wait()
             raise
 
@@ -1391,31 +1487,66 @@ class Flow:
 async def _read_process_streams(
     process: Any,
     *,
-    output_limit: int,
-) -> tuple[bytes, bool, bytes, bool]:
+    stdin_payload: bytes | None,
+    output_limit: int | None,
+) -> tuple[bytes, bool, bytes, int]:
+    """从启动时并发处理三条 pipe, 并等待子进程退出。"""
+
     stdout_bytes: bytes = b""
     stderr_bytes: bytes = b""
     stdout_truncated = False
-    stderr_truncated = False
 
     async def read_stdout() -> None:
+        """读取 stdout; 越过有限上限时立即终止进程。"""
+
         nonlocal stdout_bytes, stdout_truncated
+
+        def kill_at_limit() -> None:
+            """在 stdout 首次越界时立即终止仍在运行的子进程。"""
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+
         stdout_bytes, stdout_truncated = await _drain_stream(
             process.stdout,
             limit=output_limit,
+            on_limit=kill_at_limit,
         )
 
     async def read_stderr() -> None:
-        nonlocal stderr_bytes, stderr_truncated
-        stderr_bytes, stderr_truncated = await _drain_stream(
+        """完整排空 stderr; stdout 上限不适用于诊断输出。"""
+
+        nonlocal stderr_bytes
+        stderr_bytes, _ = await _drain_stream(
             process.stderr,
-            limit=output_limit,
+            limit=None,
         )
 
+    async def write_stdin() -> None:
+        """发送完整 stdin 后关闭 pipe; 子进程提前关闭时按 communicate 语义忽略。"""
+
+        if process.stdin is None:
+            return
+        try:
+            if stdin_payload is not None:
+                await process.stdin.send(stdin_payload)
+        except BrokenPipeError, anyio.BrokenResourceError, anyio.ClosedResourceError:
+            pass
+        finally:
+            with suppress(
+                BrokenPipeError,
+                anyio.BrokenResourceError,
+                anyio.ClosedResourceError,
+            ):
+                await process.stdin.aclose()
+
     async with anyio.create_task_group() as task_group:
+        # 先调度三条 pipe, 再等待退出; 任何方向的大数据都不会堵住另一个方向。
         task_group.start_soon(read_stdout)
         task_group.start_soon(read_stderr)
-    return stdout_bytes, stdout_truncated, stderr_bytes, stderr_truncated
+        task_group.start_soon(write_stdin)
+        return_code = await process.wait()
+    return stdout_bytes, stdout_truncated, stderr_bytes, return_code
 
 
 flow = Flow()

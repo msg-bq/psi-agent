@@ -17,6 +17,7 @@ from psi_agent.fusion_flow.model import (
     ServiceParam,
     SessionResult,
     SessionRunner,
+    TokenSummary,
     TokenUsage,
     aggregate_tokens,
     assert_safe_name,
@@ -171,6 +172,7 @@ def test_aggregate_tokens_skips_cached_nodes_and_their_subtrees() -> None:
                 started_at="2026-07-23T00:00:00Z",
                 status="ok",
                 tokens=TokenUsage(calls=1, input=20, output=7),
+                metadata={"agent": "writer"},
             ),
             ExecutionTrace(
                 trace_id="evaluate",
@@ -179,12 +181,19 @@ def test_aggregate_tokens_skips_cached_nodes_and_their_subtrees() -> None:
                 started_at="2026-07-23T00:00:00Z",
                 status="ok",
                 tokens=TokenUsage(calls=1, input=5, output=1),
+                metadata={"evaluator_agent": "__evaluator__"},
             ),
             cached_parent,
         ),
     )
 
-    assert aggregate_tokens(root) == TokenUsage(calls=2, input=25, output=8)
+    assert aggregate_tokens(root) == TokenSummary(
+        user=TokenUsage(calls=1, input=20, output=7),
+        internal=TokenUsage(calls=1, input=5, output=1),
+        calls=2,
+        input=25,
+        output=8,
+    )
 
 
 def test_aggregate_tokens_preserves_unknown_counts() -> None:
@@ -201,11 +210,18 @@ def test_aggregate_tokens_preserves_unknown_counts() -> None:
                 started_at="2026-07-23T00:00:00Z",
                 status="ok",
                 tokens=TokenUsage(calls=1, input=None, output=3),
+                metadata={"agent": "writer"},
             ),
         ),
     )
 
-    assert aggregate_tokens(root) == TokenUsage(calls=1, input=None, output=3)
+    assert aggregate_tokens(root) == TokenSummary(
+        user=TokenUsage(calls=1, input=None, output=3),
+        internal=TokenUsage(calls=0, input=0, output=0),
+        calls=1,
+        input=None,
+        output=3,
+    )
 
 
 def test_execution_trace_to_dict_is_json_serializable() -> None:

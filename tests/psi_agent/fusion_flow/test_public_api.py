@@ -57,6 +57,7 @@ PACKAGE_EXPORTS = {
     "SessionResult",
     "SessionRunner",
     "StaticRule",
+    "TokenSummary",
     "TokenUsage",
     "aggregate_tokens",
     "assert_safe_name",

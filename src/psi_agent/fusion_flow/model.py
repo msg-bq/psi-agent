@@ -1,3 +1,5 @@
+"""FusionFlow 运行时共享的数据模型、规则与辅助函数。"""
+
 from __future__ import annotations
 
 import re
@@ -10,6 +12,8 @@ from typing import Literal
 
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
+    """定义 Agent 的不可变运行配置; 缺少非空 system 或 prompt 时抛出 ValueError。"""
+
     name: str
     system: str | None = None
     prompt: str | None = None
@@ -23,6 +27,7 @@ class AgentConfig:
     context_schema: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
+        """校验名称并冻结可迭代配置, 保证运行时配置稳定。"""
         object.__setattr__(self, "name", assert_safe_name(self.name))
         system = self.system if self.system is not None else self.prompt
         if not system:
@@ -35,10 +40,13 @@ class AgentConfig:
 
 @dataclass(frozen=True, slots=True)
 class AgentInvocation:
+    """表示一次 Agent 调用的提示词和可选上下文。"""
+
     prompt: str
     context: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
+        """复制并只读化上下文, 避免调用方随后修改请求内容。"""
         if self.context is not None:
             object.__setattr__(
                 self,
@@ -49,6 +57,8 @@ class AgentInvocation:
 
 @dataclass(frozen=True, slots=True)
 class SessionResult:
+    """承载会话返回文本及可选的 token 用量。"""
+
     text: str
     input_tokens: int | None = None
     output_tokens: int | None = None
@@ -62,12 +72,16 @@ type SessionRunner = Callable[
 
 @dataclass(frozen=True, slots=True)
 class PipelineStep:
+    """表示流水线中的一个异步处理步骤及其可读标签。"""
+
     fn: Callable[[object], Awaitable[object]]
     label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class RegexRule:
+    """声明目标字段须匹配正则表达式的静态规则。"""
+
     pattern: str | re.Pattern[str]
     on: str
     kind: Literal["regex"] = field(default="regex", init=False)
@@ -75,6 +89,8 @@ class RegexRule:
 
 @dataclass(frozen=True, slots=True)
 class ContainsRule:
+    """声明目标字段须包含指定文本的静态规则。"""
+
     needle: str
     on: str
     kind: Literal["contains"] = field(default="contains", init=False)
@@ -82,6 +98,8 @@ class ContainsRule:
 
 @dataclass(frozen=True, slots=True)
 class EqualsRule:
+    """声明目标字段须等于指定文本的静态规则。"""
+
     expected: str
     on: str
     kind: Literal["equals"] = field(default="equals", init=False)
@@ -89,12 +107,15 @@ class EqualsRule:
 
 @dataclass(frozen=True, slots=True)
 class RangeRule:
+    """声明数值范围规则, 并保证边界可比较, 否则抛出类型或值错误。"""
+
     value: float
     minimum: float | None = None
     maximum: float | None = None
     kind: Literal["range"] = field(default="range", init=False)
 
     def __post_init__(self) -> None:
+        """拒绝布尔值和无效边界, 确保数值范围可比较。"""
         if isinstance(self.value, bool) or not isinstance(self.value, int | float):
             raise TypeError("RangeRule value must be numeric")
         if self.minimum is not None and (isinstance(self.minimum, bool) or not isinstance(self.minimum, int | float)):
@@ -107,6 +128,8 @@ class RangeRule:
 
 @dataclass(frozen=True, slots=True)
 class PredicateRule:
+    """声明由同步或异步谓词决定结果的静态规则。"""
+
     fn: Callable[[], Awaitable[bool] | bool]
     kind: Literal["predicate"] = field(default="predicate", init=False)
 
@@ -116,6 +139,8 @@ type StaticRule = RegexRule | ContainsRule | EqualsRule | RangeRule | PredicateR
 
 @dataclass(frozen=True, slots=True)
 class AgentHandle:
+    """标识已注册 Agent 及其不可变配置。"""
+
     name: str
     config: AgentConfig
     kind: Literal["agent"] = field(default="agent", init=False)
@@ -123,6 +148,8 @@ class AgentHandle:
 
 @dataclass(frozen=True, slots=True)
 class ServiceParam:
+    """描述服务句柄接受的一个参数。"""
+
     name: str
     description: str | None = None
     required: bool = True
@@ -130,17 +157,22 @@ class ServiceParam:
 
 @dataclass(frozen=True, slots=True)
 class ServiceHandle:
+    """标识服务及其参数模式和可选说明。"""
+
     name: str
     params: tuple[ServiceParam, ...] = ()
     description: str | None = None
     kind: Literal["service"] = field(default="service", init=False)
 
     def __post_init__(self) -> None:
+        """冻结参数序列, 保持服务声明不可变。"""
         object.__setattr__(self, "params", tuple(self.params))
 
 
 @dataclass(frozen=True, slots=True)
 class BlockHandle:
+    """标识可复用流程块及其可选说明。"""
+
     name: str
     description: str | None = None
     kind: Literal["block"] = field(default="block", init=False)
@@ -148,6 +180,8 @@ class BlockHandle:
 
 @dataclass(frozen=True, slots=True)
 class ExecResult:
+    """记录命令执行的输出、状态、耗时与截断情况。"""
+
     stdout: str
     raw: str
     exit_code: int
@@ -158,6 +192,8 @@ class ExecResult:
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
+    """记录一次流程运行的标识、目录和最终状态。"""
+
     run_id: str
     run_dir: str
     status: Literal["ok", "error"]
@@ -165,6 +201,19 @@ class RunResult:
 
 @dataclass(frozen=True, slots=True)
 class TokenUsage:
+    """汇总调用次数及可选的输入、输出 token 数。"""
+
+    calls: int
+    input: int | None
+    output: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class TokenSummary:
+    """按用户调用和框架内部调用分组, 同时保留两组的扁平合计。"""
+
+    user: TokenUsage
+    internal: TokenUsage
     calls: int
     input: int | None
     output: int | None
@@ -196,6 +245,8 @@ type TraceKind = Literal[
 
 @dataclass(slots=True)
 class ExecutionTrace:
+    """保存执行树节点; 子节点序列和元数据副本与外部输入隔离。"""
+
     trace_id: str
     kind: TraceKind
     label: str
@@ -212,10 +263,12 @@ class ExecutionTrace:
     error: str | None = None
 
     def __post_init__(self) -> None:
+        """复制可变输入并冻结子节点序列, 隔离外部后续修改。"""
         self.children = tuple(self.children)
         self.metadata = dict(self.metadata)
 
     def to_dict(self) -> dict[str, object]:
+        """将执行树递归转换为可序列化的普通字典。"""
         tokens = None
         if self.tokens is not None:
             tokens = {
@@ -249,10 +302,14 @@ _WINDOWS_UNSAFE_CHARACTERS = frozenset('<>:"/\\|?*')
 
 
 def assert_safe_name(name: str) -> str:
+    """返回跨平台安全的 NFC 名称; 违反命名约束时抛出 ValueError。"""
+
     if not isinstance(name, str) or not name:
         raise ValueError("name must be a non-empty string")
 
+    # 先统一等价 Unicode 表示, 避免同名在文件系统中产生不同结果。
     normalized = unicodedata.normalize("NFC", name)
+    # 拒绝路径、控制符和 Windows 特殊名称, 名称会用于运行目录与标识。
     if normalized == "." or ".." in normalized:
         raise ValueError(f'name "{name}" must not contain ".."')
     if any(
@@ -267,33 +324,69 @@ def assert_safe_name(name: str) -> str:
     return normalized
 
 
-def aggregate_tokens(root: ExecutionTrace) -> TokenUsage:
-    calls = 0
-    input_tokens: int | None = 0
-    output_tokens: int | None = 0
+def aggregate_tokens(root: ExecutionTrace) -> TokenSummary:
+    """递归汇总未缓存 token, 并按调用所有者拆分 user/internal。"""
+
+    user_calls = 0
+    user_input: int | None = 0
+    user_output: int | None = 0
+    internal_calls = 0
+    internal_input: int | None = 0
+    internal_output: int | None = 0
 
     def visit(node: ExecutionTrace) -> None:
-        nonlocal calls, input_tokens, output_tokens
+        """深度优先累加单个节点及其子节点的可计费用量。"""
+        nonlocal user_calls, user_input, user_output
+        nonlocal internal_calls, internal_input, internal_output
         if node.cached:
             return
         if node.tokens is not None:
-            calls += node.tokens.calls
-            if node.tokens.input is None:
-                input_tokens = None
-            elif input_tokens is not None:
-                input_tokens += node.tokens.input
-            if node.tokens.output is None:
-                output_tokens = None
-            elif output_tokens is not None:
-                output_tokens += node.tokens.output
+            owner = node.metadata.get(
+                "evaluator_agent",
+                node.metadata.get(
+                    "evaluator",
+                    node.metadata.get("agent", node.label),
+                ),
+            )
+            is_internal = isinstance(owner, str) and owner.startswith("__")
+            if is_internal:
+                internal_calls += node.tokens.calls
+                internal_input = (
+                    None if internal_input is None or node.tokens.input is None else internal_input + node.tokens.input
+                )
+                internal_output = (
+                    None
+                    if internal_output is None or node.tokens.output is None
+                    else internal_output + node.tokens.output
+                )
+            else:
+                user_calls += node.tokens.calls
+                user_input = None if user_input is None or node.tokens.input is None else user_input + node.tokens.input
+                user_output = (
+                    None if user_output is None or node.tokens.output is None else user_output + node.tokens.output
+                )
+        # 子节点可能继续嵌套并含有独立调用, 必须完整遍历执行树。
         for child in node.children:
             visit(child)
 
     visit(root)
-    return TokenUsage(calls=calls, input=input_tokens, output=output_tokens)
+    user = TokenUsage(calls=user_calls, input=user_input, output=user_output)
+    internal = TokenUsage(
+        calls=internal_calls,
+        input=internal_input,
+        output=internal_output,
+    )
+    return TokenSummary(
+        user=user,
+        internal=internal,
+        calls=user.calls + internal.calls,
+        input=(None if user.input is None or internal.input is None else user.input + internal.input),
+        output=(None if user.output is None or internal.output is None else user.output + internal.output),
+    )
 
 
 def format_token_count(count: int | None) -> str:
+    """将 token 数格式化为紧凑的人类可读文本。"""
     if count is None:
         return "unknown"
     if count < 1_000:

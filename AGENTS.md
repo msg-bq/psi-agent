@@ -36,6 +36,15 @@ JSONL 格式零依赖，逐行追加读写简单。文件按 `workspace/historie
 **为什么 socket 文件不自动 unlink？**
 支持热换 Server。每个 `session.post()` 新建 TCP/Unix 连接，由 `UnixConnector` 按路径重新 connect。只要新的服务进程绑定到同一 socket 路径，客户端无需重启即可继续通信。auto-unlink 会破坏这个能力——socket 文件需要保留，由新进程手动接管。
 
+**为什么 FusionFlow 的调用序号在命中缓存或成功落盘后才提交？**
+调用序号属于可恢复状态。失败的 `session()` / `call()` 不得消耗序号，否则同一调用重试时可能误读下一条历史 binding。显式 `binding_name` 的旧恢复产物也不算本次运行已写入，因此 resume miss 后允许覆盖一次；本次运行再次写同名 binding 才报错。
+
+**为什么 FusionFlow `parallel()` 不照搬 TypeScript 的 grace-period 脱离任务？**
+Python 版本坚持 AnyIO 结构化并发：`first` / `any` 取消落后任务后仍等待它们完成清理。这样 `run()` 返回时 binding 与 trace 已封口，不会再被后台任务修改。任务若吞掉取消信号而永久运行，整个并行节点也会继续等待；这是资源与状态一致性的有意取舍。
+
+**FusionFlow 的跨语言兼容边界是什么？**
+运行产物与核心语义优先兼容，包括 binding 恢复、配对的 `node_start` / `node_end` progress 事件、分组 token 汇总、程序快照和 `exec()` 截断标记。Python API 保持 snake_case，并由显式 `SessionRunner` 承担 provider 调用；不复制 TypeScript 的 camelCase 配置或内嵌 provider 选择。
+
 ## 技术栈
 
 | 领域 | 技术 |

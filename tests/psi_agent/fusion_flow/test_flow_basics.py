@@ -448,3 +448,22 @@ async def test_legacy_agent_is_an_async_callable_using_the_injected_runner(
         ).read_text()
         == "answer:Python"
     )
+
+
+@pytest.mark.anyio
+async def test_agent_with_explicit_runner_is_callable_outside_run() -> None:
+    received: list[tuple[AgentConfig, AgentInvocation]] = []
+    config = AgentConfig(name="standalone", system="Answer directly.")
+
+    async def runner(
+        runner_config: AgentConfig,
+        invocation: AgentInvocation,
+    ) -> SessionResult:
+        received.append((runner_config, invocation))
+        return SessionResult(text="standalone answer", input_tokens=2, output_tokens=1)
+
+    agent = Agent(config, runner=runner)
+    invocation = AgentInvocation(prompt="question")
+
+    assert await agent(invocation) == "standalone answer"
+    assert received == [(config, invocation)]

@@ -1,13 +1,18 @@
+"""FusionFlow 运行时的运行目录、绑定与恢复支持。"""
+
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from hashlib import sha256
+from importlib import import_module
 from os import PathLike
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 import anyio
@@ -23,6 +28,9 @@ from .model import (
     assert_safe_name,
 )
 
+if TYPE_CHECKING:
+    from .flow import Flow
+
 type Program = Callable[[RunContext], Awaitable[object]]
 type PathValue = str | PathLike[str] | anyio.Path
 
@@ -37,20 +45,24 @@ _CURRENT_TRACE: ContextVar[ExecutionTrace | None] = ContextVar(
 
 
 def _now_iso() -> str:
+    """返回 UTC 的 ISO 8601 时间戳。"""
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _make_run_id() -> str:
+    """生成便于排序且带随机后缀的运行标识。"""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"{stamp}-{uuid4().hex[:6]}"
 
 
 def _error_text(error: BaseException) -> str:
+    """提取异常的非空可读文本。"""
     text = str(error)
     return text or error.__class__.__name__
 
 
 def stable_payload_hash(value: object) -> str:
+    """为可 JSON 序列化值生成稳定的 SHA-256 摘要。"""
     payload = json.dumps(
         value,
         ensure_ascii=False,
@@ -61,12 +73,16 @@ def stable_payload_hash(value: object) -> str:
 
 
 async def _atomic_write_text(path: anyio.Path, value: str) -> None:
+    """以原子替换方式写入 UTF-8 文本文件。"""
+    # 临时文件与目标文件同目录. 确保替换可保持原子性。
     temporary = anyio.Path(path.parent, f".{path.name}.tmp-{uuid4().hex}")
     try:
         await temporary.write_text(value, encoding="utf-8")
+        # 完整写入后再原子替换目标文件。
         await temporary.replace(path)
     finally:
         with anyio.CancelScope(shield=True):
+            # 清理未被替换的临时文件。
             if await temporary.exists():
                 await temporary.unlink()
 
@@ -75,6 +91,7 @@ async def _atomic_write_json(
     path: anyio.Path,
     value: Mapping[str, object],
 ) -> None:
+    """以格式化 JSON 原子写入映射数据。"""
     payload = json.dumps(
         value,
         ensure_ascii=False,
@@ -85,6 +102,7 @@ async def _atomic_write_json(
 
 
 async def _remove_tree(path: anyio.Path) -> None:
+    """递归删除目录树. 但不跟随符号链接。"""
     if await path.is_symlink():
         await path.unlink()
         return
@@ -102,6 +120,7 @@ async def _resolve_direct_child(
     *,
     label: str,
 ) -> anyio.Path:
+    """验证路径是父目录下的非链接直接子项。"""
     if await path.is_symlink():
         raise ValueError(f"{label} must not be a symbolic link")
     resolved = await path.resolve()
@@ -114,6 +133,7 @@ async def _ensure_run_subdirectory(
     run_dir: anyio.Path,
     name: str,
 ) -> anyio.Path:
+    """确保运行目录的指定直接子目录存在且安全。"""
     path = anyio.Path(run_dir, name)
     if await path.exists():
         if not await path.is_dir():
@@ -128,7 +148,10 @@ async def _ensure_run_subdirectory(
 
 
 class RunContext:
-    """Mutable state owned by exactly one ``run()`` invocation."""
+    """单次 ``run()`` 生命周期内有效的可变运行状态。
+
+    绑定名称只能单次赋值。名称预留和 trace 子节点等共享状态由 ``_lock`` 保护。
+    """
 
     def __init__(
         self,
@@ -141,6 +164,7 @@ class RunContext:
         resumed: bool,
         resume_bindings: Mapping[str, str],
     ) -> None:
+        """使用已创建的运行目录和恢复状态初始化上下文。"""
         self.run_id = run_id
         self.run_dir = str(run_dir)
         self.runner = runner
@@ -153,14 +177,18 @@ class RunContext:
         self._services: dict[str, object] = {}
         self._blocks: dict[str, object] = {}
         self._input_names: set[str] = set()
-        self._binding_names: set[str] = set(resume_bindings)
+        # Resume bindings are cache inputs, not writes performed by this run.
+        # A cache miss may replace one once; a second current-run write still
+        # fails through this set.
+        self._binding_names: set[str] = set()
         self._binding_reservations: set[str] = set()
-        self._call_counts: dict[str, int] = {}
+        self._call_ordinals: dict[str, set[int]] = {}
+        self._call_ordinal_reservations: set[tuple[str, int]] = set()
         self._lock = anyio.Lock()
         self._sealed = False
 
     async def input(self, name: str, default_value: str) -> str:
-        """Read and persist one named input using the run's injected overrides."""
+        """读取并持久化一个可被运行注入值覆盖的具名输入。"""
         self._ensure_open()
         async with self._trace("input", name) as trace:
             value = await self._read_input(name, default_value)
@@ -168,7 +196,7 @@ class RunContext:
             return value
 
     async def save(self, name: str, value: str) -> None:
-        """Persist one named binding through the same single-assignment path."""
+        """通过单赋值路径持久化一个具名绑定。"""
         self._ensure_open()
         preview = repr(value)
         async with self._trace(
@@ -190,13 +218,23 @@ class RunContext:
 
     @property
     def services(self) -> dict[str, object]:
+        """返回当前运行注册的服务表。"""
         return self._services
 
     @property
     def blocks(self) -> dict[str, object]:
+        """返回当前运行注册的块表。"""
         return self._blocks
 
+    @property
+    def flow(self) -> Flow:
+        """返回包级 ``flow`` API, 与作为参数传入的 context 绑定到同一运行。"""
+        # 延迟解析避免 runtime 与 flow 在模块初始化阶段形成循环依赖。
+        module = import_module(".flow", __package__)
+        return cast("Flow", module.flow)
+
     def _ensure_open(self) -> None:
+        """确认上下文尚未封存。"""
         if self._sealed:
             raise RuntimeError("run context is sealed")
 
@@ -208,6 +246,7 @@ class RunContext:
         tokens: Mapping[str, int | None] | None = None,
         **details: object,
     ) -> dict[str, object]:
+        """构建绑定持久化和恢复校验所需的元数据。"""
         trace = _CURRENT_TRACE.get() or self.root_trace
         metadata: dict[str, object] = {
             "name": name,
@@ -221,6 +260,7 @@ class RunContext:
         return metadata
 
     async def _read_input(self, name: str, default_value: str) -> str:
+        """读取一次输入并在成功后写入运行目录。"""
         normalized = assert_safe_name(name)
         if not isinstance(default_value, str):
             raise TypeError("input default_value must be a string")
@@ -249,20 +289,35 @@ class RunContext:
         return value
 
     async def _reserve_binding(self, name: str) -> str:
+        """预留一个尚未存在的绑定名称。"""
         normalized = assert_safe_name(name)
         async with self._lock:
             self._ensure_open()
             if normalized in self._binding_names or normalized in self._binding_reservations:
                 raise ValueError(f'binding "{normalized}" already exists')
+            # 锁内预留可避免并发调用获得同名绑定。
             self._binding_reservations.add(normalized)
         return normalized
 
-    async def _release_binding(self, name: str) -> None:
+    async def _release_binding(
+        self,
+        name: str,
+        *,
+        call_base: str | None = None,
+        call_count: int | None = None,
+    ) -> None:
+        """释放未提交的名称和可选调用序号预留, 以便后续重试。"""
         with anyio.CancelScope(shield=True):
             async with self._lock:
                 self._binding_reservations.discard(name)
+                if call_base is not None and call_count is not None:
+                    reservation = (call_base, call_count)
+                    if reservation in self._call_ordinal_reservations:
+                        self._call_ordinal_reservations.remove(reservation)
+                        self._call_ordinals[call_base].discard(call_count)
 
     async def _reserve_auto_binding(self, base: str) -> str:
+        """预留基名或带递增后缀的第一个可用绑定名称。"""
         normalized = assert_safe_name(base)
         suffix = 1
         while True:
@@ -272,13 +327,50 @@ class RunContext:
             except ValueError:
                 suffix += 1
 
-    async def _next_call_name(self, base: str) -> str:
+    async def _reserve_call_binding(
+        self,
+        base: str,
+        binding_name: str | None,
+    ) -> tuple[str, str, int]:
+        """预留调用 binding, 但把序号推进留到缓存命中或成功落盘时。"""
         normalized = assert_safe_name(base)
+        explicit = assert_safe_name(binding_name) if binding_name is not None else None
         async with self._lock:
             self._ensure_open()
-            count = self._call_counts.get(normalized, 0) + 1
-            self._call_counts[normalized] = count
-        return normalized if count == 1 else f"{normalized}.{count}"
+            ordinals = self._call_ordinals.setdefault(normalized, set())
+            count = 1
+            while True:
+                if count in ordinals:
+                    count += 1
+                    continue
+                candidate = explicit or (normalized if count == 1 else f"{normalized}.{count}")
+                if candidate not in self._binding_names and candidate not in self._binding_reservations:
+                    break
+                if explicit is not None:
+                    raise ValueError(f'binding "{candidate}" already exists')
+                count += 1
+            # 名称先锁定, 但序号仍是临时值; 失败重试会再次取得同一序号。
+            self._binding_reservations.add(candidate)
+            ordinals.add(count)
+            self._call_ordinal_reservations.add((normalized, count))
+        return candidate, normalized, count
+
+    async def _commit_reserved_call(
+        self,
+        name: str,
+        base: str,
+        count: int,
+    ) -> None:
+        """提交一次缓存命中的调用身份, 不重复写已有 binding 文件。"""
+        with anyio.CancelScope(shield=True):
+            async with self._lock:
+                self._ensure_open()
+                reservation = (base, count)
+                if reservation not in self._call_ordinal_reservations:
+                    raise RuntimeError(f'call ordinal for "{base}" is not reserved')
+                self._call_ordinal_reservations.remove(reservation)
+                self._binding_reservations.remove(name)
+                self._binding_names.add(name)
 
     async def _commit_reserved_binding(
         self,
@@ -286,9 +378,19 @@ class RunContext:
         value: str,
         *,
         metadata: Mapping[str, object] | None = None,
+        call_base: str | None = None,
+        call_count: int | None = None,
     ) -> None:
-        if not isinstance(value, str):
+        """将已预留的绑定和元数据全部落盘后提交。"""
+        if (call_base is None) != (call_count is None):
             await self._release_binding(name)
+            raise RuntimeError("call_base and call_count must be provided together")
+        if not isinstance(value, str):
+            await self._release_binding(
+                name,
+                call_base=call_base,
+                call_count=call_count,
+            )
             raise TypeError("binding value must be a string")
 
         metadata_payload = dict(metadata or {})
@@ -303,11 +405,17 @@ class RunContext:
         try:
             json.dumps(metadata_payload)
         except (TypeError, ValueError) as error:
-            await self._release_binding(name)
+            await self._release_binding(
+                name,
+                call_base=call_base,
+                call_count=call_count,
+            )
             raise TypeError("binding metadata must be JSON serializable") from error
 
         binding_path = anyio.Path(self._path, "bindings", f"{name}.md")
         metadata_path = anyio.Path(self._path, "bindings", f"{name}.meta.json")
+        previous_value = self._resume_bindings.get(name)
+        previous_metadata = self._resume_metadata.get(name)
         try:
             self._ensure_open()
             await _atomic_write_json(
@@ -318,15 +426,37 @@ class RunContext:
 
             async with self._lock:
                 self._ensure_open()
+                if call_base is not None and call_count is not None:
+                    reservation = (call_base, call_count)
+                    if reservation not in self._call_ordinal_reservations:
+                        raise RuntimeError(
+                            f'call ordinal for "{call_base}" is not reserved',
+                        )
+                    self._call_ordinal_reservations.remove(reservation)
+                # 内容与元数据全部落盘后, 才提交名称、序号和新的恢复快照。
                 self._binding_reservations.remove(name)
                 self._binding_names.add(name)
+                self._resume_bindings[name] = value
+                self._resume_metadata[name] = metadata_payload
         except BaseException:
             with anyio.CancelScope(shield=True):
-                if await binding_path.exists():
-                    await binding_path.unlink()
-                if await metadata_path.exists():
-                    await metadata_path.unlink()
-                await self._release_binding(name)
+                # 覆盖旧恢复结果也是事务: 任一新文件写入失败都恢复旧版本。
+                if previous_value is None:
+                    if await binding_path.exists():
+                        await binding_path.unlink()
+                else:
+                    await _atomic_write_text(binding_path, previous_value)
+                if previous_metadata is None:
+                    if await metadata_path.exists():
+                        await metadata_path.unlink()
+                else:
+                    await _atomic_write_json(metadata_path, previous_metadata)
+                # 失败或取消时释放预留. 允许调用方重试。
+                await self._release_binding(
+                    name,
+                    call_base=call_base,
+                    call_count=call_count,
+                )
             raise
 
     async def _commit_binding(
@@ -336,6 +466,7 @@ class RunContext:
         *,
         metadata: Mapping[str, object] | None = None,
     ) -> None:
+        """预留名称并通过统一的提交路径保存绑定。"""
         normalized = await self._reserve_binding(name)
         await self._commit_reserved_binding(
             normalized,
@@ -344,9 +475,11 @@ class RunContext:
         )
 
     def _resume_binding(self, name: str) -> str | None:
+        """返回恢复目录中同名绑定的内容。"""
         return self._resume_bindings.get(name)
 
     def _resume_binding_metadata(self, name: str) -> dict[str, object] | None:
+        """返回恢复目录中同名绑定元数据的副本。"""
         payload = self._resume_metadata.get(name)
         if payload is None:
             return None
@@ -359,6 +492,8 @@ class RunContext:
         cache_key: str | None,
         operation: str,
     ) -> str | None:
+        """按操作和可选缓存键查找可复用的恢复绑定。"""
+        # 自动绑定只解决命名冲突. 恢复查找还须匹配操作和缓存键。
         cached = self._resume_binding(binding_name)
         if cached is None:
             return None
@@ -379,6 +514,7 @@ class RunContext:
         *,
         kind: str,
     ) -> str:
+        """向注册表加入唯一的安全名称和值。"""
         normalized = assert_safe_name(name)
         self._ensure_open()
         if normalized in registry:
@@ -391,15 +527,31 @@ class RunContext:
         parent: ExecutionTrace,
         child: ExecutionTrace,
     ) -> None:
+        """在锁内把子 trace 接到父 trace, 保持执行图结构一致。"""
         async with self._lock:
             self._ensure_open()
             parent.children = (*parent.children, child)
 
-    async def _record_progress(self, trace: ExecutionTrace) -> None:
+    async def _record_progress(
+        self,
+        trace: ExecutionTrace,
+        event: str,
+    ) -> None:
+        """追加与参考实现兼容的 node_start/node_end 进度事件。"""
+        record: dict[str, object] = {
+            "ts": _now_iso(),
+            "event": event,
+            "id": trace.trace_id,
+            "type": trace.kind,
+            "label": trace.label,
+        }
+        if event == "node_end":
+            record["status"] = trace.status
+            record["durationMs"] = trace.duration_ms
         line = json.dumps(
-            trace.to_dict(),
+            record,
             ensure_ascii=False,
-            sort_keys=True,
+            separators=(",", ":"),
         )
         async with self._lock:
             stream = await anyio.Path(
@@ -418,6 +570,8 @@ class RunContext:
         input_summary: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> AsyncIterator[ExecutionTrace]:
+        """在当前 trace 下记录一个子操作的生命周期。"""
+        # 子 trace 始终绑定到进入上下文时的父 trace, 而非依赖调用方手工关联。
         parent = _CURRENT_TRACE.get() or self.root_trace
         trace = ExecutionTrace(
             trace_id=f"{kind}-{uuid4().hex[:12]}",
@@ -428,19 +582,29 @@ class RunContext:
             metadata=dict(metadata or {}),
         )
         await self._append_child(parent, trace)
+        try:
+            await self._record_progress(trace, "node_start")
+        except Exception as progress_error:
+            # progress.jsonl 是尽力而为的观测信号, 不能阻断业务节点。
+            logger.error(
+                f"Failed to persist start event for trace {trace.trace_id}: {progress_error}",
+            )
+        # token 使嵌套 flow 操作自动继承此 trace, 并在退出时恢复父上下文。
         token = _CURRENT_TRACE.set(trace)
         started = time.perf_counter()
         try:
             yield trace
         except BaseException as error:
             cancelled = isinstance(error, anyio.get_cancelled_exc_class())
+            # 取消也要写下终态; shield 防止取消信号打断这次诊断持久化。
             with anyio.CancelScope(shield=cancelled):
+                # 异常状态写入 trace, 供最终封存的执行图保留失败原因。
                 trace.status = "cancelled" if cancelled else "error"
                 trace.error = _error_text(error)
                 trace.finished_at = _now_iso()
                 trace.duration_ms = (time.perf_counter() - started) * 1_000
                 try:
-                    await self._record_progress(trace)
+                    await self._record_progress(trace, "node_end")
                 except Exception as progress_error:
                     logger.error(
                         f"Failed to persist trace {trace.trace_id} while handling "
@@ -452,15 +616,17 @@ class RunContext:
             trace.finished_at = _now_iso()
             trace.duration_ms = (time.perf_counter() - started) * 1_000
             try:
-                await self._record_progress(trace)
+                await self._record_progress(trace, "node_end")
             except Exception as progress_error:
                 logger.error(
                     f"Failed to persist completed trace {trace.trace_id}: {progress_error}",
                 )
         finally:
+            # 无论成功, 失败还是取消, 都不能把子 trace 泄漏给后续操作。
             _CURRENT_TRACE.reset(token)
 
     async def _seal(self) -> None:
+        """封存 context, 阻止最终状态开始写入后继续注册新内容。"""
         async with self._lock:
             self._sealed = True
 
@@ -469,6 +635,8 @@ class RunContext:
         name: str,
         trace: ExecutionTrace,
     ) -> None:
+        """将命名 trace 写为独立的诊断文件, 失败只记录日志。"""
+        # progress.jsonl 是运行中快照; 命名 trace 文件是单个已完成操作的独立诊断记录。
         try:
             await _atomic_write_json(
                 anyio.Path(self._path, "trace", f"{assert_safe_name(name)}.json"),
@@ -479,6 +647,7 @@ class RunContext:
 
 
 def current_run_context() -> RunContext:
+    """返回当前 ContextVar 中的运行上下文, 缺失时明确报错。"""
     context = _CURRENT_RUN.get()
     if context is None:
         raise RuntimeError("flow operation requires an active run() context")
@@ -486,6 +655,7 @@ def current_run_context() -> RunContext:
 
 
 async def _load_resume_bindings(run_dir: anyio.Path) -> dict[str, str]:
+    """加载 resume run 的直接 bindings 子目录中的安全 Markdown 绑定。"""
     bindings: dict[str, str] = {}
     directory = anyio.Path(run_dir, "bindings")
     if not await directory.exists():
@@ -509,6 +679,7 @@ async def _load_resume_bindings(run_dir: anyio.Path) -> dict[str, str]:
             directory,
             label=f'resume binding "{path.name}"',
         )
+        # 只接受 bindings 的直接普通文件, 解析后仍须留在该目录内。
         name = path.name.removesuffix(".md")
         try:
             normalized = assert_safe_name(name)
@@ -523,6 +694,7 @@ async def _load_resume_bindings(run_dir: anyio.Path) -> dict[str, str]:
 
 
 async def _load_resume_metadata(run_dir: anyio.Path) -> dict[str, dict[str, object]]:
+    """加载 resume bindings 对应的直接元数据文件。"""
     payloads: dict[str, dict[str, object]] = {}
     directory = anyio.Path(run_dir, "bindings")
     if not await directory.exists():
@@ -548,6 +720,7 @@ async def _load_resume_metadata(run_dir: anyio.Path) -> dict[str, dict[str, obje
             directory,
             label=f'resume binding metadata "{path.name}"',
         )
+        # 元数据与绑定分别加载; 名称经 NFC 规范化后必须各自唯一。
         name = path.name.removesuffix(".meta.json")
         try:
             normalized = assert_safe_name(name)
@@ -576,6 +749,7 @@ async def _persist_final_state(
     resume_from_run_id: str | None,
     program_snapshot: str | None,
 ) -> None:
+    """封存根 trace, 并写入完成后的执行图和 run 元数据。"""
     finished_at = _now_iso()
     duration_ms = (time.perf_counter() - started) * 1_000
     context.root_trace.status = status
@@ -585,6 +759,7 @@ async def _persist_final_state(
         context.root_trace.error = _error_text(error)
     tokens = aggregate_tokens(context.root_trace)
 
+    # progress.jsonl 只是过程快照; 最终 execution graph 和 meta 才是封存记录。
     await _atomic_write_json(
         anyio.Path(context._path, "execution-graph.json"),
         {
@@ -605,6 +780,16 @@ async def _persist_final_state(
             "resume_from_run_id": resume_from_run_id,
             "program_snapshot": program_snapshot,
             "tokens": {
+                "user": {
+                    "calls": tokens.user.calls,
+                    "input": tokens.user.input,
+                    "output": tokens.user.output,
+                },
+                "internal": {
+                    "calls": tokens.internal.calls,
+                    "input": tokens.internal.input,
+                    "output": tokens.internal.output,
+                },
                 "calls": tokens.calls,
                 "input": tokens.input,
                 "output": tokens.output,
@@ -624,7 +809,7 @@ async def run(
     throw_on_error: bool = False,
     program_path: PathValue | None = None,
 ) -> RunResult:
-    """Execute one FusionFlow program and persist its dynamic trace."""
+    """执行一个 FusionFlow program, 并封存其动态 trace。"""
 
     if run_id is not None and resume_from_run_id is not None:
         raise ValueError("run_id and resume_from_run_id are mutually exclusive")
@@ -647,6 +832,7 @@ async def run(
 
     created_run = False
     try:
+        # 第一阶段: 验证既有 resume run, 或创建并约束新的直接 run 子目录。
         if resumed:
             if not await root.exists():
                 raise FileNotFoundError(
@@ -691,6 +877,27 @@ async def run(
                 snapshot_status = str(source)
             else:
                 snapshot_status = f"unavailable: {source}"
+        elif sys.argv and sys.argv[0].lower().endswith(".py"):
+            # Python 的入口脚本对应 TypeScript 的 process.argv[1]。默认路径
+            # 只做尽力而为快照, 不能让 REPL、pytest 等宿主环境阻断运行。
+            source = anyio.Path(sys.argv[0])
+            try:
+                if await source.is_file():
+                    await _atomic_write_text(
+                        anyio.Path(run_path, "program.py"),
+                        await source.read_text(encoding="utf-8"),
+                    )
+                    snapshot_status = str(source)
+                else:
+                    snapshot_status = f"unavailable: {source}"
+                    logger.warning(
+                        f"Failed to snapshot FusionFlow program: {source} is not a file",
+                    )
+            except Exception as snapshot_error:
+                snapshot_status = f"unavailable: {source}"
+                logger.warning(
+                    f"Failed to snapshot FusionFlow program: {snapshot_error}",
+                )
 
         started_at = _now_iso()
         started = time.perf_counter()
@@ -709,6 +916,7 @@ async def run(
             resumed=resumed,
             resume_bindings=await _load_resume_bindings(run_path) if resumed else {},
         )
+        # 第二阶段: 构造 context, 并仅在 resume 时读取可复用绑定和元数据。
         if resumed:
             context._resume_metadata = await _load_resume_metadata(run_path)
         else:
@@ -737,10 +945,12 @@ async def run(
     persistence_error: BaseException | None = None
     try:
         try:
+            # 第三阶段: 在 run ContextVar 中执行 program, 并记录成功或失败终态。
             await program(context)
         except BaseException as error:
             caught = error
             status = "cancelled" if isinstance(error, anyio.get_cancelled_exc_class()) else "error"
+        # 第四阶段: 即使外层取消, 也完成 graph/meta 的封存和 context 的 seal。
         with anyio.CancelScope(shield=True):
             try:
                 await context._seal()
@@ -756,6 +966,7 @@ async def run(
             except BaseException as error:
                 persistence_error = error
     finally:
+        # 最终持久化之后恢复调用方的 ContextVar, 避免 run 状态跨调用泄漏。
         _CURRENT_TRACE.reset(trace_token)
         _CURRENT_RUN.reset(run_token)
 
@@ -794,7 +1005,7 @@ async def gc_runs(
     keep_days: int = 7,
     exclude_run_id: str | None = None,
 ) -> tuple[str, ...]:
-    """Remove direct child run directories outside the retention union."""
+    """按数量和日期保留规则清理 runs 目录的直接子 run 目录。"""
 
     if isinstance(keep_count, bool) or not isinstance(keep_count, int):
         raise TypeError("keep_count must be an integer")
@@ -830,6 +1041,7 @@ async def gc_runs(
     if keep_count > 0:
         keep.update(name for name, _, _ in candidates[:keep_count])
     if keep_days > 0:
+        # keep_days 与 keep_count 取并集, 满足任一保留条件即可留下。
         cutoff = time.time() - keep_days * 24 * 60 * 60
         keep.update(name for name, mtime, _ in candidates if mtime >= cutoff)
 

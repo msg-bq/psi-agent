@@ -8,6 +8,7 @@ import anyio
 import pytest
 
 from psi_agent.fusion_flow import runtime as runtime_module
+from psi_agent.fusion_flow.flow import flow
 from psi_agent.fusion_flow.runtime import RunContext, gc_runs, run
 
 
@@ -33,8 +34,92 @@ async def test_run_persists_inputs_bindings_and_final_metadata(tmp_path) -> None
     graph = json.loads(await anyio.Path(run_dir, "execution-graph.json").read_text())
     assert meta["status"] == "ok"
     assert meta["run_id"] == "run-ok"
+    assert meta["tokens"] == {
+        "calls": 0,
+        "input": 0,
+        "internal": {"calls": 0, "input": 0, "output": 0},
+        "output": 0,
+        "user": {"calls": 0, "input": 0, "output": 0},
+    }
     assert graph["root"]["status"] == "ok"
     assert not [path async for path in run_dir.iterdir() if ".tmp-" in path.name]
+
+
+@pytest.mark.anyio
+async def test_progress_records_paired_start_and_end_events(tmp_path) -> None:
+    async def program(ctx: RunContext) -> None:
+        await ctx.input("topic", "python")
+        await ctx.save("answer", "done")
+
+    result = await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="progress-events",
+        throw_on_error=True,
+    )
+
+    lines = (await anyio.Path(result.run_dir, "progress.jsonl").read_text()).splitlines()
+    events = [json.loads(line) for line in lines]
+
+    assert [event["event"] for event in events] == [
+        "node_start",
+        "node_end",
+        "node_start",
+        "node_end",
+    ]
+    for start, end in zip(events[::2], events[1::2], strict=True):
+        assert set(start) == {"ts", "event", "id", "type", "label"}
+        assert set(end) == {
+            "ts",
+            "event",
+            "id",
+            "type",
+            "label",
+            "status",
+            "durationMs",
+        }
+        assert start["id"] == end["id"]
+        assert start["type"] == end["type"]
+        assert start["label"] == end["label"]
+        assert end["status"] == "ok"
+
+
+@pytest.mark.anyio
+async def test_run_context_exposes_package_flow(tmp_path) -> None:
+    async def program(ctx: RunContext) -> None:
+        assert ctx.flow is flow
+
+    await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="context-flow",
+        throw_on_error=True,
+    )
+
+
+@pytest.mark.anyio
+async def test_run_snapshots_sys_argv_entry_script_by_default(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    source = anyio.Path(tmp_path, "workflow.py")
+    content = "async def workflow(ctx):\n    return None\n"
+    await source.write_text(content)
+    monkeypatch.setattr(sys, "argv", [str(source)])
+
+    async def program(_: RunContext) -> None:
+        return None
+
+    result = await run(
+        program,
+        runs_dir=anyio.Path(tmp_path, "runs"),
+        run_id="default-snapshot",
+        throw_on_error=True,
+    )
+
+    assert await anyio.Path(result.run_dir, "program.py").read_text() == content
+    meta = json.loads(await anyio.Path(result.run_dir, "meta.json").read_text())
+    assert meta["program_snapshot"] == str(source)
 
 
 @pytest.mark.anyio

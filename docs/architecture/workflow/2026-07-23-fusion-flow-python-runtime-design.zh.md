@@ -126,14 +126,16 @@ Python 采用 Ruff 可接受的 `snake_case` 命名；`if` 是 Python 关键字�
 
 包级别同时保留：
 
-- `Agent`：旧 v0.1 风格包装器；
+- `Agent`：可调用包装器；可从当前 `run()` 继承 runner，也可通过
+  `Agent(config, runner=...)` 脱离运行上下文调用；
 - `run`：建立一次运行的动态上下文；
 - `assert_safe_name`：名称与路径安全检查；
-- `aggregate_tokens`：汇总 token；
+- `aggregate_tokens`：按 `user` / `internal` 分组汇总 token，并保留扁平总计；
 - `format_token_count`：格式化 token 数；
 - `gc_runs`：清理历史运行目录。
 
-`RunContext.input()` 和 `RunContext.save()` 也保留。委托方向是
+`RunContext.input()`、`RunContext.save()` 和 `RunContext.flow` 也保留。
+`RunContext.flow` 返回包级同一个 `flow` 对象；输入输出的委托方向是
 `flow.input()` → 当前 `RunContext.input()`、`flow.output()` → 当前
 `RunContext.save()`，因此落盘与查重逻辑只有一套。
 
@@ -151,7 +153,7 @@ Python 采用 Ruff 可接受的 `snake_case` 命名；`if` 是 Python 关键字�
 - `started_at`、`finished_at`、`duration_ms`；
 - 输入、输出、bindings；
 - 根级 `ExecutionTrace`；
-- token 汇总；
+- token 汇总：`user`、`internal` 两组以及二者合计；
 - 可选的 `resume_from_run_id`；
 - 错误摘要。
 
@@ -180,10 +182,11 @@ Python 采用 Ruff 可接受的 `snake_case` 命名；`if` 是 Python 关键字�
 binding 是一次运行内的具名值。规则：
 
 1. 名称先通过 `assert_safe_name`；
-2. 默认只写一次；
-3. 名称预留和写值是一个原子操作；
-4. 操作失败时不得留下“成功写入”的 binding；
-5. 恢复运行可以载入旧 binding，但不得绕过重复检查；
+2. 同一次当前运行默认只写一次；
+3. 名称预留、调用序号和写值是一个事务；
+4. 缓存命中或 binding 完整落盘后才推进调用序号；失败重试复用原序号；
+5. 恢复目录中的旧 binding 是缓存输入。缓存未命中时允许覆盖一次；同一当前运行
+   第二次显式写同名仍拒绝；
 6. 序列化失败必须明确报错，不能静默丢值。
 
 ## 7. Agent 与 SessionRunner
@@ -205,6 +208,10 @@ psi-agent socket 协议的 adapter，但本 PR 用注入方式保持运行时独
 `flow.session` 在未配置 runner 时立即抛出明确配置错误。若未来要把它接到
 psi-agent 的有状态 Session，必须由独立 adapter 明确规定 history 和 identity，
 不能由本包暗中推断。
+
+包级 `Agent(config, runner=...)` 是显式的无状态直调入口，可在 `run()` 外调用；
+不传 runner 时继续通过当前运行的 `flow.session` 执行并生成 trace/binding。
+runner 仍拥有 provider/engine 选择权，FusionFlow 不嵌入 provider。
 
 ## 8. 执行语义
 
@@ -288,9 +295,11 @@ callable。binding 的 JSON 同时包含 `value` 与 `rule` 字段，便于审�
 - 调用签名显式包含操作 `name` 和 `argv`；`name` 用作 trace label 与默认 binding 前缀；
 - `argv` 逐项传入，绝不经 shell；
 - 支持 `stdin`、`cwd`、显式环境变量覆盖、timeout；
-- 同时持续消费 stdout/stderr，避免 PIPE 阻塞；
-- 默认每个输出流最多保留 4 MiB，并记录是否截断；
-- timeout 或取消时终止进程并等待回收；
+- timeout、stdout/stderr 消费和 stdin 发送从进程启动起并发，避免双向 PIPE 死锁；
+- 默认 stdout 上限 4 MiB；`0` 或正无穷关闭限制，stderr 始终完整消费；
+- stdout 首次越界时立即杀进程，返回保留前缀并将本次主动终止视为截断成功；
+- 截断 binding 在正文后追加 `[truncated at ...]`，避免下游把残缺内容当完整结果；
+- timeout 或取消时杀进程并等待回收；
 - 退出码非零时操作失败，不能先提交成功 binding；
 - `cwd` 是调用者显式选择的子进程工作目录，不强制位于 runs 根目录；恢复路径仍必须
   位于配置的 runs 根目录内。
@@ -318,9 +327,9 @@ runs/<run_id>/
 └── meta.json
 ```
 
-`program.py` 对应旧版的 `program.ts`。只有调用者提供可定位的源文件时才复制；动态
-定义、REPL 或打包环境无法可靠取得源码时，在 `meta.json` 中明确记录缺失原因，不
-伪造源码。
+`program.py` 对应旧版的 `program.ts`。显式 `program_path` 优先；未提供时运行时
+会从 Python `sys.argv[0]` 尽力复制 `.py` 入口脚本。动态定义、REPL 或打包环境无法
+可靠取得源码时不伪造源码，默认快照失败只记录 warning 和缺失状态。
 
 文件使用“临时文件 + 同目录替换”写入，避免取消或崩溃留下半个 JSON。
 
@@ -332,13 +341,19 @@ runs/<run_id>/
   记录日志但不把已成功的业务操作反转成失败。与旧 TS 一致，首版只为包含 provider
   调用细节的 `session`、`evaluate` 写独立 trace 文件；其余节点仍完整进入最终 graph。
 
+`progress.jsonl` 对每个 trace 节点写一对精简事件：开始记录
+`ts/event/id/type/label`，结束记录再带 `status/durationMs`；`event` 分别为
+`node_start` 和 `node_end`。它不是完整 trace 快照。
+
 最终 graph/meta 仍会汇总完整内存 trace，因此单节点诊断文件缺失不改变运行结果。
 
 为忠实迁移，`resume_from_run_id` 指向既有 run：载入该目录的 cache，并在同一
 `run_id/run_dir` 上重新执行顶层程序，再原子更新 graph/meta。旧 TS 只有
 `session`、`call` 会按稳定 binding 名与输入摘要尝试复用；`evaluate`、`exec`、
 静态判断和任意 Python callable 都会重新执行。Python 首版保留这一边界，但不会像
-旧实现那样覆盖未命中的旧 binding，而是分配带序号的新 binding。
+旧实现那样提前消耗调用序号：缓存命中或新结果完整落盘后才提交序号；失败重试仍
+探测原 binding。旧恢复 binding 不计为当前运行已写入，因此未命中时会原子覆盖，
+而不是无条件跳到新的序号。
 
 因此 resume 不是“整条工作流幂等重放”，也不是进程级 checkpoint。尤其
 `choice/evaluate` 可能重新选择分支，`exec` 可能再次产生外部副作用。是否应由未来
@@ -361,7 +376,7 @@ provider 栈。兼容目标是可观察语义和公开能力，不是文本结�
 ### 11.1 API 对照测试
 
 - 29 个 `flow.*` 方法全部存在；
-- 包级 6 个辅助入口全部存在；
+- 包级稳定入口（含 `Agent`、`TokenSummary`、`run` 与辅助函数）全部存在；
 - 每个 TS 名称都有唯一 Python 映射；
 - 公开签名和文档一致。
 

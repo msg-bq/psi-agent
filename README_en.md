@@ -48,7 +48,9 @@ async def main() -> None:
 anyio.run(main)
 ```
 
-Inject Agent calls with `run(..., runner=...)`; execute commands with
+Inject Agent calls with `run(..., runner=...)`, or call
+`Agent(config, runner=...)` independently outside a run. The `RunContext`
+passed to a program also exposes `ctx.flow`. Execute commands with
 `flow.exec(name, argv, ...)`. See the
 [FusionFlow Python runtime design](docs/architecture/workflow/2026-07-23-fusion-flow-python-runtime-design.zh.md)
 and [open questions](docs/architecture/workflow/2026-07-23-fusion-flow-python-runtime-open-questions.zh.md).

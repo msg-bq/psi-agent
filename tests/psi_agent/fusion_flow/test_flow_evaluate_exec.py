@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 from collections.abc import Callable
 from typing import cast
@@ -101,6 +102,13 @@ async def test_evaluate_parses_all_kinds_and_persists_parsed_bindings_and_traces
         "calls": 1,
         "input": 3,
         "output": 1,
+    }
+    meta = json.loads(await anyio.Path(run_dir, "meta.json").read_text())
+    assert meta["tokens"]["user"] == {"calls": 0, "input": 0, "output": 0}
+    assert meta["tokens"]["internal"] == {
+        "calls": 3,
+        "input": None,
+        "output": None,
     }
 
 
@@ -439,11 +447,11 @@ async def test_exec_cancellation_terminates_process_and_persists_run(tmp_path) -
 
 
 @pytest.mark.anyio
-async def test_exec_keeps_draining_after_output_limit_and_marks_truncation(
+async def test_exec_kills_immediately_at_output_limit_and_marks_binding(
     tmp_path,
 ) -> None:
     observed: list[ExecResult] = []
-    script = "import sys;sys.stdout.write('x' * 256);sys.stderr.write('y' * 256)"
+    script = "import sys;chunk=b'x'*4096;\nwhile True:\n sys.stdout.buffer.write(chunk);\n sys.stdout.buffer.flush()"
 
     async def program(_: RunContext) -> None:
         observed.append(
@@ -455,29 +463,115 @@ async def test_exec_keeps_draining_after_output_limit_and_marks_truncation(
             )
         )
 
-    result = await run(
-        program,
-        runs_dir=tmp_path,
-        run_id="exec-truncated",
-        throw_on_error=True,
-    )
+    with anyio.fail_after(5):
+        result = await run(
+            program,
+            runs_dir=tmp_path,
+            run_id="exec-truncated",
+            throw_on_error=True,
+        )
 
     exec_result = observed[0]
     assert exec_result.raw == "x" * 32
-    assert exec_result.stderr == "y" * 32
     assert exec_result.truncated is True
-    assert (
-        await anyio.Path(
-            result.run_dir,
-            "bindings",
-            "exec-truncated.md",
-        ).read_text()
-        == "x" * 32
+    binding = await anyio.Path(
+        result.run_dir,
+        "bindings",
+        "exec-truncated.md",
+    ).read_text()
+    assert binding.startswith(
+        f"{'x' * 32}\n\n... [truncated at 32 bytes by flow.exec output_limit;",
     )
 
 
 @pytest.mark.anyio
-async def test_resume_reruns_evaluate_and_exec_like_the_ts_runtime(tmp_path) -> None:
+async def test_exec_consumes_output_before_sending_all_stdin(tmp_path) -> None:
+    observed: list[ExecResult] = []
+    size = 256 * 1024
+    script = (
+        "import sys;"
+        f"sys.stdout.buffer.write(b'x'*{size});"
+        "sys.stdout.buffer.flush();"
+        "data=sys.stdin.buffer.read();"
+        "sys.stdout.buffer.write(str(len(data)).encode())"
+    )
+
+    async def program(_: RunContext) -> None:
+        observed.append(
+            await flow.exec(
+                "exec-duplex",
+                (sys.executable, "-c", script),
+                stdin=b"y" * size,
+                output_limit=size * 2,
+            )
+        )
+
+    with anyio.fail_after(5):
+        await run(
+            program,
+            runs_dir=tmp_path,
+            run_id="exec-duplex",
+            throw_on_error=True,
+        )
+
+    assert observed[0].raw.endswith(str(size))
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("output_limit", [0, math.inf])
+async def test_exec_zero_or_infinity_disables_output_limit(
+    tmp_path,
+    output_limit: int | float,
+) -> None:
+    observed: list[ExecResult] = []
+
+    async def program(_: RunContext) -> None:
+        observed.append(
+            await flow.exec(
+                "exec-unlimited",
+                (sys.executable, "-c", "print('x' * 64)"),
+                output_limit=output_limit,
+            )
+        )
+
+    await run(
+        program,
+        runs_dir=tmp_path,
+        run_id=f"exec-unlimited-{output_limit}",
+        throw_on_error=True,
+    )
+
+    assert observed[0].stdout == "x" * 64
+    assert observed[0].truncated is False
+
+
+@pytest.mark.anyio
+async def test_exec_output_limit_does_not_truncate_stderr(tmp_path) -> None:
+    observed: list[ExecResult] = []
+    script = "import sys;sys.stderr.write('y' * 256);print('ok')"
+
+    async def program(_: RunContext) -> None:
+        observed.append(
+            await flow.exec(
+                "exec-stderr",
+                (sys.executable, "-c", script),
+                output_limit=32,
+            )
+        )
+
+    await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="exec-stderr",
+        throw_on_error=True,
+    )
+
+    assert observed[0].stderr == "y" * 256
+    assert observed[0].truncated is False
+
+
+@pytest.mark.anyio
+async def test_resume_reruns_and_replaces_evaluate_and_exec_bindings(tmp_path) -> None:
     responses = iter(('{"value": true}', '{"value": false}'))
     evaluator_calls = 0
     observed: list[tuple[bool, str]] = []
@@ -523,10 +617,7 @@ async def test_resume_reruns_evaluate_and_exec_like_the_ts_runtime(tmp_path) -> 
     assert observed == [(True, "1"), (False, "2")]
     assert await counter_path.read_text() == "2"
     bindings = anyio.Path(result.run_dir, "bindings")
-    for name in (
-        "evaluate.__evaluator__.md",
-        "evaluate.__evaluator__.2.md",
-        "side-effect.md",
-        "side-effect.2.md",
-    ):
+    for name in ("evaluate.__evaluator__.md", "side-effect.md"):
         assert await anyio.Path(bindings, name).exists()
+    assert not await anyio.Path(bindings, "evaluate.__evaluator__.2.md").exists()
+    assert not await anyio.Path(bindings, "side-effect.2.md").exists()

@@ -48,8 +48,9 @@ async def main() -> None:
 anyio.run(main)
 ```
 
-Agent 调用通过 `run(..., runner=...)` 注入，命令执行使用
-`flow.exec(name, argv, ...)`。设计、兼容差异与待讨论点见
+Agent 调用可通过 `run(..., runner=...)` 注入，也可用
+`Agent(config, runner=...)` 在运行外独立调用；传入 program 的 `RunContext`
+也直接提供 `ctx.flow`。命令执行使用 `flow.exec(name, argv, ...)`。设计、兼容差异与待讨论点见
 [FusionFlow Python 运行时设计](docs/architecture/workflow/2026-07-23-fusion-flow-python-runtime-design.zh.md)
 和[待讨论点](docs/architecture/workflow/2026-07-23-fusion-flow-python-runtime-open-questions.zh.md)。
 

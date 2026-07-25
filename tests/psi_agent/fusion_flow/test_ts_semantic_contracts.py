@@ -507,3 +507,211 @@ async def test_exec_name_is_trace_label_and_default_binding_prefix(tmp_path) -> 
     )
     metadata = await _binding_metadata(result.run_dir, "named-command")
     assert metadata["produced_by"] == "named-command"
+
+
+@pytest.mark.anyio
+async def test_failed_call_retry_reuses_same_resume_ordinal(tmp_path) -> None:
+    async def seed_body(args: dict[str, str]) -> str:
+        return args["value"]
+
+    async def seed(_: RunContext) -> None:
+        service = flow.service("worker", seed_body)
+        await flow.call(service, {"value": "old-one"})
+        await flow.call(service, {"value": "old-two"})
+
+    await run(
+        seed,
+        runs_dir=tmp_path,
+        run_id="call-resume-ordinal",
+        throw_on_error=True,
+    )
+
+    attempts = 0
+
+    async def refreshed_body(_: dict[str, str]) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("retry me")
+        return "fresh"
+
+    async def resumed(_: RunContext) -> None:
+        service = flow.service("worker", refreshed_body)
+        with pytest.raises(RuntimeError, match="retry me"):
+            await flow.call(service, {"value": "changed"})
+        assert await flow.call(service, {"value": "changed"}) == "fresh"
+
+    result = await run(
+        resumed,
+        runs_dir=tmp_path,
+        resume_from_run_id="call-resume-ordinal",
+        throw_on_error=True,
+    )
+
+    assert (
+        await anyio.Path(
+            result.run_dir,
+            "bindings",
+            "worker.md",
+        ).read_text()
+        == "fresh"
+    )
+    assert not await anyio.Path(
+        result.run_dir,
+        "bindings",
+        "worker.3.md",
+    ).exists()
+
+
+@pytest.mark.anyio
+async def test_failed_session_retry_reuses_same_resume_ordinal(tmp_path) -> None:
+    config = AgentConfig(name="writer", system="Write.")
+    agent = flow.agent(config)
+
+    async def seed_runner(_: AgentConfig, invocation: AgentInvocation) -> str:
+        return invocation.prompt
+
+    async def seed(_: RunContext) -> None:
+        await flow.session(agent, "old-one")
+        await flow.session(agent, "old-two")
+
+    await run(
+        seed,
+        runs_dir=tmp_path,
+        run_id="session-resume-ordinal",
+        runner=seed_runner,
+        throw_on_error=True,
+    )
+
+    attempts = 0
+
+    async def retry_runner(_: AgentConfig, __: AgentInvocation) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("retry me")
+        return "fresh"
+
+    async def resumed(_: RunContext) -> None:
+        with pytest.raises(RuntimeError, match="retry me"):
+            await flow.session(agent, "changed")
+        assert await flow.session(agent, "changed") == "fresh"
+
+    result = await run(
+        resumed,
+        runs_dir=tmp_path,
+        resume_from_run_id="session-resume-ordinal",
+        runner=retry_runner,
+        throw_on_error=True,
+    )
+
+    assert (
+        await anyio.Path(
+            result.run_dir,
+            "bindings",
+            "writer.md",
+        ).read_text()
+        == "fresh"
+    )
+    assert not await anyio.Path(
+        result.run_dir,
+        "bindings",
+        "writer.3.md",
+    ).exists()
+
+
+@pytest.mark.anyio
+async def test_explicit_resume_miss_replaces_old_binding_once(tmp_path) -> None:
+    async def body(args: dict[str, str]) -> str:
+        return args["value"]
+
+    async def seed(_: RunContext) -> None:
+        service = flow.service("fixed-service", body)
+        await flow.call(
+            service,
+            {"value": "old"},
+            binding_name="fixed",
+        )
+
+    await run(
+        seed,
+        runs_dir=tmp_path,
+        run_id="explicit-resume",
+        throw_on_error=True,
+    )
+
+    async def resumed(_: RunContext) -> None:
+        service = flow.service("fixed-service", body)
+        assert (
+            await flow.call(
+                service,
+                {"value": "new"},
+                binding_name="fixed",
+            )
+            == "new"
+        )
+        with pytest.raises(ValueError, match="already exists"):
+            await flow.call(
+                service,
+                {"value": "again"},
+                binding_name="fixed",
+            )
+
+    result = await run(
+        resumed,
+        runs_dir=tmp_path,
+        resume_from_run_id="explicit-resume",
+        throw_on_error=True,
+    )
+
+    assert (
+        await anyio.Path(
+            result.run_dir,
+            "bindings",
+            "fixed.md",
+        ).read_text()
+        == "new"
+    )
+
+
+@pytest.mark.anyio
+async def test_parallel_same_service_reserves_distinct_call_ordinals(tmp_path) -> None:
+    first_entered = anyio.Event()
+    second_committed = anyio.Event()
+
+    async def body(args: dict[str, str]) -> str:
+        if args["value"] == "one":
+            first_entered.set()
+            await second_committed.wait()
+        return args["value"]
+
+    async def program(_: RunContext) -> None:
+        service = flow.service("worker", body)
+
+        async def call_second() -> str:
+            await first_entered.wait()
+            result = await flow.call(service, {"value": "two"})
+            second_committed.set()
+            return result
+
+        results = await flow.parallel(
+            (
+                lambda: flow.call(service, {"value": "one"}),
+                call_second,
+            )
+        )
+        assert results == ["one", "two"]
+
+    result = await run(
+        program,
+        runs_dir=tmp_path,
+        run_id="parallel-call-ordinals",
+        throw_on_error=True,
+    )
+
+    bindings = anyio.Path(result.run_dir, "bindings")
+    values = {
+        await anyio.Path(bindings, "worker.md").read_text(),
+        await anyio.Path(bindings, "worker.2.md").read_text(),
+    }
+    assert values == {"one", "two"}
