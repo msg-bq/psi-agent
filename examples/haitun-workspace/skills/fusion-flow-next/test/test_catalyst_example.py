@@ -7,7 +7,7 @@ import sys
 from collections import Counter
 from typing import Any, cast
 
-import pytest
+from psi_agent.workflow_graph.model import ConsumesEdge, ProducesEdge
 
 _EXAMPLE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
@@ -42,7 +42,6 @@ Operator = fusion_flow_next.Operator
 Constant = fusion_flow_next.Constant
 CompoundTerm = fusion_flow_next.CompoundTerm
 WorkflowFile = fusion_flow_next.WorkflowFile
-WorkflowGraphCompilationError = fusion_flow_next.WorkflowGraphCompilationError
 WorkflowGraphCompiler = fusion_flow_next.WorkflowGraphCompiler
 
 
@@ -78,11 +77,12 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
         assertion.rhs.symbol for assertion in instruction_relations if isinstance(assertion.rhs, Constant)
     ]
 
-    assert len(instruction_paths) == len(instruction_relations) == 11
+    assert len(instruction_paths) == len(instruction_relations) == 12
     assert set(instruction_paths) == {
         "./instructions/analyze-route-feasibility.md",
         "./instructions/design-synthesis-route.md",
         "./instructions/evaluate-structures.md",
+        "./instructions/merge-recommendation-outputs.md",
         "./instructions/prepare-workflow.md",
         "./instructions/prove-performance.md",
         "./instructions/recommend-candidate.md",
@@ -111,24 +111,37 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
         ) as instruction_file:
             assert instruction_file.read().strip()
 
-    producer_counts = Counter(
-        assertion.lhs.arguments[1].symbol
-        for assertion in result.core_ir.workflows[0].assertions
-        if isinstance(assertion.lhs, CompoundTerm)
-        and assertion.lhs.operator.name == "produces"
-        and isinstance(assertion.lhs.arguments[1], Constant)
-        and isinstance(assertion.rhs, Constant)
-        and assertion.rhs.symbol == "True"
-    )
-    assert producer_counts["candidate_catalyst_structure_pool"] == 3
-    assert producer_counts["candidate_catalyst_pool"] == 3
-    assert producer_counts["tmp_candidates_directory"] == 6
-    assert producer_counts["tmp_knowledge_directory"] == 5
+    compiled = WorkflowGraphCompiler().compile(result.core_ir)
+    assert isinstance(compiled, tuple)
+    (compilation,) = compiled
 
-    with pytest.raises(
-        WorkflowGraphCompilationError,
-        match="artifact has multiple producers",
-    ) as raised:
-        WorkflowGraphCompiler().compile(result.core_ir)
+    producer_counts = Counter(edge.artifact_id for edge in compilation.graph.edges if isinstance(edge, ProducesEdge))
+    assert all(producer_counts[artifact.artifact_id] <= 1 for artifact in compilation.graph.artifacts)
 
-    assert str(raised.value) == ("artifact has multiple producers: candidate_catalyst_structure_pool")
+    merge_consumes = {
+        edge.artifact_id
+        for edge in compilation.graph.edges
+        if isinstance(edge, ConsumesEdge) and edge.step_id == "merge_recommendation_outputs_step"
+    }
+    assert merge_consumes == {
+        "tmp_candidates_directory_initial",
+        "tmp_knowledge_directory_initial",
+        "tmp_candidates_directory_from_recommend_1",
+        "tmp_candidates_directory_from_recommend_2",
+        "tmp_candidates_directory_from_recommend_3",
+        "tmp_candidates_directory_from_recommend_4",
+        "tmp_knowledge_directory_from_recommend_1",
+        "tmp_knowledge_directory_from_recommend_2",
+        "tmp_knowledge_directory_from_recommend_3",
+        "tmp_knowledge_directory_from_recommend_4",
+    }
+    merge_produces = {
+        edge.artifact_id
+        for edge in compilation.graph.edges
+        if isinstance(edge, ProducesEdge) and edge.step_id == "merge_recommendation_outputs_step"
+    }
+    assert merge_produces == {
+        "tmp_candidates_directory_after_recommendations",
+        "tmp_knowledge_directory",
+    }
+    assert compilation.residual_assertions

@@ -108,11 +108,10 @@ async def test_examples_parse_compile_plan_and_execute(
 async def test_catalyst_runner_reaches_graph_compilation_boundary() -> None:
     source = await anyio.Path(_CATALYST_WORKFLOW).read_text(encoding="utf-8")
 
-    with pytest.raises(
-        ValueError,
-        match="artifact has multiple producers: candidate_catalyst_structure_pool",
-    ):
+    with pytest.raises(ValueError) as raised:
         run_workflow.compile_workflow(source)
+
+    assert str(raised.value) == "example contains assertions that the graph compiler cannot execute"
 
 
 @pytest.mark.anyio

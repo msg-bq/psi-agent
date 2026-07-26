@@ -61,6 +61,7 @@ const recommend_1_step:Step;
 const recommend_2_step:Step;
 const recommend_3_step:Step;
 const recommend_4_step:Step;
+const merge_recommendation_outputs_step:Step;
 
 -- Crystal generation/evaluation chain from o2:107 -> o2:110 -> o2:108.
 const mattergen_step:Step;
@@ -85,6 +86,7 @@ const recommend_1:StepName;
 const recommend_2:StepName;
 const recommend_3:StepName;
 const recommend_4:StepName;
+const merge_recommendation_outputs:StepName;
 const performance_proof:StepName;
 const mattergen:StepName;
 const mattersim:StepName;
@@ -112,6 +114,37 @@ const result_directory_name:Artifact;
 const workflow_run_context:Artifact;
 const scheduler_state:Artifact;
 const prepare_workflow_step_result:Artifact;
+
+-- Single-assignment versions of the mutable directories and pools. The
+-- *_initial artifacts are created by prepare_workflow_step; the unqualified
+-- names are reserved for each directory or pool's final workflow state.
+const mattergen_stage_directory_initial:Artifact;
+const mattersim_stage_directory_initial:Artifact;
+const round_parallel_synthesis_stage_directory_initial:Artifact;
+const candidate_catalyst_pool_initial:Artifact;
+const candidate_catalyst_structure_pool_initial:Artifact;
+const novel_and_stable_catalysts_initial:Artifact;
+const fail_candidates_directory_initial:Artifact;
+const tmp_candidates_directory_initial:Artifact;
+const tmp_knowledge_directory_initial:Artifact;
+
+-- Independent recommendation deltas and their explicit fan-in result.
+const tmp_candidates_directory_from_recommend_1:Artifact;
+const tmp_candidates_directory_from_recommend_2:Artifact;
+const tmp_candidates_directory_from_recommend_3:Artifact;
+const tmp_candidates_directory_from_recommend_4:Artifact;
+const tmp_knowledge_directory_from_recommend_1:Artifact;
+const tmp_knowledge_directory_from_recommend_2:Artifact;
+const tmp_knowledge_directory_from_recommend_3:Artifact;
+const tmp_knowledge_directory_from_recommend_4:Artifact;
+const tmp_candidates_directory_after_recommendations:Artifact;
+
+-- Stage-to-stage versions before the final shared artifact names are emitted.
+const candidate_catalyst_pool_after_performance_proof:Artifact;
+const fail_candidates_directory_after_performance_proof:Artifact;
+const candidate_catalyst_structure_pool_after_mattergen:Artifact;
+const novel_and_stable_catalysts_after_mattersim:Artifact;
+const fail_candidates_directory_after_mattersim:Artifact;
 
 -- Candidate knowledge cache. Stage steps may update this artifact
 -- opportunistically while doing their original stage work, except recommendation
@@ -245,8 +278,9 @@ const synthesis_route_designer_agent:Agent;
 const synthesis_safety_feasibility_judge_agent:Agent;
 const main_coordinator_agent:Agent;
 
--- Program executor for workflow preparation.
+-- Program executors for workflow preparation and recommendation fan-in.
 const prepare_workflow_program:Program;
+const merge_recommendation_outputs_program:Program;
 
 -- ==================== prepare_workflow_step ：开始instruction========================
 -- Instruction body: ./instructions/prepare-workflow.md
@@ -341,6 +375,7 @@ workflow coscientist_ows {
     step_name(recommend_2_step) == recommend_2;
     step_name(recommend_3_step) == recommend_3;
     step_name(recommend_4_step) == recommend_4;
+    step_name(merge_recommendation_outputs_step) == merge_recommendation_outputs;
     step_name(performance_proof_step) == performance_proof;
     step_name(mattergen_step) == mattergen;
     step_name(mattersim_step) == mattersim;
@@ -367,20 +402,23 @@ workflow coscientist_ows {
     consumes(prepare_workflow_step, result_directory_name) == True;
     produces(prepare_workflow_step, workflow_run_context) == True;
     produces(prepare_workflow_step, scheduler_state) == True;
-    produces(prepare_workflow_step, mattergen_stage_directory) == True;
-    produces(prepare_workflow_step, mattersim_stage_directory) == True;
+    produces(prepare_workflow_step, mattergen_stage_directory_initial) == True;
+    produces(prepare_workflow_step, mattersim_stage_directory_initial) == True;
     produces(
         prepare_workflow_step,
-        round_parallel_synthesis_stage_directory
+        round_parallel_synthesis_stage_directory_initial
     ) == True;
     produces(prepare_workflow_step, candidate_knowledge_base) == True;
-    produces(prepare_workflow_step, candidate_catalyst_pool) == True;
-    produces(prepare_workflow_step, candidate_catalyst_structure_pool) == True;
-    produces(prepare_workflow_step, novel_and_stable_catalysts) == True;
+    produces(prepare_workflow_step, candidate_catalyst_pool_initial) == True;
+    produces(
+        prepare_workflow_step,
+        candidate_catalyst_structure_pool_initial
+    ) == True;
+    produces(prepare_workflow_step, novel_and_stable_catalysts_initial) == True;
     produces(prepare_workflow_step, fail_directory) == True;
-    produces(prepare_workflow_step, fail_candidates_directory) == True;
-    produces(prepare_workflow_step, tmp_candidates_directory) == True;
-    produces(prepare_workflow_step, tmp_knowledge_directory) == True;
+    produces(prepare_workflow_step, fail_candidates_directory_initial) == True;
+    produces(prepare_workflow_step, tmp_candidates_directory_initial) == True;
+    produces(prepare_workflow_step, tmp_knowledge_directory_initial) == True;
     produces(prepare_workflow_step, recommender_slot_1_directory) == True;
     produces(prepare_workflow_step, recommender_slot_2_directory) == True;
     produces(prepare_workflow_step, recommender_slot_3_directory) == True;
@@ -439,6 +477,12 @@ workflow coscientist_ows {
     step_executor(recommend_2_step) == recommender_2_agent;
     step_executor(recommend_3_step) == recommender_3_agent;
     step_executor(recommend_4_step) == recommender_4_agent;
+    step_instruction(
+        merge_recommendation_outputs_step
+    ) == "./instructions/merge-recommendation-outputs.md";
+    step_executor(
+        merge_recommendation_outputs_step
+    ) == merge_recommendation_outputs_program;
 
     step_instruction(
         mattergen_step
@@ -529,12 +573,12 @@ workflow coscientist_ows {
         workflow_run_context,
         scheduler_state,
         candidate_knowledge_base,
-        candidate_catalyst_pool,
-        candidate_catalyst_structure_pool,
-        novel_and_stable_catalysts,
-        fail_candidates_directory,
-        tmp_candidates_directory,
-        tmp_knowledge_directory,
+        candidate_catalyst_pool_initial,
+        candidate_catalyst_structure_pool_initial,
+        novel_and_stable_catalysts_initial,
+        fail_candidates_directory_initial,
+        tmp_candidates_directory_initial,
+        tmp_knowledge_directory_initial,
         recommender_slot_1_directory
     ];
     consumes_multi(recommend_2_step) == [
@@ -546,12 +590,12 @@ workflow coscientist_ows {
         workflow_run_context,
         scheduler_state,
         candidate_knowledge_base,
-        candidate_catalyst_pool,
-        candidate_catalyst_structure_pool,
-        novel_and_stable_catalysts,
-        fail_candidates_directory,
-        tmp_candidates_directory,
-        tmp_knowledge_directory,
+        candidate_catalyst_pool_initial,
+        candidate_catalyst_structure_pool_initial,
+        novel_and_stable_catalysts_initial,
+        fail_candidates_directory_initial,
+        tmp_candidates_directory_initial,
+        tmp_knowledge_directory_initial,
         recommender_slot_2_directory
     ];
     consumes_multi(recommend_3_step) == [
@@ -563,12 +607,12 @@ workflow coscientist_ows {
         workflow_run_context,
         scheduler_state,
         candidate_knowledge_base,
-        candidate_catalyst_pool,
-        candidate_catalyst_structure_pool,
-        novel_and_stable_catalysts,
-        fail_candidates_directory,
-        tmp_candidates_directory,
-        tmp_knowledge_directory,
+        candidate_catalyst_pool_initial,
+        candidate_catalyst_structure_pool_initial,
+        novel_and_stable_catalysts_initial,
+        fail_candidates_directory_initial,
+        tmp_candidates_directory_initial,
+        tmp_knowledge_directory_initial,
         recommender_slot_3_directory
     ];
     consumes_multi(recommend_4_step) == [
@@ -580,12 +624,12 @@ workflow coscientist_ows {
         workflow_run_context,
         scheduler_state,
         candidate_knowledge_base,
-        candidate_catalyst_pool,
-        candidate_catalyst_structure_pool,
-        novel_and_stable_catalysts,
-        fail_candidates_directory,
-        tmp_candidates_directory,
-        tmp_knowledge_directory,
+        candidate_catalyst_pool_initial,
+        candidate_catalyst_structure_pool_initial,
+        novel_and_stable_catalysts_initial,
+        fail_candidates_directory_initial,
+        tmp_candidates_directory_initial,
+        tmp_knowledge_directory_initial,
         recommender_slot_4_directory
     ];
 
@@ -605,17 +649,64 @@ workflow coscientist_ows {
     -- The grammar has no optional_produces relation, so this declares the
     -- allowed tmp/knowledge write without making knowledge capture required.
     produces(recommend_1_step, recommendation_slot_1_results) == True;
-    produces(recommend_1_step, tmp_candidates_directory) == True;
-    produces(recommend_1_step, tmp_knowledge_directory) == True;
+    produces(
+        recommend_1_step,
+        tmp_candidates_directory_from_recommend_1
+    ) == True;
+    produces(
+        recommend_1_step,
+        tmp_knowledge_directory_from_recommend_1
+    ) == True;
     produces(recommend_2_step, recommendation_slot_2_results) == True;
-    produces(recommend_2_step, tmp_candidates_directory) == True;
-    produces(recommend_2_step, tmp_knowledge_directory) == True;
+    produces(
+        recommend_2_step,
+        tmp_candidates_directory_from_recommend_2
+    ) == True;
+    produces(
+        recommend_2_step,
+        tmp_knowledge_directory_from_recommend_2
+    ) == True;
     produces(recommend_3_step, recommendation_slot_3_results) == True;
-    produces(recommend_3_step, tmp_candidates_directory) == True;
-    produces(recommend_3_step, tmp_knowledge_directory) == True;
+    produces(
+        recommend_3_step,
+        tmp_candidates_directory_from_recommend_3
+    ) == True;
+    produces(
+        recommend_3_step,
+        tmp_knowledge_directory_from_recommend_3
+    ) == True;
     produces(recommend_4_step, recommendation_slot_4_results) == True;
-    produces(recommend_4_step, tmp_candidates_directory) == True;
-    produces(recommend_4_step, tmp_knowledge_directory) == True;
+    produces(
+        recommend_4_step,
+        tmp_candidates_directory_from_recommend_4
+    ) == True;
+    produces(
+        recommend_4_step,
+        tmp_knowledge_directory_from_recommend_4
+    ) == True;
+
+    -- Merge the four independent recommendation deltas into the initialized
+    -- tmp directories before performance proof reads the candidate set.
+    consumes_multi(merge_recommendation_outputs_step) == [
+        tmp_candidates_directory_initial,
+        tmp_knowledge_directory_initial,
+        tmp_candidates_directory_from_recommend_1,
+        tmp_candidates_directory_from_recommend_2,
+        tmp_candidates_directory_from_recommend_3,
+        tmp_candidates_directory_from_recommend_4,
+        tmp_knowledge_directory_from_recommend_1,
+        tmp_knowledge_directory_from_recommend_2,
+        tmp_knowledge_directory_from_recommend_3,
+        tmp_knowledge_directory_from_recommend_4
+    ];
+    produces(
+        merge_recommendation_outputs_step,
+        tmp_candidates_directory_after_recommendations
+    ) == True;
+    produces(
+        merge_recommendation_outputs_step,
+        tmp_knowledge_directory
+    ) == True;
 
     -- performance_proof_step is executed by performance_prover_agent according
     -- to prove_tmp_candidate_performance_and_route_candidate_instruction. The
@@ -624,13 +715,19 @@ workflow coscientist_ows {
     -- folders to pools/candidates or fail/candidates, and removes judged
     -- folders from tmp/candidates.
     consumes_multi(performance_proof_step) == [
-        tmp_candidates_directory,
-        candidate_catalyst_pool,
-        fail_candidates_directory
+        tmp_candidates_directory_after_recommendations,
+        candidate_catalyst_pool_initial,
+        fail_candidates_directory_initial
     ];
     produces(performance_proof_step, tmp_candidates_directory) == True;
-    produces(performance_proof_step, candidate_catalyst_pool) == True;
-    produces(performance_proof_step, fail_candidates_directory) == True;
+    produces(
+        performance_proof_step,
+        candidate_catalyst_pool_after_performance_proof
+    ) == True;
+    produces(
+        performance_proof_step,
+        fail_candidates_directory_after_performance_proof
+    ) == True;
     produces(performance_proof_step, performance_proven_catalysts) == True;
     produces(performance_proof_step, performance_rejected_catalysts) == True;
 
@@ -638,21 +735,31 @@ workflow coscientist_ows {
     --   证明通过后的候选催化剂池 -> MatterGen -> 候选催化剂结构池 -> MatterSim。
     -- When MatterGen sampling is complete, the candidate folder is moved out
     -- of candidate_catalyst_pool and into candidate_catalyst_structure_pool.
-    consumes(mattergen_step, candidate_catalyst_pool) == True;
-    consumes(mattergen_step, mattergen_stage_directory) == True;
+    consumes(
+        mattergen_step,
+        candidate_catalyst_pool_after_performance_proof
+    ) == True;
+    consumes(mattergen_step, mattergen_stage_directory_initial) == True;
+    consumes(
+        mattergen_step,
+        candidate_catalyst_structure_pool_initial
+    ) == True;
     produces(mattergen_step, candidate_catalyst_pool) == True;
     produces(mattergen_step, mattergen_stage_directory) == True;
     produces(
         mattergen_step,
-        candidate_catalyst_structure_pool
+        candidate_catalyst_structure_pool_after_mattergen
     ) == True;
     consumes(
         mattersim_step,
-        candidate_catalyst_structure_pool
+        candidate_catalyst_structure_pool_after_mattergen
     ) == True;
-    consumes(mattersim_step, mattersim_stage_directory) == True;
-    consumes(mattersim_step, novel_and_stable_catalysts) == True;
-    consumes(mattersim_step, fail_candidates_directory) == True;
+    consumes(mattersim_step, mattersim_stage_directory_initial) == True;
+    consumes(mattersim_step, novel_and_stable_catalysts_initial) == True;
+    consumes(
+        mattersim_step,
+        fail_candidates_directory_after_performance_proof
+    ) == True;
     consumes(
         mattersim_step,
         overall_water_splitting_knowledge_base
@@ -665,8 +772,14 @@ workflow coscientist_ows {
     -- 附件中的 evaluation summary 在白板层级合并进该 Artifact，不另造白板节点。
     produces(mattersim_step, candidate_catalyst_structure_pool) == True;
     produces(mattersim_step, mattersim_stage_directory) == True;
-    produces(mattersim_step, novel_and_stable_catalysts) == True;
-    produces(mattersim_step, fail_candidates_directory) == True;
+    produces(
+        mattersim_step,
+        novel_and_stable_catalysts_after_mattersim
+    ) == True;
+    produces(
+        mattersim_step,
+        fail_candidates_directory_after_mattersim
+    ) == True;
     produces(
         mattersim_step,
         non_novel_or_unstable_catalysts
@@ -676,13 +789,13 @@ workflow coscientist_ows {
     -- 节点文字明确区分“没有总路线时新建设计”和“已有总路线时补入”；
     -- 因此 historical_results 是白板文字隐含的必要输入，它提供当前累计路线与原液瓶状态。
     consumes_multi(synthesis_route_design_step) == [
-        novel_and_stable_catalysts,
-        round_parallel_synthesis_stage_directory,
+        novel_and_stable_catalysts_after_mattersim,
+        round_parallel_synthesis_stage_directory_initial,
         historical_results,
         laboratory_rule_base,
         robot_chemist_skill_library,
         successful_route_library,
-        fail_candidates_directory
+        fail_candidates_directory_after_mattersim
     ];
     -- 对每个候选，synthesis_route_update 与
     -- catalysts_unable_to_join_total_route 两类结果同样互斥。
