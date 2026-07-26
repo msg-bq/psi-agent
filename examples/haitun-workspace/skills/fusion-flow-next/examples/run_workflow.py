@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -59,8 +60,12 @@ _OPERATOR_NAMES = (
 def compile_workflow(source: str) -> CompiledWorkflow:
     """Parse and compile one example workflow into an executable graph."""
 
-    concepts = {name: Concept(name) for name in _CONCEPT_NAMES}
-    operators = {name: Operator(name) for name in _OPERATOR_NAMES}
+    concept_names = set(_CONCEPT_NAMES)
+    concept_names.update(re.findall(r"(?m)^const\s+[A-Za-z_]\w*\s*:\s*([A-Za-z_]\w*)\s*;", source))
+    operator_names = set(_OPERATOR_NAMES)
+    operator_names.update(re.findall(r"(?m)^\s*([A-Za-z_]\w*)\s*\(", source))
+    concepts = {name: Concept(name) for name in concept_names}
+    operators = {name: Operator(name) for name in operator_names}
     operators["step_instruction"] = Operator(
         name="step_instruction",
         input_concepts=(concepts["Step"],),

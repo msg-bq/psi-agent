@@ -13,6 +13,7 @@ from psi_agent.workflow_execution import Await, generate_plan
 _SKILL_DIR = os.path.dirname(os.path.dirname(__file__))
 _EXAMPLES_DIR = os.path.join(_SKILL_DIR, "examples")
 _FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+_CATALYST_WORKFLOW = os.path.join(_EXAMPLES_DIR, "catalyst", "catalyst.workflow")
 
 
 def _load_module(name: str, path: str, package_paths: list[str] | None = None) -> Any:
@@ -101,6 +102,17 @@ async def test_examples_parse_compile_plan_and_execute(
     assert result == {"result": "ok"}
     assert len(prompts) == step_count
     assert all(any(f"Instruction: {step.instruction_id}" in prompt for prompt in prompts) for step in graph.steps)
+
+
+@pytest.mark.anyio
+async def test_catalyst_runner_reaches_graph_compilation_boundary() -> None:
+    source = await anyio.Path(_CATALYST_WORKFLOW).read_text(encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="artifact has multiple producers: candidate_catalyst_structure_pool",
+    ):
+        run_workflow.compile_workflow(source)
 
 
 @pytest.mark.anyio

@@ -4,6 +4,7 @@ import importlib.util
 import os
 import re
 import sys
+from collections import Counter
 from typing import Any, cast
 
 import pytest
@@ -109,6 +110,20 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
             encoding="utf-8",
         ) as instruction_file:
             assert instruction_file.read().strip()
+
+    producer_counts = Counter(
+        assertion.lhs.arguments[1].symbol
+        for assertion in result.core_ir.workflows[0].assertions
+        if isinstance(assertion.lhs, CompoundTerm)
+        and assertion.lhs.operator.name == "produces"
+        and isinstance(assertion.lhs.arguments[1], Constant)
+        and isinstance(assertion.rhs, Constant)
+        and assertion.rhs.symbol == "True"
+    )
+    assert producer_counts["candidate_catalyst_structure_pool"] == 3
+    assert producer_counts["candidate_catalyst_pool"] == 3
+    assert producer_counts["tmp_candidates_directory"] == 6
+    assert producer_counts["tmp_knowledge_directory"] == 5
 
     with pytest.raises(
         WorkflowGraphCompilationError,
