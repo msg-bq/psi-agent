@@ -1,0 +1,1 @@
+调用workflow相关/scripts/prepare_workflow_step.py，根据 result_directory_name 创建各类目录
