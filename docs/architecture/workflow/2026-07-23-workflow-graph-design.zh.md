@@ -313,6 +313,14 @@ operator 默认可能为 0，不能代表应用实参数量。
 也按明确的布尔常量解析，不能使用 Python truthiness。resource identity 使用
 `(step_id, resource_id)` 结构化键，不把 resource 或 amount 建成 Artifact。
 
+Instruction 路径仅允许写成
+`step_instruction(step) == "./instructions/file.md"`。parser 根据等式另一侧唯一
+顶层 operator 的 output concept 推断路径常量类型，并将它降为现有的
+`Constant`/`Instruction`；`WorkflowGraph` schema 不变，仍把该字符串保存为
+`instruction_id`。示例 dispatcher 对 Agent 和 Program 原样透传路径，只有 Human
+才相对 `.workflow` 文件解析路径、限制在该目录内并读取非空 UTF-8 文本。完整
+catalog 与 workflow 合法性校验仍属于尚未实现的 checker。
+
 普通值 assertion，例如 `files = [file_a, file_b]`，不展开进静态图，留在 residual 供
 值求解或 runtime 使用。
 

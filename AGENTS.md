@@ -219,6 +219,8 @@ SSE 流中的特殊字段：
 
 19. **WorkflowGraph 可保存有环，但初版 plan 不执行环**：`workflow_execution.generate_plan()` 只编译 one-shot producer/consumer 子集。它同时启动所有 Fiber，以显式 `Await` 唤醒消费者；Foreach、resource、retry、input+producer 和 circular await 在计划阶段报错，不能静默忽略或留到运行期死锁。
 
+20. **Instruction 路径由 executor 解释**：`step_instruction(step) == "./..."` 仍编译为 `StepNode.instruction_id`，不扩展 WorkflowGraph schema。示例 dispatcher 对 Agent/Program 原样透传路径，只有 Human 才相对 `.workflow` 文件解析、限制在该目录内并读取非空 UTF-8；不要在 parser 或 graph compiler 中提前读取文件。
+
 ## 测试约定
 
 - **框架**: `pytest` + `pytest-asyncio`（`asyncio_mode = "auto"`，anyio backend）

@@ -33,6 +33,13 @@ For a compact, readable BNF and consistency with KEDispatcher, preset operators 
 
 The generated Python lexer and parser are committed under `fusion_flow_next/generated/` and wired into the handwritten Python Core IR visitor. Syntax failures return one-based, half-open source spans without partial Core IR. Repeated equivalent constant declarations reuse one identity, conflicting declarations fail, and every named or quoted constant must be declared with at least one concept before use. Numeric and Boolean literals use the KEDispatcher builtin symbols and concepts `ComplexNumber` and `Bool`, while quoted identifiers remain distinct from those literals. Standalone calls require a catalog output concept of `Bool` and become an ordinary `Assertion` against `True`; explicit `== True` remains equivalent. Formula equality becomes an `Assertion`, `!=` intentionally remains `NOT` over an `Assertion`, and ordered comparisons become the corresponding KEDispatcher `comparison_*_op` application asserted equal to `True`. `WorkflowFile` retains global declarations and multiple workflow blocks, while `IfTerm` retains conditional terms without approximation. Shorthand eligibility uses the catalog return concept; operator registration and arity, other catalog type compatibility, workflow legality, and backend support remain static-checker responsibilities.
 
+`step_instruction(step) == "./instructions/file.md"` is the only path form:
+the token must start with `./`. The parser infers the path constant's concept
+from the output concept of the top-level operator on the other side of the
+equality, so the path lowers to the existing `Constant`/`Instruction` model.
+No `WorkflowGraph` schema changes are required; the graph still stores the
+value as `instruction_id`.
+
 The Core IR contains catalog-owned `Concept` and `Operator` references, typed constants, recursive compound and conditional terms, ordered list terms, equality assertions, and `NOT`/`AND`/`OR` formulas. `WorkflowFile` stores declarations and ordered workflow blocks; each `Workflow` stores one syntax-level block name with its assertions. The workflow does not redeclare concepts or operators.
 
 `CoreIRCompiler` follows the same template-method design as KEDispatcher's shared Core IR compiler: `compile()` owns traversal, concrete backends override protected node hooks, unsupported nodes fail explicitly, and the compiler does not retain the supplied `WorkflowFile`.
@@ -58,6 +65,32 @@ tests from this directory so `fusion_flow_next` is on the runtime import path:
 ```powershell
 uv run python -m pytest -q
 ```
+
+## Runnable examples
+
+`examples/` contains single-step, sequential, and parallel-join G4 workflows.
+`single_step.workflow` uses a path-backed Agent instruction; the sequential and
+parallel-join examples use declared Instruction identities. The example
+dispatcher passes Agent and Program instruction values through unchanged.
+Only Human executors resolve a path relative to the `.workflow` file, require
+it to remain inside that directory, and read non-empty UTF-8 text.
+
+From this directory:
+
+```powershell
+$env:DEEPSEEK_API_KEY = "<key>"
+uv run python -m examples.run_workflow examples/single_step.workflow "Explain structured concurrency."
+uv run python -m pytest -q test/test_examples.py
+```
+
+This example-only harness does not activate FusionFlow Next in the Haitun
+workspace. It exercises parse, graph compilation, plan generation, and
+execution; `check_workflow()` remains an unimplemented static-checker boundary.
+The migrated catalyst example parses successfully but graph compilation stops
+at `artifact has multiple producers: candidate_catalyst_structure_pool`;
+therefore its plan and executor are not reachable. Multi-producer and resource
+scheduling semantics remain unsupported rather than being removed from the
+example.
 
 Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimization requests are intentionally absent because the reviewed workflow surface does not use them. Operator execution, concept registries and matching, validation, parsing, backend compilation, and Haitun activation remain separate workstreams.
 
