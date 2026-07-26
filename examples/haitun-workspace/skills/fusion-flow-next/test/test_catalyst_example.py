@@ -182,6 +182,5 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
             "parallelism": 1,
         }
     )
-    with pytest.raises(ExecutionPlanError) as exc_info:
+    with pytest.raises(ExecutionPlanError, match="resource scheduling is not supported"):
         generate_plan(compilation.graph)
-    assert str(exc_info.value) == "resource scheduling is not supported"
