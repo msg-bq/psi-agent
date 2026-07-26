@@ -9,3 +9,8 @@ CANDIDATE_PAYLOAD.json 和 REASONING.md；将该 ows_Sn_Ck 文件夹同步复制
 并获得知识，则可选写入
 <output_root>/tmp/knowledge/slot_n/ows_Sn_Ck；不得直接写入
 <output_root>/pools。
+
+Every worker must emit its assigned per-slot knowledge delta artifact. When
+knowledge is captured, include the knowledge file and a delta manifest marked
+`captured=true`. When no knowledge is captured, emit an explicit empty delta
+manifest marked `captured=false` and no knowledge file.

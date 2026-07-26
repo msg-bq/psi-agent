@@ -110,13 +110,33 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
             encoding="utf-8",
         ) as instruction_file:
             assert instruction_file.read().strip()
+    with open(
+        os.path.join(_EXAMPLE_DIR, "instructions", "recommend-candidate.md"),
+        encoding="utf-8",
+    ) as recommendation_instruction_file:
+        assert "captured=false" in recommendation_instruction_file.read()
 
     compiled = WorkflowGraphCompiler().compile(result.core_ir)
     assert isinstance(compiled, tuple)
     (compilation,) = compiled
 
-    producer_counts = Counter(edge.artifact_id for edge in compilation.graph.edges if isinstance(edge, ProducesEdge))
-    assert all(producer_counts[artifact.artifact_id] <= 1 for artifact in compilation.graph.artifacts)
+    expected_final_producers = {
+        "tmp_candidates_directory": "performance_proof_step",
+        "tmp_knowledge_directory": "merge_recommendation_outputs_step",
+        "candidate_catalyst_pool": "mattergen_step",
+        "candidate_catalyst_structure_pool": "mattersim_step",
+        "fail_candidates_directory": "synthesis_route_design_step",
+        "novel_and_stable_catalysts": "synthesis_route_design_step",
+        "mattergen_stage_directory": "mattergen_step",
+        "mattersim_stage_directory": "mattersim_step",
+        "round_parallel_synthesis_stage_directory": "synthesis_route_design_step",
+    }
+    producer_by_artifact = {
+        edge.artifact_id: edge.step_id
+        for edge in compilation.graph.edges
+        if isinstance(edge, ProducesEdge) and edge.artifact_id in expected_final_producers
+    }
+    assert producer_by_artifact == expected_final_producers
 
     merge_consumes = {
         edge.artifact_id
@@ -144,4 +164,18 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
         "tmp_candidates_directory_after_recommendations",
         "tmp_knowledge_directory",
     }
-    assert compilation.residual_assertions
+    residual_operator_counts = Counter(
+        assertion.lhs.operator.name
+        for assertion in compilation.residual_assertions
+        if isinstance(assertion.lhs, CompoundTerm)
+    )
+    assert residual_operator_counts == Counter(
+        {
+            "allowed_tool": 11,
+            "batch_size": 1,
+            "exclusive_lease": 2,
+            "independent": 4,
+            "member_of": 6,
+            "parallelism": 1,
+        }
+    )

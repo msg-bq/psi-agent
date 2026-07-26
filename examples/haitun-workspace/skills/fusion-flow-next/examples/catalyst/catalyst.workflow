@@ -173,13 +173,10 @@ const fail_candidates_directory:Artifact;
 -- removes each judged candidate folder from tmp/candidates after routing it.
 const tmp_candidates_directory:Artifact;
 
--- tmp/knowledge directory initialized by prepare_workflow_step.
--- The path is <output_root>/tmp/knowledge. During recommendation, if knowledge
--- capture is triggered and knowledge is obtained for one subagent result, the
--- recommendation step creates <output_root>/tmp/knowledge/slot_n/ows_Sn_Ck and
--- writes one JSON file with only these fields: candidate_knowledge_id,
--- knowledge, source. The source field records the source stage, subagent, and
--- catalyst recommendation id.
+-- tmp/knowledge directory states. prepare_workflow_step creates the initial
+-- directory, every recommender emits a per-slot delta, and the merge step
+-- produces this final artifact. A captured delta contains the knowledge file;
+-- an empty delta contains a captured=false manifest and no knowledge file.
 const tmp_knowledge_directory:Artifact;
 
 -- Slot workspaces initialized by prepare_workflow_step under
@@ -637,17 +634,17 @@ workflow coscientist_ows {
     -- <output_root>/02-ows-catalyst-recommender/slot_n/ows_Sn_Ck. Each result
     -- contains CANDIDATE_PAYLOAD.json and REASONING.md. Each completed
     -- ows_Sn_Ck directory is sync-copied to <output_root>/tmp/candidates for
-    -- later checks. If recommendation-time knowledge capture is triggered and
-    -- obtains knowledge, the same slot/result structure is created under
-    -- <output_root>/tmp/knowledge with one JSON file containing only
-    -- candidate_knowledge_id, knowledge, and source. Later proof artifacts may
-    -- be placed in the same result directory by downstream steps.
+    -- later checks. Every recommendation step emits its per-slot knowledge
+    -- delta. Captured deltas include the knowledge file; uncaptured deltas
+    -- include an explicit captured=false manifest and no knowledge file.
+    -- Later proof artifacts may be placed in the same result directory by
+    -- downstream steps.
     -- Recommendation steps may read candidate_catalyst_pool,
     -- candidate_catalyst_structure_pool, novel_and_stable_catalysts,
     -- fail_candidates_directory, and candidate_knowledge_base but must not write
     -- under <output_root>/pools.
-    -- The grammar has no optional_produces relation, so this declares the
-    -- allowed tmp/knowledge write without making knowledge capture required.
+    -- Knowledge capture remains optional, but emitting the corresponding
+    -- knowledge delta artifact is required for every recommendation branch.
     produces(recommend_1_step, recommendation_slot_1_results) == True;
     produces(
         recommend_1_step,
