@@ -166,7 +166,16 @@ def _build_dispatch(
             raise ValueError(f"example step {step.step_id!r} must produce exactly one artifact")
         instruction = step.instruction_id
         if instruction.startswith("./") and compiled.executor_kinds[step.executor_id] == "Human":
-            instruction = await _read_human_instruction(workflow_path, instruction)
+            instruction_path = instruction
+            try:
+                instruction = await _read_human_instruction(workflow_path, instruction_path)
+            except ValueError as error:
+                raise ValueError(f"step {step.step_id!r} human instruction {instruction_path!r}: {error}") from None
+            except OSError as error:
+                raise ValueError(
+                    f"step {step.step_id!r} human instruction {instruction_path!r}: "
+                    f"file access failed ({type(error).__name__})"
+                ) from None
         prompt = (
             f"Instruction: {instruction}\n"
             f"Inputs: {json.dumps(dict(inputs), ensure_ascii=False, sort_keys=True, default=str)}\n"

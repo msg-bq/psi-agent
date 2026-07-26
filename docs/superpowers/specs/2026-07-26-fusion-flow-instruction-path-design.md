@@ -85,11 +85,12 @@ rewritten for backend convenience.
 
 ## Errors
 
-Grammar errors remain ordinary parser diagnostics. Concept inference failures
-remain parser `ValueError`s. Human path-resolution errors identify the Step and
-invalid instruction path without exposing file contents or credentials. Agent
-and Program dispatch do not require the referenced file to exist locally
-because their executor owns resolution.
+Grammar errors remain ordinary parser diagnostics. Unknown concepts and
+incompatible typed-identity uses remain parser `ValueError`s. Human
+path-resolution errors identify the Step and invalid instruction path without
+exposing file contents or credentials. Agent and Program dispatch do not
+require the referenced file to exist locally because their executor owns
+resolution.
 
 The migrated catalyst workflow is expected to pass parsing. If graph compilation
 or plan generation rejects its existing semantics, the test and run report keep

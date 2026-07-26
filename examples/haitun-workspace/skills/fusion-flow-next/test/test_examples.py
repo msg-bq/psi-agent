@@ -165,6 +165,56 @@ async def test_human_instruction_rejects_missing_file(tmp_path: object) -> None:
 
 
 @pytest.mark.anyio
+async def test_human_instruction_dispatch_error_identifies_step_and_path(tmp_path: object) -> None:
+    instruction_path = "./missing.md"
+    compiled = run_workflow.compile_workflow(_dispatch_workflow("Human", instruction_path))
+
+    async def complete(prompt: str) -> str:
+        pytest.fail(f"completion called with {prompt!r}")
+
+    dispatch = run_workflow._build_dispatch(
+        compiled,
+        complete,
+        os.path.join(str(tmp_path), "missing.workflow"),
+    )
+    (step,) = compiled.graph.steps
+
+    with pytest.raises(ValueError) as error:
+        await dispatch(step, {"request": "Do the work."})
+
+    assert step.step_id in str(error.value)
+    assert instruction_path in str(error.value)
+
+
+@pytest.mark.anyio
+async def test_human_instruction_dispatch_hides_physical_path(
+    tmp_path: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instruction_path = "./private.md"
+    physical_path = os.path.join(str(tmp_path), "credentials", "private.md")
+
+    async def deny_read(workflow_path: str, logical_path: str) -> str:
+        del workflow_path, logical_path
+        raise PermissionError(physical_path)
+
+    async def complete(prompt: str) -> str:
+        pytest.fail(f"completion called with {prompt!r}")
+
+    monkeypatch.setattr(run_workflow, "_read_human_instruction", deny_read)
+    compiled = run_workflow.compile_workflow(_dispatch_workflow("Human", instruction_path))
+    dispatch = run_workflow._build_dispatch(compiled, complete, "private.workflow")
+    (step,) = compiled.graph.steps
+
+    with pytest.raises(ValueError) as error:
+        await dispatch(step, {"request": "Do the work."})
+
+    assert step.step_id in str(error.value)
+    assert instruction_path in str(error.value)
+    assert physical_path not in str(error.value)
+
+
+@pytest.mark.anyio
 async def test_human_instruction_rejects_empty_file(tmp_path: object) -> None:
     instruction_path = os.path.join(str(tmp_path), "empty.md")
     await anyio.Path(instruction_path).write_text("", encoding="utf-8")

@@ -474,10 +474,39 @@ def test_constant_concept_conflicts_are_rejected(source: str) -> None:
         parse_workflow(source, context=_context())
 
 
-def test_undeclared_constant_without_operator_concept_is_rejected() -> None:
-    with pytest.raises(ValueError, match="Cannot infer concept for FusionFlow constant 'unknown'"):
+def test_undeclared_constants_are_allowed_and_later_inferred() -> None:
+    result = parse_workflow(
+        """
+        workflow inferred {
+          custom(unknown) == true;
+          unknown == other;
+          typed("unknown", typed_value) == true;
+        }
+        """,
+        context=_context(),
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    unknown, other, typed_value = result.core_ir.constants
+    assert [concept.name for concept in unknown.belong_concepts] == ["Artifact"]
+    assert other.belong_concepts == ()
+    assert [concept.name for concept in typed_value.belong_concepts] == ["Artifact"]
+    first_call = result.core_ir.workflows[0].assertions[0].lhs
+    assert isinstance(first_call, CompoundTerm)
+    assert first_call.arguments[0] is unknown
+
+
+def test_untyped_constant_rejects_conflicting_later_inference() -> None:
+    with pytest.raises(ValueError, match=r"constant 'identity'.*requires concept 'Agent'"):
         parse_workflow(
-            "workflow missing { custom(unknown) == true; }",
+            """
+            workflow conflict {
+              custom(identity) == true;
+              typed(identity, artifact) == true;
+              typed_mixed(artifact, identity) == true;
+            }
+            """,
             context=_context(),
         )
 
