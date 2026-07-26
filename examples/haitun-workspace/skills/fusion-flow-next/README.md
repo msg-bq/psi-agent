@@ -86,11 +86,15 @@ uv run python -m pytest -q test/test_examples.py
 This example-only harness does not activate FusionFlow Next in the Haitun
 workspace. It exercises parse, graph compilation, plan generation, and
 execution; `check_workflow()` remains an unimplemented static-checker boundary.
-The migrated catalyst example parses successfully but graph compilation stops
-at `artifact has multiple producers: candidate_catalyst_structure_pool`;
-therefore its plan and executor are not reachable. Multi-producer and resource
-scheduling semantics remain unsupported rather than being removed from the
-example.
+The migrated Catalyst example parses and compiles into a single-producer graph
+with explicit recommendation fan-in. Shared-directory updates were normalized
+into versioned artifacts rather than adding multi-producer runtime support. The
+example runner still stops on preserved residual catalog assertions
+(`allowed_tool`, `member_of`, `parallelism`, `independent`, `batch_size`, and
+`exclusive_lease`), while a direct staged plan probe next stops at
+`resource scheduling is not supported`; therefore executor and DeepSeek calls
+are not reachable. These residual catalog and scheduling semantics remain
+unimplemented.
 
 Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimization requests are intentionally absent because the reviewed workflow surface does not use them. Operator execution, concept registries and matching, validation, parsing, backend compilation, and Haitun activation remain separate workstreams.
 

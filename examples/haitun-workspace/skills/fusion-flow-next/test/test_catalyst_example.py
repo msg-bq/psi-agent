@@ -7,6 +7,9 @@ import sys
 from collections import Counter
 from typing import Any, cast
 
+import pytest
+
+from psi_agent.workflow_execution import ExecutionPlanError, generate_plan
 from psi_agent.workflow_graph.model import ConsumesEdge, ProducesEdge
 
 _EXAMPLE_DIR = os.path.join(
@@ -179,3 +182,6 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
             "parallelism": 1,
         }
     )
+    with pytest.raises(ExecutionPlanError) as exc_info:
+        generate_plan(compilation.graph)
+    assert str(exc_info.value) == "resource scheduling is not supported"
