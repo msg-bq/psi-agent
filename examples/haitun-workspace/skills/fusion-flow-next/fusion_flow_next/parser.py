@@ -134,7 +134,10 @@ class _CoreIRVisitor:
             return Assertion(lhs=lhs, rhs=self._boolean_constant("true"))
 
         terms = context.term()
-        return Assertion(lhs=self.visit_term(terms[0]), rhs=self.visit_term(terms[1]))
+        return Assertion(
+            lhs=self.visit_term(terms[0], self._operator_output_concept(terms[1])),
+            rhs=self.visit_term(terms[1], self._operator_output_concept(terms[0])),
+        )
 
     def visit_formula(self, context: Any) -> Formula:
         comparison = context.comparison()
@@ -298,6 +301,12 @@ class _CoreIRVisitor:
             return self._context.operators[name]
         except KeyError:
             raise ValueError(f"Unknown FusionFlow operator {name!r}.") from None
+
+    def _operator_output_concept(self, context: Any) -> Concept | None:
+        operator_call = context.operatorCall()
+        if operator_call is None:
+            return None
+        return self._resolve_operator(operator_call.operatorName().getText()).output_concept
 
     @staticmethod
     def _strip_quotes(symbol: str) -> str:
