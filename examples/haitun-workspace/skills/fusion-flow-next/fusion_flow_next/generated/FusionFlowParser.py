@@ -10,78 +10,83 @@ else:
 
 def serializedATN():
     return [
-        4,1,60,212,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
+        4,1,60,227,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
         6,2,7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,2,13,7,13,
         2,14,7,14,2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,7,19,2,20,
-        7,20,2,21,7,21,2,22,7,22,2,23,7,23,2,24,7,24,1,0,1,0,1,0,5,0,54,
-        8,0,10,0,12,0,57,9,0,1,0,4,0,60,8,0,11,0,12,0,61,1,0,1,0,1,1,1,1,
-        1,1,1,1,5,1,70,8,1,10,1,12,1,73,9,1,1,1,1,1,1,2,1,2,1,3,1,3,1,3,
-        1,4,1,4,1,4,1,4,1,4,1,5,1,5,1,5,5,5,90,8,5,10,5,12,5,93,9,5,1,6,
-        1,6,1,6,1,6,1,7,1,7,1,7,1,7,1,7,1,7,1,7,1,7,3,7,107,8,7,1,7,1,7,
-        1,7,1,7,1,7,1,7,5,7,115,8,7,10,7,12,7,118,9,7,1,8,1,8,1,8,1,8,1,
-        9,1,9,1,10,1,10,1,10,1,10,1,10,1,10,1,10,1,10,1,10,3,10,135,8,10,
-        1,10,1,10,1,10,1,10,1,10,1,10,3,10,143,8,10,1,10,1,10,1,10,1,10,
-        1,10,1,10,1,10,1,10,1,10,5,10,154,8,10,10,10,12,10,157,9,10,1,11,
-        1,11,1,11,1,11,1,11,1,11,1,11,1,11,1,11,1,12,1,12,1,12,5,12,171,
-        8,12,10,12,12,12,174,9,12,1,13,1,13,3,13,178,8,13,1,13,1,13,1,14,
-        1,14,3,14,184,8,14,1,15,1,15,1,16,1,16,1,17,1,17,3,17,192,8,17,1,
-        18,1,18,1,18,1,18,3,18,198,8,18,1,19,1,19,1,20,1,20,1,21,1,21,1,
-        22,1,22,1,23,1,23,1,24,1,24,1,24,0,2,14,20,25,0,2,4,6,8,10,12,14,
-        16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,0,9,1,0,33,38,
-        1,0,39,40,1,0,41,43,1,0,1,6,1,0,7,11,1,0,12,17,1,0,18,23,2,0,45,
-        45,47,48,1,0,30,31,210,0,55,1,0,0,0,2,65,1,0,0,0,4,76,1,0,0,0,6,
-        78,1,0,0,0,8,81,1,0,0,0,10,86,1,0,0,0,12,94,1,0,0,0,14,106,1,0,0,
-        0,16,119,1,0,0,0,18,123,1,0,0,0,20,142,1,0,0,0,22,158,1,0,0,0,24,
-        167,1,0,0,0,26,175,1,0,0,0,28,183,1,0,0,0,30,185,1,0,0,0,32,187,
-        1,0,0,0,34,191,1,0,0,0,36,197,1,0,0,0,38,199,1,0,0,0,40,201,1,0,
-        0,0,42,203,1,0,0,0,44,205,1,0,0,0,46,207,1,0,0,0,48,209,1,0,0,0,
-        50,51,3,8,4,0,51,52,5,51,0,0,52,54,1,0,0,0,53,50,1,0,0,0,54,57,1,
-        0,0,0,55,53,1,0,0,0,55,56,1,0,0,0,56,59,1,0,0,0,57,55,1,0,0,0,58,
-        60,3,2,1,0,59,58,1,0,0,0,60,61,1,0,0,0,61,59,1,0,0,0,61,62,1,0,0,
-        0,62,63,1,0,0,0,63,64,5,0,0,1,64,1,1,0,0,0,65,66,5,24,0,0,66,67,
-        3,4,2,0,67,71,5,54,0,0,68,70,3,6,3,0,69,68,1,0,0,0,70,73,1,0,0,0,
-        71,69,1,0,0,0,71,72,1,0,0,0,72,74,1,0,0,0,73,71,1,0,0,0,74,75,5,
-        55,0,0,75,3,1,0,0,0,76,77,3,30,15,0,77,5,1,0,0,0,78,79,3,12,6,0,
-        79,80,5,51,0,0,80,7,1,0,0,0,81,82,5,26,0,0,82,83,3,46,23,0,83,84,
-        5,49,0,0,84,85,3,10,5,0,85,9,1,0,0,0,86,91,3,32,16,0,87,88,5,50,
-        0,0,88,90,3,32,16,0,89,87,1,0,0,0,90,93,1,0,0,0,91,89,1,0,0,0,91,
-        92,1,0,0,0,92,11,1,0,0,0,93,91,1,0,0,0,94,95,3,20,10,0,95,96,5,32,
-        0,0,96,97,3,20,10,0,97,13,1,0,0,0,98,99,6,7,-1,0,99,100,5,52,0,0,
-        100,101,3,14,7,0,101,102,5,53,0,0,102,107,1,0,0,0,103,104,5,29,0,
-        0,104,107,3,14,7,4,105,107,3,16,8,0,106,98,1,0,0,0,106,103,1,0,0,
-        0,106,105,1,0,0,0,107,116,1,0,0,0,108,109,10,3,0,0,109,110,5,27,
-        0,0,110,115,3,14,7,4,111,112,10,2,0,0,112,113,5,28,0,0,113,115,3,
-        14,7,3,114,108,1,0,0,0,114,111,1,0,0,0,115,118,1,0,0,0,116,114,1,
-        0,0,0,116,117,1,0,0,0,117,15,1,0,0,0,118,116,1,0,0,0,119,120,3,20,
-        10,0,120,121,3,18,9,0,121,122,3,20,10,0,122,17,1,0,0,0,123,124,7,
-        0,0,0,124,19,1,0,0,0,125,126,6,10,-1,0,126,127,5,52,0,0,127,128,
-        3,20,10,0,128,129,5,53,0,0,129,143,1,0,0,0,130,143,3,22,11,0,131,
-        132,3,34,17,0,132,134,5,52,0,0,133,135,3,24,12,0,134,133,1,0,0,0,
-        134,135,1,0,0,0,135,136,1,0,0,0,136,137,5,53,0,0,137,143,1,0,0,0,
-        138,143,3,26,13,0,139,140,7,1,0,0,140,143,3,20,10,5,141,143,3,28,
-        14,0,142,125,1,0,0,0,142,130,1,0,0,0,142,131,1,0,0,0,142,138,1,0,
-        0,0,142,139,1,0,0,0,142,141,1,0,0,0,143,155,1,0,0,0,144,145,10,4,
-        0,0,145,146,5,44,0,0,146,154,3,20,10,4,147,148,10,3,0,0,148,149,
-        7,2,0,0,149,154,3,20,10,4,150,151,10,2,0,0,151,152,7,1,0,0,152,154,
-        3,20,10,3,153,144,1,0,0,0,153,147,1,0,0,0,153,150,1,0,0,0,154,157,
-        1,0,0,0,155,153,1,0,0,0,155,156,1,0,0,0,156,21,1,0,0,0,157,155,1,
-        0,0,0,158,159,5,25,0,0,159,160,5,52,0,0,160,161,3,14,7,0,161,162,
-        5,50,0,0,162,163,3,20,10,0,163,164,5,50,0,0,164,165,3,20,10,0,165,
-        166,5,53,0,0,166,23,1,0,0,0,167,172,3,20,10,0,168,169,5,50,0,0,169,
-        171,3,20,10,0,170,168,1,0,0,0,171,174,1,0,0,0,172,170,1,0,0,0,172,
-        173,1,0,0,0,173,25,1,0,0,0,174,172,1,0,0,0,175,177,5,56,0,0,176,
-        178,3,24,12,0,177,176,1,0,0,0,177,178,1,0,0,0,178,179,1,0,0,0,179,
-        180,5,57,0,0,180,27,1,0,0,0,181,184,3,46,23,0,182,184,3,48,24,0,
-        183,181,1,0,0,0,183,182,1,0,0,0,184,29,1,0,0,0,185,186,5,47,0,0,
-        186,31,1,0,0,0,187,188,5,46,0,0,188,33,1,0,0,0,189,192,5,47,0,0,
-        190,192,3,36,18,0,191,189,1,0,0,0,191,190,1,0,0,0,192,35,1,0,0,0,
-        193,198,3,38,19,0,194,198,3,40,20,0,195,198,3,42,21,0,196,198,3,
-        44,22,0,197,193,1,0,0,0,197,194,1,0,0,0,197,195,1,0,0,0,197,196,
-        1,0,0,0,198,37,1,0,0,0,199,200,7,3,0,0,200,39,1,0,0,0,201,202,7,
-        4,0,0,202,41,1,0,0,0,203,204,7,5,0,0,204,43,1,0,0,0,205,206,7,6,
-        0,0,206,45,1,0,0,0,207,208,7,7,0,0,208,47,1,0,0,0,209,210,7,8,0,
-        0,210,49,1,0,0,0,16,55,61,71,91,106,114,116,134,142,153,155,172,
-        177,183,191,197
+        7,20,2,21,7,21,2,22,7,22,2,23,7,23,2,24,7,24,2,25,7,25,2,26,7,26,
+        1,0,1,0,1,0,5,0,58,8,0,10,0,12,0,61,9,0,1,0,4,0,64,8,0,11,0,12,0,
+        65,1,0,1,0,1,1,1,1,1,1,1,1,5,1,74,8,1,10,1,12,1,77,9,1,1,1,1,1,1,
+        2,1,2,1,3,1,3,1,3,1,4,1,4,1,4,1,4,1,4,1,5,1,5,1,5,5,5,94,8,5,10,
+        5,12,5,97,9,5,1,6,1,6,1,6,1,6,1,6,3,6,104,8,6,1,7,1,7,1,7,1,7,1,
+        7,1,7,1,7,1,7,3,7,114,8,7,1,7,1,7,1,7,1,7,1,7,1,7,5,7,122,8,7,10,
+        7,12,7,125,9,7,1,8,1,8,1,8,1,8,1,9,1,9,1,10,1,10,1,10,1,10,1,10,
+        1,10,1,10,1,10,1,10,1,10,1,10,3,10,144,8,10,1,10,1,10,1,10,1,10,
+        1,10,1,10,1,10,1,10,1,10,5,10,155,8,10,10,10,12,10,158,9,10,1,11,
+        1,11,1,11,3,11,163,8,11,1,11,1,11,1,12,1,12,1,12,1,12,1,12,3,12,
+        172,8,12,1,13,1,13,1,13,1,13,1,13,1,13,1,13,1,13,1,13,1,14,1,14,
+        1,14,5,14,186,8,14,10,14,12,14,189,9,14,1,15,1,15,3,15,193,8,15,
+        1,15,1,15,1,16,1,16,3,16,199,8,16,1,17,1,17,1,18,1,18,1,19,1,19,
+        3,19,207,8,19,1,20,1,20,1,20,1,20,3,20,213,8,20,1,21,1,21,1,22,1,
+        22,1,23,1,23,1,24,1,24,1,25,1,25,1,26,1,26,1,26,0,2,14,20,27,0,2,
+        4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,
+        50,52,0,9,1,0,33,38,1,0,39,40,1,0,41,43,1,0,1,6,1,0,7,11,1,0,12,
+        17,1,0,18,23,2,0,45,45,47,48,1,0,30,31,225,0,59,1,0,0,0,2,69,1,0,
+        0,0,4,80,1,0,0,0,6,82,1,0,0,0,8,85,1,0,0,0,10,90,1,0,0,0,12,103,
+        1,0,0,0,14,113,1,0,0,0,16,126,1,0,0,0,18,130,1,0,0,0,20,143,1,0,
+        0,0,22,159,1,0,0,0,24,171,1,0,0,0,26,173,1,0,0,0,28,182,1,0,0,0,
+        30,190,1,0,0,0,32,198,1,0,0,0,34,200,1,0,0,0,36,202,1,0,0,0,38,206,
+        1,0,0,0,40,212,1,0,0,0,42,214,1,0,0,0,44,216,1,0,0,0,46,218,1,0,
+        0,0,48,220,1,0,0,0,50,222,1,0,0,0,52,224,1,0,0,0,54,55,3,8,4,0,55,
+        56,5,51,0,0,56,58,1,0,0,0,57,54,1,0,0,0,58,61,1,0,0,0,59,57,1,0,
+        0,0,59,60,1,0,0,0,60,63,1,0,0,0,61,59,1,0,0,0,62,64,3,2,1,0,63,62,
+        1,0,0,0,64,65,1,0,0,0,65,63,1,0,0,0,65,66,1,0,0,0,66,67,1,0,0,0,
+        67,68,5,0,0,1,68,1,1,0,0,0,69,70,5,24,0,0,70,71,3,4,2,0,71,75,5,
+        54,0,0,72,74,3,6,3,0,73,72,1,0,0,0,74,77,1,0,0,0,75,73,1,0,0,0,75,
+        76,1,0,0,0,76,78,1,0,0,0,77,75,1,0,0,0,78,79,5,55,0,0,79,3,1,0,0,
+        0,80,81,3,34,17,0,81,5,1,0,0,0,82,83,3,12,6,0,83,84,5,51,0,0,84,
+        7,1,0,0,0,85,86,5,26,0,0,86,87,3,50,25,0,87,88,5,49,0,0,88,89,3,
+        10,5,0,89,9,1,0,0,0,90,95,3,36,18,0,91,92,5,50,0,0,92,94,3,36,18,
+        0,93,91,1,0,0,0,94,97,1,0,0,0,95,93,1,0,0,0,95,96,1,0,0,0,96,11,
+        1,0,0,0,97,95,1,0,0,0,98,99,3,20,10,0,99,100,5,32,0,0,100,101,3,
+        20,10,0,101,104,1,0,0,0,102,104,3,24,12,0,103,98,1,0,0,0,103,102,
+        1,0,0,0,104,13,1,0,0,0,105,106,6,7,-1,0,106,107,5,52,0,0,107,108,
+        3,14,7,0,108,109,5,53,0,0,109,114,1,0,0,0,110,111,5,29,0,0,111,114,
+        3,14,7,4,112,114,3,16,8,0,113,105,1,0,0,0,113,110,1,0,0,0,113,112,
+        1,0,0,0,114,123,1,0,0,0,115,116,10,3,0,0,116,117,5,27,0,0,117,122,
+        3,14,7,4,118,119,10,2,0,0,119,120,5,28,0,0,120,122,3,14,7,3,121,
+        115,1,0,0,0,121,118,1,0,0,0,122,125,1,0,0,0,123,121,1,0,0,0,123,
+        124,1,0,0,0,124,15,1,0,0,0,125,123,1,0,0,0,126,127,3,20,10,0,127,
+        128,3,18,9,0,128,129,3,20,10,0,129,17,1,0,0,0,130,131,7,0,0,0,131,
+        19,1,0,0,0,132,133,6,10,-1,0,133,134,5,52,0,0,134,135,3,20,10,0,
+        135,136,5,53,0,0,136,144,1,0,0,0,137,144,3,26,13,0,138,144,3,22,
+        11,0,139,144,3,30,15,0,140,141,7,1,0,0,141,144,3,20,10,5,142,144,
+        3,32,16,0,143,132,1,0,0,0,143,137,1,0,0,0,143,138,1,0,0,0,143,139,
+        1,0,0,0,143,140,1,0,0,0,143,142,1,0,0,0,144,156,1,0,0,0,145,146,
+        10,4,0,0,146,147,5,44,0,0,147,155,3,20,10,4,148,149,10,3,0,0,149,
+        150,7,2,0,0,150,155,3,20,10,4,151,152,10,2,0,0,152,153,7,1,0,0,153,
+        155,3,20,10,3,154,145,1,0,0,0,154,148,1,0,0,0,154,151,1,0,0,0,155,
+        158,1,0,0,0,156,154,1,0,0,0,156,157,1,0,0,0,157,21,1,0,0,0,158,156,
+        1,0,0,0,159,160,3,38,19,0,160,162,5,52,0,0,161,163,3,28,14,0,162,
+        161,1,0,0,0,162,163,1,0,0,0,163,164,1,0,0,0,164,165,5,53,0,0,165,
+        23,1,0,0,0,166,172,3,22,11,0,167,168,5,52,0,0,168,169,3,24,12,0,
+        169,170,5,53,0,0,170,172,1,0,0,0,171,166,1,0,0,0,171,167,1,0,0,0,
+        172,25,1,0,0,0,173,174,5,25,0,0,174,175,5,52,0,0,175,176,3,14,7,
+        0,176,177,5,50,0,0,177,178,3,20,10,0,178,179,5,50,0,0,179,180,3,
+        20,10,0,180,181,5,53,0,0,181,27,1,0,0,0,182,187,3,20,10,0,183,184,
+        5,50,0,0,184,186,3,20,10,0,185,183,1,0,0,0,186,189,1,0,0,0,187,185,
+        1,0,0,0,187,188,1,0,0,0,188,29,1,0,0,0,189,187,1,0,0,0,190,192,5,
+        56,0,0,191,193,3,28,14,0,192,191,1,0,0,0,192,193,1,0,0,0,193,194,
+        1,0,0,0,194,195,5,57,0,0,195,31,1,0,0,0,196,199,3,50,25,0,197,199,
+        3,52,26,0,198,196,1,0,0,0,198,197,1,0,0,0,199,33,1,0,0,0,200,201,
+        5,47,0,0,201,35,1,0,0,0,202,203,5,46,0,0,203,37,1,0,0,0,204,207,
+        5,47,0,0,205,207,3,40,20,0,206,204,1,0,0,0,206,205,1,0,0,0,207,39,
+        1,0,0,0,208,213,3,42,21,0,209,213,3,44,22,0,210,213,3,46,23,0,211,
+        213,3,48,24,0,212,208,1,0,0,0,212,209,1,0,0,0,212,210,1,0,0,0,212,
+        211,1,0,0,0,213,41,1,0,0,0,214,215,7,3,0,0,215,43,1,0,0,0,216,217,
+        7,4,0,0,217,45,1,0,0,0,218,219,7,5,0,0,219,47,1,0,0,0,220,221,7,
+        6,0,0,221,49,1,0,0,0,222,223,7,7,0,0,223,51,1,0,0,0,224,225,7,8,
+        0,0,225,53,1,0,0,0,18,59,65,75,95,103,113,121,123,143,154,156,162,
+        171,187,192,198,206,212
     ]
 
 class FusionFlowParser ( Parser ):
@@ -134,28 +139,31 @@ class FusionFlowParser ( Parser ):
     RULE_comparison = 8
     RULE_comparisonOp = 9
     RULE_term = 10
-    RULE_ifExpression = 11
-    RULE_termList = 12
-    RULE_listLiteral = 13
-    RULE_atomicTerm = 14
-    RULE_identifier = 15
-    RULE_conceptName = 16
-    RULE_operatorName = 17
-    RULE_workflowBuiltinOperator = 18
-    RULE_workflowOwnerOperator = 19
-    RULE_stepOwnerOperator = 20
-    RULE_dataResourceOperator = 21
-    RULE_agentOwnerOperator = 22
-    RULE_constantName = 23
-    RULE_booleanLiteral = 24
+    RULE_operatorCall = 11
+    RULE_predicateCall = 12
+    RULE_ifExpression = 13
+    RULE_termList = 14
+    RULE_listLiteral = 15
+    RULE_atomicTerm = 16
+    RULE_identifier = 17
+    RULE_conceptName = 18
+    RULE_operatorName = 19
+    RULE_workflowBuiltinOperator = 20
+    RULE_workflowOwnerOperator = 21
+    RULE_stepOwnerOperator = 22
+    RULE_dataResourceOperator = 23
+    RULE_agentOwnerOperator = 24
+    RULE_constantName = 25
+    RULE_booleanLiteral = 26
 
     ruleNames =  [ "workflowFile", "workflowDecl", "workflowName", "workflowItem", 
                    "constDecl", "conceptNameList", "assertion", "formula", 
-                   "comparison", "comparisonOp", "term", "ifExpression", 
-                   "termList", "listLiteral", "atomicTerm", "identifier", 
-                   "conceptName", "operatorName", "workflowBuiltinOperator", 
-                   "workflowOwnerOperator", "stepOwnerOperator", "dataResourceOperator", 
-                   "agentOwnerOperator", "constantName", "booleanLiteral" ]
+                   "comparison", "comparisonOp", "term", "operatorCall", 
+                   "predicateCall", "ifExpression", "termList", "listLiteral", 
+                   "atomicTerm", "identifier", "conceptName", "operatorName", 
+                   "workflowBuiltinOperator", "workflowOwnerOperator", "stepOwnerOperator", 
+                   "dataResourceOperator", "agentOwnerOperator", "constantName", 
+                   "booleanLiteral" ]
 
     EOF = Token.EOF
     T__0=1
@@ -271,31 +279,31 @@ class FusionFlowParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 55
+            self.state = 59
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while _la==26:
-                self.state = 50
+                self.state = 54
                 self.constDecl()
-                self.state = 51
+                self.state = 55
                 self.match(FusionFlowParser.SEMICOLON)
-                self.state = 57
+                self.state = 61
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
 
-            self.state = 59 
+            self.state = 63 
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
-                self.state = 58
+                self.state = 62
                 self.workflowDecl()
-                self.state = 61 
+                self.state = 65 
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==24):
                     break
 
-            self.state = 63
+            self.state = 67
             self.match(FusionFlowParser.EOF)
         except RecognitionException as re:
             localctx.exception = re
@@ -346,23 +354,23 @@ class FusionFlowParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 65
+            self.state = 69
             self.match(FusionFlowParser.WORKFLOW)
-            self.state = 66
+            self.state = 70
             self.workflowName()
-            self.state = 67
-            self.match(FusionFlowParser.LBRACE)
             self.state = 71
+            self.match(FusionFlowParser.LBRACE)
+            self.state = 75
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while (((_la) & ~0x3f) == 0 and ((1 << _la) & 77020243041452030) != 0):
-                self.state = 68
+                self.state = 72
                 self.workflowItem()
-                self.state = 73
+                self.state = 77
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
 
-            self.state = 74
+            self.state = 78
             self.match(FusionFlowParser.RBRACE)
         except RecognitionException as re:
             localctx.exception = re
@@ -396,7 +404,7 @@ class FusionFlowParser ( Parser ):
         self.enterRule(localctx, 4, self.RULE_workflowName)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 76
+            self.state = 80
             self.identifier()
         except RecognitionException as re:
             localctx.exception = re
@@ -433,9 +441,9 @@ class FusionFlowParser ( Parser ):
         self.enterRule(localctx, 6, self.RULE_workflowItem)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 78
+            self.state = 82
             self.assertion()
-            self.state = 79
+            self.state = 83
             self.match(FusionFlowParser.SEMICOLON)
         except RecognitionException as re:
             localctx.exception = re
@@ -479,13 +487,13 @@ class FusionFlowParser ( Parser ):
         self.enterRule(localctx, 8, self.RULE_constDecl)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 81
+            self.state = 85
             self.match(FusionFlowParser.CONST)
-            self.state = 82
+            self.state = 86
             self.constantName()
-            self.state = 83
+            self.state = 87
             self.match(FusionFlowParser.COLON)
-            self.state = 84
+            self.state = 88
             self.conceptNameList()
         except RecognitionException as re:
             localctx.exception = re
@@ -529,17 +537,17 @@ class FusionFlowParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 86
+            self.state = 90
             self.conceptName()
-            self.state = 91
+            self.state = 95
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while _la==50:
-                self.state = 87
+                self.state = 91
                 self.match(FusionFlowParser.COMMA)
-                self.state = 88
+                self.state = 92
                 self.conceptName()
-                self.state = 93
+                self.state = 97
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
 
@@ -569,6 +577,10 @@ class FusionFlowParser ( Parser ):
         def ASSERT_EQ(self):
             return self.getToken(FusionFlowParser.ASSERT_EQ, 0)
 
+        def predicateCall(self):
+            return self.getTypedRuleContext(FusionFlowParser.PredicateCallContext,0)
+
+
         def getRuleIndex(self):
             return FusionFlowParser.RULE_assertion
 
@@ -580,13 +592,26 @@ class FusionFlowParser ( Parser ):
         localctx = FusionFlowParser.AssertionContext(self, self._ctx, self.state)
         self.enterRule(localctx, 12, self.RULE_assertion)
         try:
-            self.enterOuterAlt(localctx, 1)
-            self.state = 94
-            self.term(0)
-            self.state = 95
-            self.match(FusionFlowParser.ASSERT_EQ)
-            self.state = 96
-            self.term(0)
+            self.state = 103
+            self._errHandler.sync(self)
+            la_ = self._interp.adaptivePredict(self._input,4,self._ctx)
+            if la_ == 1:
+                self.enterOuterAlt(localctx, 1)
+                self.state = 98
+                self.term(0)
+                self.state = 99
+                self.match(FusionFlowParser.ASSERT_EQ)
+                self.state = 100
+                self.term(0)
+                pass
+
+            elif la_ == 2:
+                self.enterOuterAlt(localctx, 2)
+                self.state = 102
+                self.predicateCall()
+                pass
+
+
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -645,54 +670,54 @@ class FusionFlowParser ( Parser ):
         self.enterRecursionRule(localctx, 14, self.RULE_formula, _p)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 106
+            self.state = 113
             self._errHandler.sync(self)
-            la_ = self._interp.adaptivePredict(self._input,4,self._ctx)
+            la_ = self._interp.adaptivePredict(self._input,5,self._ctx)
             if la_ == 1:
-                self.state = 99
+                self.state = 106
                 self.match(FusionFlowParser.LPAREN)
-                self.state = 100
+                self.state = 107
                 self.formula(0)
-                self.state = 101
+                self.state = 108
                 self.match(FusionFlowParser.RPAREN)
                 pass
 
             elif la_ == 2:
-                self.state = 103
+                self.state = 110
                 self.match(FusionFlowParser.NOT)
-                self.state = 104
+                self.state = 111
                 self.formula(4)
                 pass
 
             elif la_ == 3:
-                self.state = 105
+                self.state = 112
                 self.comparison()
                 pass
 
 
             self._ctx.stop = self._input.LT(-1)
-            self.state = 116
+            self.state = 123
             self._errHandler.sync(self)
-            _alt = self._interp.adaptivePredict(self._input,6,self._ctx)
+            _alt = self._interp.adaptivePredict(self._input,7,self._ctx)
             while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                 if _alt==1:
                     if self._parseListeners is not None:
                         self.triggerExitRuleEvent()
                     _prevctx = localctx
-                    self.state = 114
+                    self.state = 121
                     self._errHandler.sync(self)
-                    la_ = self._interp.adaptivePredict(self._input,5,self._ctx)
+                    la_ = self._interp.adaptivePredict(self._input,6,self._ctx)
                     if la_ == 1:
                         localctx = FusionFlowParser.FormulaContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_formula)
-                        self.state = 108
+                        self.state = 115
                         if not self.precpred(self._ctx, 3):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 3)")
-                        self.state = 109
+                        self.state = 116
                         self.match(FusionFlowParser.AND)
-                        self.state = 110
+                        self.state = 117
                         localctx.right = self.formula(4)
                         pass
 
@@ -700,20 +725,20 @@ class FusionFlowParser ( Parser ):
                         localctx = FusionFlowParser.FormulaContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_formula)
-                        self.state = 111
+                        self.state = 118
                         if not self.precpred(self._ctx, 2):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 2)")
-                        self.state = 112
+                        self.state = 119
                         self.match(FusionFlowParser.OR)
-                        self.state = 113
+                        self.state = 120
                         localctx.right = self.formula(3)
                         pass
 
              
-                self.state = 118
+                self.state = 125
                 self._errHandler.sync(self)
-                _alt = self._interp.adaptivePredict(self._input,6,self._ctx)
+                _alt = self._interp.adaptivePredict(self._input,7,self._ctx)
 
         except RecognitionException as re:
             localctx.exception = re
@@ -754,11 +779,11 @@ class FusionFlowParser ( Parser ):
         self.enterRule(localctx, 16, self.RULE_comparison)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 119
+            self.state = 126
             self.term(0)
-            self.state = 120
+            self.state = 127
             self.comparisonOp()
-            self.state = 121
+            self.state = 128
             self.term(0)
         except RecognitionException as re:
             localctx.exception = re
@@ -807,7 +832,7 @@ class FusionFlowParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 123
+            self.state = 130
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 541165879296) != 0)):
                 self._errHandler.recoverInline(self)
@@ -850,12 +875,8 @@ class FusionFlowParser ( Parser ):
             return self.getTypedRuleContext(FusionFlowParser.IfExpressionContext,0)
 
 
-        def operatorName(self):
-            return self.getTypedRuleContext(FusionFlowParser.OperatorNameContext,0)
-
-
-        def termList(self):
-            return self.getTypedRuleContext(FusionFlowParser.TermListContext,0)
+        def operatorCall(self):
+            return self.getTypedRuleContext(FusionFlowParser.OperatorCallContext,0)
 
 
         def listLiteral(self):
@@ -899,47 +920,35 @@ class FusionFlowParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 142
+            self.state = 143
             self._errHandler.sync(self)
             la_ = self._interp.adaptivePredict(self._input,8,self._ctx)
             if la_ == 1:
-                self.state = 126
+                self.state = 133
                 self.match(FusionFlowParser.LPAREN)
-                self.state = 127
+                self.state = 134
                 self.term(0)
-                self.state = 128
+                self.state = 135
                 self.match(FusionFlowParser.RPAREN)
                 pass
 
             elif la_ == 2:
-                self.state = 130
+                self.state = 137
                 self.ifExpression()
                 pass
 
             elif la_ == 3:
-                self.state = 131
-                self.operatorName()
-                self.state = 132
-                self.match(FusionFlowParser.LPAREN)
-                self.state = 134
-                self._errHandler.sync(self)
-                _la = self._input.LA(1)
-                if (((_la) & ~0x3f) == 0 and ((1 << _la) & 77020243041452030) != 0):
-                    self.state = 133
-                    self.termList()
-
-
-                self.state = 136
-                self.match(FusionFlowParser.RPAREN)
+                self.state = 138
+                self.operatorCall()
                 pass
 
             elif la_ == 4:
-                self.state = 138
+                self.state = 139
                 self.listLiteral()
                 pass
 
             elif la_ == 5:
-                self.state = 139
+                self.state = 140
                 localctx.op = self._input.LT(1)
                 _la = self._input.LA(1)
                 if not(_la==39 or _la==40):
@@ -947,18 +956,18 @@ class FusionFlowParser ( Parser ):
                 else:
                     self._errHandler.reportMatch(self)
                     self.consume()
-                self.state = 140
+                self.state = 141
                 self.term(5)
                 pass
 
             elif la_ == 6:
-                self.state = 141
+                self.state = 142
                 self.atomicTerm()
                 pass
 
 
             self._ctx.stop = self._input.LT(-1)
-            self.state = 155
+            self.state = 156
             self._errHandler.sync(self)
             _alt = self._interp.adaptivePredict(self._input,10,self._ctx)
             while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -966,20 +975,20 @@ class FusionFlowParser ( Parser ):
                     if self._parseListeners is not None:
                         self.triggerExitRuleEvent()
                     _prevctx = localctx
-                    self.state = 153
+                    self.state = 154
                     self._errHandler.sync(self)
                     la_ = self._interp.adaptivePredict(self._input,9,self._ctx)
                     if la_ == 1:
                         localctx = FusionFlowParser.TermContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_term)
-                        self.state = 144
+                        self.state = 145
                         if not self.precpred(self._ctx, 4):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 4)")
-                        self.state = 145
-                        localctx.op = self.match(FusionFlowParser.CARET)
                         self.state = 146
+                        localctx.op = self.match(FusionFlowParser.CARET)
+                        self.state = 147
                         localctx.right = self.term(4)
                         pass
 
@@ -987,11 +996,11 @@ class FusionFlowParser ( Parser ):
                         localctx = FusionFlowParser.TermContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_term)
-                        self.state = 147
+                        self.state = 148
                         if not self.precpred(self._ctx, 3):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 3)")
-                        self.state = 148
+                        self.state = 149
                         localctx.op = self._input.LT(1)
                         _la = self._input.LA(1)
                         if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 15393162788864) != 0)):
@@ -999,7 +1008,7 @@ class FusionFlowParser ( Parser ):
                         else:
                             self._errHandler.reportMatch(self)
                             self.consume()
-                        self.state = 149
+                        self.state = 150
                         localctx.right = self.term(4)
                         pass
 
@@ -1007,11 +1016,11 @@ class FusionFlowParser ( Parser ):
                         localctx = FusionFlowParser.TermContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_term)
-                        self.state = 150
+                        self.state = 151
                         if not self.precpred(self._ctx, 2):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 2)")
-                        self.state = 151
+                        self.state = 152
                         localctx.op = self._input.LT(1)
                         _la = self._input.LA(1)
                         if not(_la==39 or _la==40):
@@ -1019,12 +1028,12 @@ class FusionFlowParser ( Parser ):
                         else:
                             self._errHandler.reportMatch(self)
                             self.consume()
-                        self.state = 152
+                        self.state = 153
                         localctx.right = self.term(3)
                         pass
 
              
-                self.state = 157
+                self.state = 158
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,10,self._ctx)
 
@@ -1034,6 +1043,124 @@ class FusionFlowParser ( Parser ):
             self._errHandler.recover(self, re)
         finally:
             self.unrollRecursionContexts(_parentctx)
+        return localctx
+
+
+    class OperatorCallContext(ParserRuleContext):
+        __slots__ = 'parser'
+
+        def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
+            super().__init__(parent, invokingState)
+            self.parser = parser
+
+        def operatorName(self):
+            return self.getTypedRuleContext(FusionFlowParser.OperatorNameContext,0)
+
+
+        def LPAREN(self):
+            return self.getToken(FusionFlowParser.LPAREN, 0)
+
+        def RPAREN(self):
+            return self.getToken(FusionFlowParser.RPAREN, 0)
+
+        def termList(self):
+            return self.getTypedRuleContext(FusionFlowParser.TermListContext,0)
+
+
+        def getRuleIndex(self):
+            return FusionFlowParser.RULE_operatorCall
+
+
+
+
+    def operatorCall(self):
+
+        localctx = FusionFlowParser.OperatorCallContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 22, self.RULE_operatorCall)
+        self._la = 0 # Token type
+        try:
+            self.enterOuterAlt(localctx, 1)
+            self.state = 159
+            self.operatorName()
+            self.state = 160
+            self.match(FusionFlowParser.LPAREN)
+            self.state = 162
+            self._errHandler.sync(self)
+            _la = self._input.LA(1)
+            if (((_la) & ~0x3f) == 0 and ((1 << _la) & 77020243041452030) != 0):
+                self.state = 161
+                self.termList()
+
+
+            self.state = 164
+            self.match(FusionFlowParser.RPAREN)
+        except RecognitionException as re:
+            localctx.exception = re
+            self._errHandler.reportError(self, re)
+            self._errHandler.recover(self, re)
+        finally:
+            self.exitRule()
+        return localctx
+
+
+    class PredicateCallContext(ParserRuleContext):
+        __slots__ = 'parser'
+
+        def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
+            super().__init__(parent, invokingState)
+            self.parser = parser
+
+        def operatorCall(self):
+            return self.getTypedRuleContext(FusionFlowParser.OperatorCallContext,0)
+
+
+        def LPAREN(self):
+            return self.getToken(FusionFlowParser.LPAREN, 0)
+
+        def predicateCall(self):
+            return self.getTypedRuleContext(FusionFlowParser.PredicateCallContext,0)
+
+
+        def RPAREN(self):
+            return self.getToken(FusionFlowParser.RPAREN, 0)
+
+        def getRuleIndex(self):
+            return FusionFlowParser.RULE_predicateCall
+
+
+
+
+    def predicateCall(self):
+
+        localctx = FusionFlowParser.PredicateCallContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 24, self.RULE_predicateCall)
+        try:
+            self.state = 171
+            self._errHandler.sync(self)
+            token = self._input.LA(1)
+            if token in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 47]:
+                self.enterOuterAlt(localctx, 1)
+                self.state = 166
+                self.operatorCall()
+                pass
+            elif token in [52]:
+                self.enterOuterAlt(localctx, 2)
+                self.state = 167
+                self.match(FusionFlowParser.LPAREN)
+                self.state = 168
+                self.predicateCall()
+                self.state = 169
+                self.match(FusionFlowParser.RPAREN)
+                pass
+            else:
+                raise NoViableAltException(self)
+
+        except RecognitionException as re:
+            localctx.exception = re
+            self._errHandler.reportError(self, re)
+            self._errHandler.recover(self, re)
+        finally:
+            self.exitRule()
         return localctx
 
 
@@ -1079,24 +1206,24 @@ class FusionFlowParser ( Parser ):
     def ifExpression(self):
 
         localctx = FusionFlowParser.IfExpressionContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 22, self.RULE_ifExpression)
+        self.enterRule(localctx, 26, self.RULE_ifExpression)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 158
+            self.state = 173
             self.match(FusionFlowParser.IF)
-            self.state = 159
+            self.state = 174
             self.match(FusionFlowParser.LPAREN)
-            self.state = 160
+            self.state = 175
             self.formula(0)
-            self.state = 161
+            self.state = 176
             self.match(FusionFlowParser.COMMA)
-            self.state = 162
+            self.state = 177
             self.term(0)
-            self.state = 163
+            self.state = 178
             self.match(FusionFlowParser.COMMA)
-            self.state = 164
+            self.state = 179
             self.term(0)
-            self.state = 165
+            self.state = 180
             self.match(FusionFlowParser.RPAREN)
         except RecognitionException as re:
             localctx.exception = re
@@ -1136,21 +1263,21 @@ class FusionFlowParser ( Parser ):
     def termList(self):
 
         localctx = FusionFlowParser.TermListContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 24, self.RULE_termList)
+        self.enterRule(localctx, 28, self.RULE_termList)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 167
+            self.state = 182
             self.term(0)
-            self.state = 172
+            self.state = 187
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while _la==50:
-                self.state = 168
+                self.state = 183
                 self.match(FusionFlowParser.COMMA)
-                self.state = 169
+                self.state = 184
                 self.term(0)
-                self.state = 174
+                self.state = 189
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
 
@@ -1189,21 +1316,21 @@ class FusionFlowParser ( Parser ):
     def listLiteral(self):
 
         localctx = FusionFlowParser.ListLiteralContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 26, self.RULE_listLiteral)
+        self.enterRule(localctx, 30, self.RULE_listLiteral)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 175
+            self.state = 190
             self.match(FusionFlowParser.LBRACK)
-            self.state = 177
+            self.state = 192
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if (((_la) & ~0x3f) == 0 and ((1 << _la) & 77020243041452030) != 0):
-                self.state = 176
+                self.state = 191
                 self.termList()
 
 
-            self.state = 179
+            self.state = 194
             self.match(FusionFlowParser.RBRACK)
         except RecognitionException as re:
             localctx.exception = re
@@ -1238,19 +1365,19 @@ class FusionFlowParser ( Parser ):
     def atomicTerm(self):
 
         localctx = FusionFlowParser.AtomicTermContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 28, self.RULE_atomicTerm)
+        self.enterRule(localctx, 32, self.RULE_atomicTerm)
         try:
-            self.state = 183
+            self.state = 198
             self._errHandler.sync(self)
             token = self._input.LA(1)
             if token in [45, 47, 48]:
                 self.enterOuterAlt(localctx, 1)
-                self.state = 181
+                self.state = 196
                 self.constantName()
                 pass
             elif token in [30, 31]:
                 self.enterOuterAlt(localctx, 2)
-                self.state = 182
+                self.state = 197
                 self.booleanLiteral()
                 pass
             else:
@@ -1284,10 +1411,10 @@ class FusionFlowParser ( Parser ):
     def identifier(self):
 
         localctx = FusionFlowParser.IdentifierContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 30, self.RULE_identifier)
+        self.enterRule(localctx, 34, self.RULE_identifier)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 185
+            self.state = 200
             self.match(FusionFlowParser.LOWID)
         except RecognitionException as re:
             localctx.exception = re
@@ -1317,10 +1444,10 @@ class FusionFlowParser ( Parser ):
     def conceptName(self):
 
         localctx = FusionFlowParser.ConceptNameContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 32, self.RULE_conceptName)
+        self.enterRule(localctx, 36, self.RULE_conceptName)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 187
+            self.state = 202
             self.match(FusionFlowParser.UPID)
         except RecognitionException as re:
             localctx.exception = re
@@ -1354,19 +1481,19 @@ class FusionFlowParser ( Parser ):
     def operatorName(self):
 
         localctx = FusionFlowParser.OperatorNameContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 34, self.RULE_operatorName)
+        self.enterRule(localctx, 38, self.RULE_operatorName)
         try:
-            self.state = 191
+            self.state = 206
             self._errHandler.sync(self)
             token = self._input.LA(1)
             if token in [47]:
                 self.enterOuterAlt(localctx, 1)
-                self.state = 189
+                self.state = 204
                 self.match(FusionFlowParser.LOWID)
                 pass
             elif token in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]:
                 self.enterOuterAlt(localctx, 2)
-                self.state = 190
+                self.state = 205
                 self.workflowBuiltinOperator()
                 pass
             else:
@@ -1413,29 +1540,29 @@ class FusionFlowParser ( Parser ):
     def workflowBuiltinOperator(self):
 
         localctx = FusionFlowParser.WorkflowBuiltinOperatorContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 36, self.RULE_workflowBuiltinOperator)
+        self.enterRule(localctx, 40, self.RULE_workflowBuiltinOperator)
         try:
-            self.state = 197
+            self.state = 212
             self._errHandler.sync(self)
             token = self._input.LA(1)
             if token in [1, 2, 3, 4, 5, 6]:
                 self.enterOuterAlt(localctx, 1)
-                self.state = 193
+                self.state = 208
                 self.workflowOwnerOperator()
                 pass
             elif token in [7, 8, 9, 10, 11]:
                 self.enterOuterAlt(localctx, 2)
-                self.state = 194
+                self.state = 209
                 self.stepOwnerOperator()
                 pass
             elif token in [12, 13, 14, 15, 16, 17]:
                 self.enterOuterAlt(localctx, 3)
-                self.state = 195
+                self.state = 210
                 self.dataResourceOperator()
                 pass
             elif token in [18, 19, 20, 21, 22, 23]:
                 self.enterOuterAlt(localctx, 4)
-                self.state = 196
+                self.state = 211
                 self.agentOwnerOperator()
                 pass
             else:
@@ -1467,11 +1594,11 @@ class FusionFlowParser ( Parser ):
     def workflowOwnerOperator(self):
 
         localctx = FusionFlowParser.WorkflowOwnerOperatorContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 38, self.RULE_workflowOwnerOperator)
+        self.enterRule(localctx, 42, self.RULE_workflowOwnerOperator)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 199
+            self.state = 214
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 126) != 0)):
                 self._errHandler.recoverInline(self)
@@ -1504,11 +1631,11 @@ class FusionFlowParser ( Parser ):
     def stepOwnerOperator(self):
 
         localctx = FusionFlowParser.StepOwnerOperatorContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 40, self.RULE_stepOwnerOperator)
+        self.enterRule(localctx, 44, self.RULE_stepOwnerOperator)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 201
+            self.state = 216
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 3968) != 0)):
                 self._errHandler.recoverInline(self)
@@ -1541,11 +1668,11 @@ class FusionFlowParser ( Parser ):
     def dataResourceOperator(self):
 
         localctx = FusionFlowParser.DataResourceOperatorContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 42, self.RULE_dataResourceOperator)
+        self.enterRule(localctx, 46, self.RULE_dataResourceOperator)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 203
+            self.state = 218
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 258048) != 0)):
                 self._errHandler.recoverInline(self)
@@ -1578,11 +1705,11 @@ class FusionFlowParser ( Parser ):
     def agentOwnerOperator(self):
 
         localctx = FusionFlowParser.AgentOwnerOperatorContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 44, self.RULE_agentOwnerOperator)
+        self.enterRule(localctx, 48, self.RULE_agentOwnerOperator)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 205
+            self.state = 220
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 16515072) != 0)):
                 self._errHandler.recoverInline(self)
@@ -1623,11 +1750,11 @@ class FusionFlowParser ( Parser ):
     def constantName(self):
 
         localctx = FusionFlowParser.ConstantNameContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 46, self.RULE_constantName)
+        self.enterRule(localctx, 50, self.RULE_constantName)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 207
+            self.state = 222
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 457396837154816) != 0)):
                 self._errHandler.recoverInline(self)
@@ -1665,11 +1792,11 @@ class FusionFlowParser ( Parser ):
     def booleanLiteral(self):
 
         localctx = FusionFlowParser.BooleanLiteralContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 48, self.RULE_booleanLiteral)
+        self.enterRule(localctx, 52, self.RULE_booleanLiteral)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 209
+            self.state = 224
             _la = self._input.LA(1)
             if not(_la==30 or _la==31):
                 self._errHandler.recoverInline(self)
