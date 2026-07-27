@@ -31,10 +31,19 @@ class WorkflowGraphCompilationError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class ValueSource:
+    """Bind one workflow value identity to one external source identity."""
+
+    value_id: str
+    source_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowGraphCompilation:
-    """One graph plus the assertions deliberately left for another backend."""
+    """One graph, its external value sources, and unhandled assertions."""
 
     graph: WorkflowGraph
+    value_sources: tuple[ValueSource, ...]
     residual_assertions: tuple[Assertion, ...]
 
 
@@ -98,7 +107,7 @@ class _StepDraft:
 
 
 class WorkflowGraphCompiler(CoreIRCompiler):
-    """Compile graph operators while preserving unrelated assertions.
+    """Compile graph operators and value sources while preserving other assertions.
 
     Graph operators fall into four groups:
 
@@ -106,6 +115,9 @@ class WorkflowGraphCompiler(CoreIRCompiler):
     * step metadata: ``step_name``, ``step_instruction``, and ``step_executor``;
     * dataflow: ``consumes``, ``produces``, and ``foreach_item``;
     * policies: timeouts, retries, resources, and concurrency.
+
+    ``value_from`` lowers into metadata and marks its value as a workflow input
+    without creating an execution event or graph edge.
 
     The compiler only overrides protected hooks.  Public traversal and
     unsupported-node handling remain owned by :class:`CoreIRCompiler`.
@@ -132,6 +144,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             "workflow_timeout",
         }
     )
+    _OWNED_OPERATORS = _GRAPH_OPERATORS | frozenset({"value_from"})
     # Executor concepts are mutually exclusive in the graph target.
     _EXECUTOR_CONCEPTS = frozenset({"Human", "Agent", "Program"})
 
@@ -187,7 +200,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 (assertion.lhs, assertion.rhs),
                 (assertion.rhs, assertion.lhs),
             )
-            if isinstance(term, CompoundTerm) and term.operator.name in self._GRAPH_OPERATORS
+            if isinstance(term, CompoundTerm) and term.operator.name in self._OWNED_OPERATORS
         )
 
         # Returning the original object makes residual IR explicit: it was not
@@ -242,6 +255,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         step_drafts: dict[str, _StepDraft] = {}
         artifacts: dict[str, ArtifactNode] = {}
         edges: set[WorkflowEdge] = set()
+        value_sources: dict[str, ValueSource] = {}
 
         # Workflow-wide policies are optional but singular.
         policy = WorkflowPolicy()
@@ -269,6 +283,18 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             # a shared IR contract, so lowering must not infer behavior from a
             # prefix, suffix, or grouped fallback.
             match operator_name:
+                case "value_from":
+                    # value_from(value) = source
+                    self._require_arity(arguments, 1, operator_name)
+                    value_id = self._symbol(arguments[0], "value_from value")
+                    source_id = self._symbol(fact_value, "value_from source")
+                    if value_id in value_sources:
+                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {value_id!r}")
+                    value_sources[value_id] = ValueSource(
+                        value_id=value_id,
+                        source_id=source_id,
+                    )
+
                 case "input_workflow":
                     # input_workflow(workflow) == [artifact, ...]
                     self._require_arity(arguments, 1, operator_name)
@@ -435,9 +461,24 @@ class WorkflowGraphCompiler(CoreIRCompiler):
 
                 case _:
                     # _compile_assertion recognizes names through
-                    # _GRAPH_OPERATORS.  Fail closed if that vocabulary grows
+                    # _OWNED_OPERATORS.  Fail closed if that vocabulary grows
                     # without a matching, operator-specific lowering case.
                     raise WorkflowGraphCompilationError(f"unsupported graph operator: {operator_name}")
+
+        consumed_ids = {edge.artifact_id for edge in edges if isinstance(edge, ConsumesEdge | ForeachEdge)}
+        produced_ids = {edge.artifact_id for edge in edges if isinstance(edge, ProducesEdge)}
+        for value_id in value_sources:
+            if value_id in produced_ids:
+                raise WorkflowGraphCompilationError(f"value_from value cannot be produced: {value_id!r}")
+            artifact = artifacts.get(value_id)
+            if value_id not in consumed_ids and (artifact is None or not artifact.is_output):
+                raise WorkflowGraphCompilationError(
+                    f"value_from value must be consumed or a workflow output: {value_id!r}"
+                )
+            artifacts[value_id] = replace(
+                artifact or ArtifactNode(artifact_id=value_id),
+                is_input=True,
+            )
 
         try:
             # A StepNode becomes valid only after its required name and executor
@@ -493,6 +534,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
 
         return WorkflowGraphCompilation(
             graph=graph,
+            value_sources=tuple(value_sources[value_id] for value_id in sorted(value_sources)),
             residual_assertions=tuple(residual),
         )
 

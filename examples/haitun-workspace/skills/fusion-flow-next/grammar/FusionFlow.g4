@@ -113,7 +113,7 @@ operatorCall
  * Value-producing if(condition formula, then term, else term), always arity 3.
  * N-way choice uses nested if expressions. Branch types, dependency collection,
  * and eager/lazy evaluation are checker/runtime concerns. if is surface syntax,
- * not one of the 19 preset operators and not a block or Step.
+ * not one of the 22 preset operators and not a block or Step.
  */
 ifExpression
     : IF LPAREN formula COMMA term COMMA term RPAREN
@@ -147,7 +147,8 @@ operatorName
     ;
 
 /*
- * Complete catalog: 4 workflow + 5 step + 4 data/resource + 6 agent = 19.
+ * Complete catalog:
+ * 4 workflow + 5 step + 1 program + 5 data/resource/value-source + 7 agent = 22.
  * Owner categories are disjoint;
  * cross-cutting labels such as dataflow, control, and configuration stay in
  * comments rather than duplicating names across parser rules.
@@ -155,6 +156,7 @@ operatorName
 workflowBuiltinOperator
     : workflowOwnerOperator
     | stepOwnerOperator
+    | programOwnerOperator
     | dataResourceOperator
     | agentOwnerOperator
     ;
@@ -174,6 +176,14 @@ workflowOwnerOperator
     ;
 
 /*
+ * Program owner (catalog identity):
+ *   program_path(Program) -> Path                     [arity 1]
+ */
+programOwnerOperator
+    : 'program_path'
+    ;
+
+/*
  * Step owner (identity, execution binding, timeout, and retry configuration):
  *   step_name(Step) -> StepName                      [arity 1]
  *   step_instruction(Step) -> Instruction            [arity 1]
@@ -190,17 +200,19 @@ stepOwnerOperator
     ;
 
 /*
- * Data, loop, and resource owner:
+ * Data, loop, resource, and value-source owner:
  *   consumes(Step) -> List                            [arity 1]
  *   produces(Step) -> List                            [arity 1]
  *   foreach_item(Step, List) -> Artifact              [arity 2]
  *   resource_requirement(Step, Resource) -> Integer   [arity 2]
+ *   value_from(Constant) -> Path                      [arity 1]
  */
 dataResourceOperator
     : 'consumes'
     | 'produces'
     | 'foreach_item'
     | 'resource_requirement'
+    | 'value_from'
     ;
 
 /*
@@ -211,6 +223,7 @@ dataResourceOperator
  *   temperature(Agent) -> ComplexNumber                 [arity 1]
  *   reasoning_effort(Agent) -> ReasoningEffort          [arity 1]
  *   max_turns(Agent) -> Integer                         [arity 1]
+ *   agent_system_prompt(Agent) -> Instruction           [arity 1]
  */
 agentOwnerOperator
     : 'agent_config'
@@ -219,6 +232,7 @@ agentOwnerOperator
     | 'temperature'
     | 'reasoning_effort'
     | 'max_turns'
+    | 'agent_system_prompt'
     ;
 
 /* Constants are numbers, restricted quoted IDs, or lowercase identifiers. */
