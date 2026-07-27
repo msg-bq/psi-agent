@@ -266,7 +266,7 @@ Only show that line when a developer explicitly asks for it. Never push it at a 
 | Step | 一次处理 |
 | Artifact | 中间结果 |
 | `max_concurrency` | 同时处理 |
-| `consumes_multi` | 汇总多个结果 |
+| `consumes(step) == [artifact_a, artifact_b]` | 汇总多个结果 |
 | 异构复合工作流 | 多方向 + 分层汇总 |
 | token / LLM 调用 | （折成）几分钟 / 花多少钱 |
 
@@ -279,9 +279,9 @@ Read `grammar/FusionFlow.g4` completely before using these patterns. The grammar
 
 | Pattern | FusionFlow shape | When to use |
 | --- | --- | --- |
-| **Fan-out + fan-in** | Several Steps consume the same Artifact; one final Step uses `consumes_multi` to consume their result Artifacts. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
+| **Fan-out + fan-in** | Several Steps use `consumes(step) == [shared_artifact]`; one final Step uses `consumes(final_step) == [result_a, result_b]`. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
 | **Artifact pipeline** | Each Step produces the Artifact consumed by the next Step. Use `max_attempts` only as the attempt limit for a configured Step. | Writing process, ETL, refine-and-check work. |
-| **Per-item work + merge** | Use `foreach_item` for the repeated Step, `produces_multi` for its result List, and `consumes_multi` on the merge Step. | N PRs, issues, docs, or log records into one report. |
+| **Per-item work + merge** | Use `foreach_item` for the repeated Step, `produces(repeated_step) == result_list` for its result List, and `consumes(merge_step) == result_list` on the merge Step. | N PRs, issues, docs, or log records into one report. |
 | **Conditional term selection** | Keep every candidate result explicit, then use `if(formula, then_term, else_term)` where one term is expected. Compose formulas with `!`, `AND`, and `OR`; nest `if` for priority selection. | Select one checker-compatible term for a downstream assertion without inventing control-flow syntax. |
 | **Composite workflow** | Combine only the artifact chains, fan-out/fan-in, per-item relations, and conditional term selections above. | When one simple pattern does not cover the task. |
 
@@ -328,17 +328,17 @@ const read_tool: Tool;
 
 workflow code_review {
   -- DATA FLOW
-  input_workflow(code_review, source_code);
-  consumes(security_review, source_code);
-  produces(security_review, security_findings);
-  consumes(performance_review, source_code);
-  produces(performance_review, performance_findings);
-  consumes(readability_review, source_code);
-  produces(readability_review, readability_findings);
-  consumes_multi(synthesize_report) ==
+  input_workflow(code_review) == [source_code];
+  consumes(security_review) == [source_code];
+  produces(security_review) == [security_findings];
+  consumes(performance_review) == [source_code];
+  produces(performance_review) == [performance_findings];
+  consumes(readability_review) == [source_code];
+  produces(readability_review) == [readability_findings];
+  consumes(synthesize_report) ==
     [security_findings, performance_findings, readability_findings];
-  produces(synthesize_report, final_report);
-  output_workflow(code_review, final_report);
+  produces(synthesize_report) == [final_report];
+  output_workflow(code_review) == [final_report];
 
   -- EXECUTOR ASSIGNMENT
   step_executor(security_review) == security_agent;
@@ -387,12 +387,12 @@ Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole author
 
 - Group assertions by concern, not by Step: `DATA FLOW`, `EXECUTOR ASSIGNMENT`, `STEP CONFIGURATION`, then workflow and agent configuration when present. Omit empty groups.
 - In `DATA FLOW`, show the complete graph in reading order: workflow inputs, every Step consume/produce relation, then workflow outputs.
-- Prefer a Bool-returning operator call as a standalone assertion, such as `consumes(step, artifact);`; it means explicit `== True`. Use shorthand only for Bool `True`, keep `== False` explicit, and always retain the right-hand value for non-Bool operators.
-- Declare external inputs and outputs with `input_workflow*` and `output_workflow*`. Their Workflow argument is the enclosing workflow name.
-- The payload arguments of `input_workflow`, `output_workflow`, `consumes`, and `produces` are Artifacts. Their Bool return type asserts a relation; it does not make the payload a Boolean signal.
+- Write each canonical data-flow operator with its single owner argument and compare it to a List term: `input_workflow(workflow) == [...]`, `output_workflow(workflow) == [...]`, `consumes(step) == [...]`, and `produces(step) == [...]`.
+- Declare external inputs and outputs with `input_workflow` and `output_workflow`. Their sole Workflow argument is the enclosing workflow name.
+- The right-hand side of each canonical data-flow assertion is a List of Artifacts. Use a one-item List for one Artifact and a declared List identity for a per-item result collection.
 - Model sequencing through artifacts: a step that produces an artifact precedes a step that consumes it.
 - Model fan-out by making several steps consume the same artifact.
-- Model fan-in with `consumes_multi(step) == [artifact_a, artifact_b];`.
+- Model fan-in with `consumes(step) == [artifact_a, artifact_b];`.
 - Model per-item work with `foreach_item(step, items) == item_result;`.
 - Bind each step to its executor with `step_executor`.
 - Configure concurrency, retries, timeouts, resources, and agent limits with the corresponding preset operators.
@@ -433,22 +433,19 @@ const final_consumer: Agent, Executor;
 
 workflow priority_routing {
   -- DATA FLOW
-  input_workflow_multi(priority_routing) ==
+  input_workflow(priority_routing) ==
     [incoming_case, primary_criterion, block_criterion, review_criterion, exception_criterion];
-  consumes(triage_step, incoming_case);
-  produces(triage_step, primary_observation);
-  produces(triage_step, block_observation);
-  produces(triage_step, review_observation);
-  produces(triage_step, exception_observation);
-  consumes(primary_handler_step, incoming_case);
-  produces(primary_handler_step, primary_result);
-  consumes(review_handler_step, incoming_case);
-  produces(review_handler_step, review_result);
-  consumes(fallback_handler_step, incoming_case);
-  produces(fallback_handler_step, fallback_result);
-  consumes(
-    final_step,
-    if(
+  consumes(triage_step) == [incoming_case];
+  produces(triage_step) ==
+    [primary_observation, block_observation, review_observation, exception_observation];
+  consumes(primary_handler_step) == [incoming_case];
+  produces(primary_handler_step) == [primary_result];
+  consumes(review_handler_step) == [incoming_case];
+  produces(review_handler_step) == [review_result];
+  consumes(fallback_handler_step) == [incoming_case];
+  produces(fallback_handler_step) == [fallback_result];
+  consumes(final_step) ==
+    [if(
       (primary_observation = primary_criterion) AND !(block_observation = block_criterion),
       primary_result,
       if(
@@ -456,10 +453,9 @@ workflow priority_routing {
         review_result,
         fallback_result
       )
-    )
-  );
-  produces(final_step, final_result);
-  output_workflow(priority_routing, final_result);
+    )];
+  produces(final_step) == [final_result];
+  output_workflow(priority_routing) == [final_result];
 
   -- EXECUTOR ASSIGNMENT
   step_executor(triage_step) == triage_agent;
@@ -497,12 +493,12 @@ const editor: Agent, Executor;
 
 workflow summarize_items {
   -- DATA FLOW
-  input_workflow_multi(summarize_items) == items;
+  input_workflow(summarize_items) == items;
   foreach_item(analyze_item, items) == item_result;
-  produces_multi(analyze_item) == analyzed_items;
-  consumes_multi(merge_summary) == analyzed_items;
-  produces(merge_summary, final_summary);
-  output_workflow(summarize_items, final_summary);
+  produces(analyze_item) == analyzed_items;
+  consumes(merge_summary) == analyzed_items;
+  produces(merge_summary) == [final_summary];
+  output_workflow(summarize_items) == [final_summary];
 
   -- EXECUTOR ASSIGNMENT
   step_executor(analyze_item) == analyst;
@@ -549,10 +545,10 @@ const worker: Agent, Executor;
 
 workflow workflow_name {
   -- DATA FLOW
-  input_workflow(workflow_name, input_artifact);
-  consumes(work_step, input_artifact);
-  produces(work_step, output_artifact);
-  output_workflow(workflow_name, output_artifact);
+  input_workflow(workflow_name) == [input_artifact];
+  consumes(work_step) == [input_artifact];
+  produces(work_step) == [output_artifact];
+  output_workflow(workflow_name) == [output_artifact];
 
   -- EXECUTOR ASSIGNMENT
   step_executor(work_step) == worker;

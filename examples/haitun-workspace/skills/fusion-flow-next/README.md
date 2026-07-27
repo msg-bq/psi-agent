@@ -18,7 +18,9 @@ primitives share this package boundary but remain deliberately separate:
 - `fusion_flow_next/graph_compiler.py`: concrete `CoreIRCompiler` backend that builds `psi_agent.workflow_graph` models.
 - `fusion_flow_next/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
 - `fusion_flow_next/execution/`: isolated Python port of the legacy TypeScript `flow.*` runtime, retained for parity and migration work without exposing it as `psi_agent` core API.
+- `examples/run_workflow.py`: minimal one-shot graph runner with injected Agent and Human boundaries.
 - `test/test_graph_compiler.py`: real Core IR to WorkflowGraph compiler contract checks.
+- `test/test_run_workflow.py`: runner catalog, dispatch, instruction-reference, and Artifact mapping checks.
 - `test/execution/`: runtime, persistence, cancellation, subprocess, and pinned TypeScript differential tests for `fusion_flow_next.execution`.
 
 The obsolete Node/TypeScript compiler prototype has been removed. The Python
@@ -53,6 +55,15 @@ equality containing recognized graph calls on both sides.
 
 The package exports `WorkflowGraphCompiler`, `WorkflowGraphCompilation`, and
 `WorkflowGraphCompilationError`.
+
+The example graph runner treats every instruction identity or path-like
+reference as opaque. Agent and Program callbacks receive it unchanged. A Human
+step sends the unchanged reference, step identity, inputs, and output contract
+to the injected preparation Agent; resource inspection remains subject to that
+Agent's tools and approval flow, with no runner-owned file read or path policy.
+Callbacks return one value for a singleton output or an exact Artifact-ID
+mapping for multiple outputs, because canonical dataflow Lists do not define
+positional output binding.
 
 This remains an example-local package rather than a wheel dependency. The
 execution subpackage is a compatibility boundary, not the G4 runtime. Run all

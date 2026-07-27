@@ -47,6 +47,12 @@ Python 版本坚持 AnyIO 结构化并发：`first` / `any` 取消落后任务�
 
 Python API 保持 snake_case，并由显式 `SessionRunner` 承担 provider 调用；不复制 TypeScript 的 camelCase 配置、环境变量配置、内嵌 provider 选择或 evaluator 的 provider JSON Schema 通道。字符串/编译后的 `RegexRule` 使用原生 Python `re`；需要与 JavaScript `RegExp` 的 ASCII 字符类一致时由调用方显式选择 flags。实际 runner 实现身份不能自动进入 cache key，runner 行为变更时调用方必须同步更新 `AgentConfig.engine`、model 或其他版本字段。自动 GC 通过 `run(keep_count=..., keep_days=...)` 配置，两者同时为 `0` 表示禁用清理。未知 token 保持为 `None`。旧式 `Agent` 的独立诊断 trace 在 resume 时不会覆盖同名旧文件；跳过的文件序号会占入它与 `session()` / `evaluate()` 共享的调用序号，实际序号同时写入 trace metadata，而 `session_calls` 仍只统计本次执行成功或缓存命中的调用。这些都是仓库有意保留的安全适配。
 
+**为什么 G4 示例 runner 不自行解析 Human instruction 路径？**
+instruction identity 或类似路径的引用对 runner 是不透明值。Agent、Program 原样收到它；Human 的 preparation Agent 收到同一引用、Step、输入和输出合同，再按自身工具权限与审批流程决定是否访问资源。runner 不读取、规范化或限制路径，避免在通用调度边界复制一套与实际工具权限不一致的文件策略。
+
+**为什么 G4 示例 runner 的多输出必须按 Artifact ID 返回 mapping？**
+#32 的 canonical dataflow List 只声明关系，进入图后不保留可作为位置绑定合同的顺序。单输出仍把回调的完整返回值（包括 dict）视为该 Artifact；多输出则要求 key 与声明产生的 Artifact ID 精确一致，不广播同一值，也不按列表位置 zip。
+
 **为什么 `AgentConfig` 的 token / temperature 默认值先保留为 `None`？**
 TypeScript 对同一份省略字段的配置按调用位置解析：普通 `session()` 与旧 `Agent` 使用 `8192 / 1`，自定义 evaluator 使用 `256 / 0`。Python 只有把“未填写”保留到实际调用边界，才能区分省略与用户显式传入 `8192 / 1`；交给 `SessionRunner` 前始终会解析成具体数值。
 
