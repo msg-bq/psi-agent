@@ -279,9 +279,9 @@ Read `grammar/FusionFlow.g4` completely before using these patterns. The grammar
 
 | Pattern | FusionFlow shape | When to use |
 | --- | --- | --- |
-| **Fan-out + fan-in** | Several Steps consume the same Artifact; one final Step uses `consumes(final_step) == [result_a, result_b]` to consume their result Artifacts. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
+| **Fan-out + fan-in** | Several Steps each use `consumes(step) == [shared_artifact]`; one final Step uses `consumes(final_step) == [result_a, result_b]`. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
 | **Artifact pipeline** | Each Step produces the Artifact consumed by the next Step. Use `max_attempts` only as the attempt limit for a configured Step. | Writing process, ETL, refine-and-check work. |
-| **Per-item work + merge** | Use `foreach_item` for the repeated Step, `produces(step) == [result_collection]` for its collection Artifact, and `consumes(merge_step) == [result_collection]` on the merge Step. | N PRs, issues, docs, or log records into one report. |
+| **Per-item work + merge** | Use `foreach_item` for the repeated Step. Declare a List that also participates in graph relations as `Artifact, List`, then connect it with `produces(step) == [result_collection]` and `consumes(merge_step) == [result_collection]`. | N PRs, issues, docs, or log records into one report. |
 | **Conditional term selection** | Keep every candidate result explicit, then use `if(formula, then_term, else_term)` where one term is expected. Compose formulas with `!`, `AND`, and `OR`; nest `if` for priority selection. | Select one checker-compatible term for a downstream assertion without inventing control-flow syntax. |
 | **Composite workflow** | Combine only the artifact chains, fan-out/fan-in, per-item relations, and conditional term selections above. | When one simple pattern does not cover the task. |
 
@@ -385,16 +385,17 @@ Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole author
 
 ### Modeling rules
 
-- Group assertions by concern, not by Step: `DATA FLOW`, `EXECUTOR ASSIGNMENT`, `STEP CONFIGURATION`, then workflow and agent configuration when present. Omit empty groups.
-- In `DATA FLOW`, show the complete graph in reading order: workflow inputs, every Step consume/produce relation, then workflow outputs.
-- Prefer a Bool-returning operator call as a standalone assertion, such as `allowed_tool(agent, tool);`; it means explicit `== True`. Use shorthand only for Bool `True`, keep `== False` explicit, and always retain the right-hand value for non-Bool operators.
-- Treat `input_workflow`, `output_workflow`, `consumes`, and `produces` as the four canonical List-valued dataflow operators. Pass exactly one owner argument (`Workflow` or `Step`) and put every related Artifact in an explicit List RHS.
-- Always use a List RHS even for one Artifact: `input_workflow(workflow) == [input_artifact];`, `consumes(step) == [input_artifact];`, `produces(step) == [output_artifact];`, and `output_workflow(workflow) == [output_artifact];`. Never use a standalone call, a second Artifact argument, or a legacy `*_multi` variant for these operators.
-- The Workflow argument of `input_workflow` and `output_workflow` is the enclosing workflow name.
-- Model sequencing through artifacts: a step that produces an artifact precedes a step that consumes it.
+- Group assertions by concern in this exact order: `DATA FLOW`, `EXECUTOR ASSIGNMENT`, `STEP CONFIGURATION`, `WORKFLOW CONFIGURATION`, `AGENT CONFIGURATION`. Omit empty groups.
+- In `DATA FLOW`, declare the complete external input List once, then every Step's `consumes`/`produces` edges, then the complete external output List once.
+- Use exactly one symmetric Artifact dataflow contract: `input_workflow(workflow) == [artifact_a, artifact_b];`, `consumes(step) == [artifact_a, artifact_b];`, `produces(step) == [artifact_a, artifact_b];`, and `output_workflow(workflow) == [artifact_a, artifact_b];`. All four operators return `List`; even one Artifact requires an explicit List literal such as `[artifact]`. Never use these calls as standalone assertions, with `== True`, with an Artifact as a second argument, or through alternate multi variants.
+- Bool shorthand is only for non-dataflow presets that genuinely return Bool, such as `agent_config(...)` and `allowed_tool(...)`. Keep `== False` explicit. Retain the right-hand value for every non-Bool operator.
+- When the user supplies a grammar-valid literal as a typed constant name, including a restricted quoted ID or `"./..."` path, preserve that literal and use it directly as the required preset value; do not hide it behind an alias constant and an extra equality.
+- Model sequencing through Artifact edges: a Step that produces an Artifact precedes a Step that consumes it. Declaration order does not define execution order; Artifact edges define dependencies.
+- Preserve the external data boundary from the user's intent. Fan-out Steps that analyze the same subject reuse one shared input Artifact; do not split it into synthetic per-branch workflow inputs.
+- Emit every explicitly requested relation. Every operand must be a declared grammar term: `_` and `...` are not wildcards. Declare typed constants for required operands, or omit an optional configuration instead of inserting placeholders.
 - Model fan-out by making several steps consume the same artifact.
 - Model fan-in with `consumes(step) == [artifact_a, artifact_b];`.
-- Model per-item work with `foreach_item(step, items) == item_result;`.
+- Model per-item work with `foreach_item(step, items) == item_result;`. If a List also participates in graph relations, declare it as `Artifact, List` and still place it inside an explicit List RHS.
 - Bind each step to its executor with `step_executor`.
 - Configure concurrency, retries, timeouts, resources, and agent limits with the corresponding preset operators.
 - Use `if(formula, then_term, else_term)` wherever one term is expected. It selects a term; it is not a Step, block, loop, quality gate, or scoring mechanism.
@@ -403,7 +404,7 @@ Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole author
 
 #### Conditional term selection
 
-Keep every candidate result explicit. Use a nested `if` only to select the compatible Artifact consumed by the downstream Step:
+Keep every candidate result explicit and produced by a Step. The canonical downstream shape is `consumes(final_step) == [if(formula, artifact_a, artifact_b)];`. Use a nested `if` only to select the compatible Artifact consumed by the downstream Step:
 
 ```fusionflow
 const incoming_case: Artifact;
@@ -496,6 +497,7 @@ const editor: Agent, Executor;
 workflow summarize_items {
   -- DATA FLOW
   input_workflow(summarize_items) == [items];
+  consumes(analyze_item) == [items];
   foreach_item(analyze_item, items) == item_result;
   produces(analyze_item) == [analyzed_items];
   consumes(merge_summary) == [analyzed_items];
@@ -516,14 +518,14 @@ workflow summarize_items {
 
 `items` and `analyzed_items` are collection-valued Artifacts. The repeated Step is declared once; every dataflow relation still names its Artifact identities inside an explicit List RHS. The merge Step consumes the complete collection and produces one final Artifact.
 
-Do not encode free-form command strings, code, prompts, or secrets as quoted constants. `grammar/FusionFlow.g4` defines quoted constants as restricted IDs, not general strings.
+Do not encode free-form command strings, code, prompts, or secrets as quoted constants. `grammar/FusionFlow.g4` permits restricted quoted IDs and workspace-relative `"./..."` paths; neither is a general string.
 
 ### Anti-patterns to refuse
 
 1. **Hand-writing imports or imperative runtime calls.** The authored program is FusionFlow G4 source.
 2. **Inventing a keyword or operator.** Flexible call syntax does not make unknown names valid.
 3. **Using `==` inside a condition or `=` for a workflow assertion.** These have different grammar roles.
-4. **Treating quoted constants as prompt strings.** They are restricted IDs, not free-form text.
+4. **Treating quoted constants as prompt strings.** They are restricted IDs or explicit workspace-relative paths, not free-form text.
 5. **Treating `max_attempts` as a workflow loop or score gate.** It only sets the attempt limit for one Step.
 6. **Agentic/external execution over a large item list without a cost check.** Each item may start a subprocess; keep expensive executors for work that needs them.
 7. **Inlining a large document into an instruction identity or runtime argument.** Store the document under `<workDir>` and pass a path to a read-enabled executor.
