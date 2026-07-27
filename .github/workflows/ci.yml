@@ -58,6 +58,13 @@ jobs:
       - name: Test FusionFlow Next
         working-directory: examples/haitun-workspace/skills/fusion-flow-next
         run: uv run python -m pytest -q --rootdir=. test
+      - name: Test workspace tool worker
+        run: >-
+          uv run python -m pytest -q --no-cov -p no:cacheprovider
+          tests/psi_agent/test_workspace_tool_worker.py
+          tests/psi_agent/session/test_agent.py::test_agent_exposes_ai_socket_only_during_tool_execution
+      - name: Smoke-test workspace tool worker CLI
+        run: uv run psi-agent workspace-tool-worker --help
 
   test:
     if: false # Temporarily pause the repository-wide suite; scoped suites run separately.
