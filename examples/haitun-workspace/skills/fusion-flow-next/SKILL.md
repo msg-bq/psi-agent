@@ -395,6 +395,9 @@ Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole author
 - Model fan-in with `consumes_multi(step) == [artifact_a, artifact_b];`.
 - Model per-item work with `foreach_item(step, items) == item_result;`.
 - Bind each step to its executor with `step_executor`.
+- For a Program executed by the example runner, add `program_path(program) == path_identity`. The runner resolves the identity (or accepts an explicit `./` path), calls `flow.exec` from an explicit working directory, sends the step instruction and consumed Artifacts as JSON on stdin, and uses stdout as the single produced Artifact.
+- An Agent may declare `agent_system(agent) == instruction_identity`. The runner resolves that identity into `AgentConfig.system`; `step_instruction` remains the per-call prompt and consumed Artifacts become the per-call context.
+- Pass workflow inputs explicitly by Artifact ID to `execute_workflow(inputs=...)`. Do not invent `value_from`; external source adapters are a separate runtime concern.
 - Configure concurrency, retries, timeouts, resources, and agent limits with the corresponding preset operators.
 - Use `if(formula, then_term, else_term)` wherever one term is expected. It selects a term; it is not a Step, block, loop, quality gate, or scoring mechanism.
 - Variables, quantifiers, rules, implications, biconditionals, query/SAT/optimization requests, local concept declarations, local operator declarations, and imperative blocks are outside this language.

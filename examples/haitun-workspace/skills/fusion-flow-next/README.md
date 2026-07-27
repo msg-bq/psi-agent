@@ -55,8 +55,10 @@ The package exports `WorkflowGraphCompiler`, `WorkflowGraphCompilation`, and
 `WorkflowGraphCompilationError`.
 
 This remains an example-local package rather than a wheel dependency. The
-execution subpackage is a compatibility boundary, not the G4 runtime. Run all
-tests from this directory so `fusion_flow_next` is on the runtime import path:
+execution subpackage does not parse or compile G4. The opt-in
+`examples/run_workflow.py` bridge compiles one graph, then runs its Agent and
+Program steps through that execution package. Run all tests from this directory
+so `fusion_flow_next` is on the runtime import path:
 
 ```powershell
 uv run python -m pytest -q
@@ -70,10 +72,11 @@ Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimizat
 
 ## Activation boundary
 
-Do not connect `fusion_flow_next.execution` to `SKILL.md`, workspace tools, or
-the G4 graph runner merely because it now shares the correct package boundary.
-That integration still requires an explicit Core IR / `WorkflowGraph` runtime
-contract.
+Do not activate the example runner from workspace tools automatically. Its
+runtime contract is deliberately explicit: callers supply workflow inputs by
+Artifact ID, resolve catalog path and instruction identities, and inject an
+Agent session runner. There is no implicit `value_from` or external-source
+adapter.
 
 Integrate in this order: generated parser -> real functions and checks -> inactive or opt-in Haitun checker tool -> prompt opt-in -> replace legacy only after migration is complete. Existing `fusion-flow` remains the source of truth until the final migration.
 
