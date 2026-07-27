@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 
-import anyio
 from fusion_flow_next import (
     Concept,
     Operator,
@@ -20,6 +18,8 @@ from psi_agent.workflow_execution import StepDispatcher, execute_plan, generate_
 from psi_agent.workflow_graph import ProducesEdge, StepNode, WorkflowGraph
 
 type Completion = Callable[[str], Awaitable[str]]
+type HumanInstructionPreparer = Callable[[str], Awaitable[str]]
+type HumanRequester = Callable[[str], Awaitable[object]]
 type ExecutorKind = Literal["Agent", "Human", "Program"]
 
 
@@ -96,58 +96,11 @@ def compile_workflow(source: str) -> CompiledWorkflow:
     return CompiledWorkflow(graph=compilation.graph, executor_kinds=executor_kinds)
 
 
-async def _read_human_instruction(workflow_path: str, instruction_path: str) -> str:
-    if os.path.splitext(workflow_path)[1] != ".workflow":
-        raise ValueError("a .workflow file path is required to resolve a human instruction")
-    if (
-        os.path.isabs(instruction_path)
-        or os.path.splitdrive(instruction_path)[0]
-        or instruction_path.startswith(("/", "\\"))
-        or (len(instruction_path) > 1 and instruction_path[1] == ":")
-    ):
-        raise ValueError("human instruction path must be relative to the workflow")
-    if not instruction_path.startswith("./"):
-        raise ValueError("human instruction path must start with './'")
-
-    relative_path = instruction_path[2:]
-    if (
-        not relative_path
-        or os.path.isabs(relative_path)
-        or os.path.splitdrive(relative_path)[0]
-        or relative_path.startswith(("//", "\\\\"))
-        or (len(relative_path) > 1 and relative_path[1] == ":")
-    ):
-        raise ValueError("human instruction path must be relative to the workflow")
-    if ".." in relative_path.replace("\\", "/").split("/"):
-        raise ValueError("human instruction path must not contain '..' segments")
-
-    base_path = str(await anyio.Path(os.path.dirname(workflow_path)).resolve())
-    target_path = str(await anyio.Path(os.path.join(base_path, relative_path)).resolve())
-    try:
-        common_path = os.path.commonpath((base_path, target_path))
-    except ValueError:
-        raise ValueError("human instruction file escapes the workflow directory") from None
-    if os.path.normcase(common_path) != os.path.normcase(base_path):
-        raise ValueError("human instruction file escapes the workflow directory")
-
-    path = anyio.Path(target_path)
-    if not await path.exists():
-        raise ValueError(f"human instruction file does not exist: {instruction_path}")
-    if not await path.is_file():
-        raise ValueError(f"human instruction path must reference a regular file: {instruction_path}")
-    try:
-        instruction = await path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as error:
-        raise ValueError(f"human instruction file must be valid UTF-8: {instruction_path}") from error
-    if not instruction.strip():
-        raise ValueError(f"human instruction file must not be empty: {instruction_path}")
-    return instruction
-
-
 def _build_dispatch(
     compiled: CompiledWorkflow,
     complete: Completion,
-    workflow_path: str,
+    prepare_human_instruction: HumanInstructionPreparer | None,
+    request_human: HumanRequester | None,
 ) -> StepDispatcher:
     graph = compiled.graph
     outputs_by_step: dict[str, list[str]] = {step.step_id: [] for step in graph.steps}
@@ -162,17 +115,23 @@ def _build_dispatch(
         if len(output_ids) != 1:
             raise ValueError(f"step {step.step_id!r} must produce exactly one artifact")
         instruction = step.instruction_id
-        if instruction.startswith("./") and compiled.executor_kinds[step.executor_id] == "Human":
-            instruction_path = instruction
-            try:
-                instruction = await _read_human_instruction(workflow_path, instruction_path)
-            except ValueError as error:
-                raise ValueError(f"step {step.step_id!r} human instruction {instruction_path!r}: {error}") from None
-            except OSError as error:
+        if compiled.executor_kinds[step.executor_id] == "Human":
+            if prepare_human_instruction is None or request_human is None:
                 raise ValueError(
-                    f"step {step.step_id!r} human instruction {instruction_path!r}: "
-                    f"file access failed ({type(error).__name__})"
-                ) from None
+                    f"step {step.step_id!r} requires prepare_human_instruction and request_human callbacks"
+                )
+            preparation_prompt = (
+                "Prepare this workflow step for a human.\n"
+                f"Step: {step.step_id}\n"
+                f"Instruction or reference: {instruction}\n"
+                f"Inputs: {json.dumps(dict(inputs), ensure_ascii=False, sort_keys=True, default=str)}\n"
+                "Produce concise, readable guidance. Decide whether referenced resources need inspection "
+                "using your available tools and normal approval flow. Do not invent inaccessible contents."
+            )
+            prepared_instruction = await prepare_human_instruction(preparation_prompt)
+            if not prepared_instruction.strip():
+                raise ValueError(f"step {step.step_id!r} human instruction preparation returned no text")
+            return {output_ids[0]: await request_human(prepared_instruction)}
         prompt = (
             f"Instruction: {instruction}\n"
             f"Inputs: {json.dumps(dict(inputs), ensure_ascii=False, sort_keys=True, default=str)}\n"
@@ -186,11 +145,12 @@ def _build_dispatch(
 async def execute_workflow(
     source: str,
     *,
-    workflow_path: str,
     request: str,
     complete: Completion,
+    prepare_human_instruction: HumanInstructionPreparer | None = None,
+    request_human: HumanRequester | None = None,
 ) -> dict[str, object]:
-    """Execute one workflow with an injected text completion function."""
+    """Execute one workflow with injected Agent completion and Human request boundaries."""
 
     compiled = compile_workflow(source)
     graph = compiled.graph
@@ -198,5 +158,5 @@ async def execute_workflow(
         generate_plan(graph),
         graph,
         inputs={"request": request},
-        dispatch=_build_dispatch(compiled, complete, workflow_path),
+        dispatch=_build_dispatch(compiled, complete, prepare_human_instruction, request_human),
     )
