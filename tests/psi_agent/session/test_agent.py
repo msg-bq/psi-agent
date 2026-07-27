@@ -9,7 +9,7 @@ import anyio
 import pytest
 from aiohttp import web
 
-from psi_agent.session.agent import SessionAgent
+from psi_agent.session.agent import SessionAgent, current_tool_ai_socket
 from psi_agent.session.ai_client import AiClient
 from psi_agent.session.conversation import Conversation
 from psi_agent.session.protocol import AgentChunk, AgentError
@@ -377,6 +377,55 @@ async def test_agent_tool_returns_int(tmp_path: Path) -> None:
         chunks = [c async for c in agent.run({"role": "user", "content": "t"})]
         reasoning = "".join(c.reasoning or "" for c in chunks)
         assert "42" in reasoning
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_agent_exposes_ai_socket_only_during_tool_execution(tmp_path: Path) -> None:
+    handler = await _make_inline_ai_handler([_tc("socket_tool", "{}"), _stop("done")])
+    app = web.Application()
+    app.router.add_post("/chat/completions", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    sock = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    site = web.SockSite(runner, sock)
+    await site.start()
+    ai_socket = f"http://127.0.0.1:{port}"
+    observed: list[str | None] = []
+
+    try:
+
+        async def socket_tool() -> str:
+            observed.append(current_tool_ai_socket())
+            return current_tool_ai_socket() or ""
+
+        tf = ToolFunction(
+            name="socket_tool",
+            description="X",
+            parameters={"type": "object", "properties": {}, "required": []},
+        )
+        agent = SessionAgent(
+            ai_client=AiClient(ai_socket),
+            tool_registry=ToolRegistry(
+                files={
+                    "__test__": FileEntry(
+                        file_hash="",
+                        tools={"socket_tool": tf},
+                        funcs={"socket_tool": socket_tool},
+                    )
+                }
+            ),
+        )
+
+        chunks = [chunk async for chunk in agent.run({"role": "user", "content": "t"})]
+        reasoning = "".join(chunk.reasoning or "" for chunk in chunks)
+
+        assert observed == [ai_socket]
+        assert ai_socket in reasoning
+        assert current_tool_ai_socket() is None
     finally:
         await runner.cleanup()
 

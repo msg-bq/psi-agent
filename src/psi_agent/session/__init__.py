@@ -9,6 +9,7 @@ from loguru import logger
 
 from psi_agent._logging import setup_logging
 from psi_agent.session.agent import SessionAgent
+from psi_agent.session.agent import current_tool_ai_socket as current_tool_ai_socket
 from psi_agent.session.server import serve_session
 
 

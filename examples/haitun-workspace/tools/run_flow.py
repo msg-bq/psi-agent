@@ -40,7 +40,7 @@ import anyio
 from psi_agent._sockets import resolve_connector_and_endpoint
 from psi_agent.channel._core import ChannelCore
 from psi_agent.channel._types import TextChunk
-from psi_agent.session import Session
+from psi_agent.session import Session, current_tool_ai_socket
 from psi_agent.workflow_execution import (
     Await,
     ExecutionPlan,
@@ -975,6 +975,7 @@ def _argv_flag(flag: str) -> str:
 
 def _resolve_ai_socket() -> str:
     for value in (
+        current_tool_ai_socket() or "",
         os.environ.get("FLOW_NEXT_AI_SOCKET", ""),
         os.environ.get("FLOW_PSI_AI_SOCKET", ""),
         _argv_flag("--ai-socket"),
