@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from fusion_flow_next import (
+    Assertion,
+    CompoundTerm,
     Concept,
+    Constant,
     Operator,
     ParseContext,
     WorkflowGraphCompilation,
@@ -27,6 +30,8 @@ type ExecutorKind = Literal["Agent", "Human", "Program"]
 class CompiledWorkflow:
     graph: WorkflowGraph
     executor_kinds: Mapping[str, ExecutorKind]
+    program_paths: Mapping[str, str]
+    agent_systems: Mapping[str, str]
 
 
 _CONCEPT_NAMES = (
@@ -36,21 +41,78 @@ _CONCEPT_NAMES = (
     "ComplexNumber",
     "Human",
     "Instruction",
+    "Path",
     "Program",
     "Step",
     "StepName",
     "Workflow",
 )
 _OPERATOR_NAMES = (
+    "agent_system",
     "consumes",
     "input_workflow",
     "max_concurrency",
     "output_workflow",
     "produces",
+    "program_path",
     "step_executor",
     "step_instruction",
     "step_name",
 )
+_EXECUTOR_CONFIGURATION_OPERATORS = frozenset({"agent_system", "program_path"})
+
+
+def _typed_constant(value: object, concept_name: str, context: str) -> Constant:
+    if not isinstance(value, Constant) or not value.symbol:
+        raise ValueError(f"{context} must be a non-empty constant")
+    concepts = {concept.name for concept in value.belong_concepts}
+    if concept_name not in concepts:
+        raise ValueError(f"{context} must belong to {concept_name}")
+    return value
+
+
+def _extract_executor_configuration(
+    assertions: tuple[Assertion, ...],
+) -> tuple[dict[str, str], dict[str, str], tuple[Assertion, ...]]:
+    program_paths: dict[str, str] = {}
+    agent_systems: dict[str, str] = {}
+    residual: list[Assertion] = []
+
+    for assertion in assertions:
+        candidates = tuple(
+            (term, value)
+            for term, value in (
+                (assertion.lhs, assertion.rhs),
+                (assertion.rhs, assertion.lhs),
+            )
+            if isinstance(term, CompoundTerm) and term.operator.name in _EXECUTOR_CONFIGURATION_OPERATORS
+        )
+        if not candidates:
+            residual.append(assertion)
+            continue
+        if len(candidates) != 1:
+            raise ValueError("one equality cannot configure multiple executors")
+
+        call, value = candidates[0]
+        if len(call.arguments) != 1:
+            raise ValueError(f"{call.operator.name} expects 1 argument, got {len(call.arguments)}")
+
+        if call.operator.name == "program_path":
+            executor = _typed_constant(call.arguments[0], "Program", "program_path argument")
+            path = _typed_constant(value, "Path", "program_path value")
+            target = program_paths
+            configured_value = path.symbol
+        else:
+            executor = _typed_constant(call.arguments[0], "Agent", "agent_system argument")
+            system = _typed_constant(value, "Instruction", "agent_system value")
+            target = agent_systems
+            configured_value = system.symbol
+
+        if executor.symbol in target:
+            raise ValueError(f"duplicate {call.operator.name} for {executor.symbol!r}")
+        target[executor.symbol] = configured_value
+
+    return program_paths, agent_systems, tuple(residual)
 
 
 def compile_workflow(source: str) -> CompiledWorkflow:
@@ -61,6 +123,16 @@ def compile_workflow(source: str) -> CompiledWorkflow:
     operators["step_instruction"] = Operator(
         name="step_instruction",
         input_concepts=(concepts["Step"],),
+        output_concept=concepts["Instruction"],
+    )
+    operators["program_path"] = Operator(
+        name="program_path",
+        input_concepts=(concepts["Program"],),
+        output_concept=concepts["Path"],
+    )
+    operators["agent_system"] = Operator(
+        name="agent_system",
+        input_concepts=(concepts["Agent"],),
         output_concept=concepts["Instruction"],
     )
     context = ParseContext(
@@ -86,7 +158,8 @@ def compile_workflow(source: str) -> CompiledWorkflow:
     if len(compilations) != 1:
         raise ValueError("workflow runner expects exactly one workflow")
     compilation = compilations[0]
-    if compilation.residual_assertions:
+    program_paths, agent_systems, residual = _extract_executor_configuration(compilation.residual_assertions)
+    if residual:
         raise ValueError("workflow contains assertions that the graph compiler cannot execute")
     executor_kinds: dict[str, ExecutorKind] = {}
     for constant in parsed.core_ir.constants:
@@ -95,7 +168,14 @@ def compile_workflow(source: str) -> CompiledWorkflow:
             executor_kinds[constant.symbol] = cast(ExecutorKind, matches.pop())
     for step in compilation.graph.steps:
         executor_kinds.setdefault(step.executor_id, "Agent")
-    return CompiledWorkflow(graph=compilation.graph, executor_kinds=executor_kinds)
+        if executor_kinds[step.executor_id] == "Program" and step.executor_id not in program_paths:
+            raise ValueError(f"Program executor {step.executor_id!r} has no program_path")
+    return CompiledWorkflow(
+        graph=compilation.graph,
+        executor_kinds=executor_kinds,
+        program_paths=program_paths,
+        agent_systems=agent_systems,
+    )
 
 
 def _build_dispatch(

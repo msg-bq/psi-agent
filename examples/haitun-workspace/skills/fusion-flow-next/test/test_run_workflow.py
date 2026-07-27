@@ -24,7 +24,12 @@ def _load_module(name: str, path: str) -> Any:
 run_workflow = _load_module("fusion_flow_next_workflow_runner", _RUNNER_PATH)
 
 
-def _dispatch_workflow(executor_kind: str | None, instruction: str) -> str:
+def _dispatch_workflow(
+    executor_kind: str | None,
+    instruction: str,
+    *,
+    executor_configuration: str = "",
+) -> str:
     executor_declaration = "" if executor_kind is None else f"const worker: {executor_kind};"
     return f"""
 const dispatch: Workflow;
@@ -37,6 +42,7 @@ const result: Artifact;
 workflow dispatch {{
     input_workflow(dispatch, request) == True;
     output_workflow(dispatch, result) == True;
+    {executor_configuration}
     step_name(dispatch_step) == dispatch_name;
     step_instruction(dispatch_step) == "{instruction}";
     step_executor(dispatch_step) == worker;
@@ -44,6 +50,65 @@ workflow dispatch {{
     produces(dispatch_step, result) == True;
 }}
 """
+
+
+@pytest.mark.parametrize(
+    ("executor_kind", "configuration", "field", "expected"),
+    [
+        ("Program", 'program_path(worker) == "./bin/worker";', "program_paths", {"worker": "./bin/worker"}),
+        (
+            "Agent",
+            '"./instructions/worker.md" == agent_system(worker);',
+            "agent_systems",
+            {"worker": "./instructions/worker.md"},
+        ),
+    ],
+)
+def test_compile_workflow_extracts_executor_configuration(
+    executor_kind: str,
+    configuration: str,
+    field: str,
+    expected: dict[str, str],
+) -> None:
+    compiled = run_workflow.compile_workflow(
+        _dispatch_workflow(
+            executor_kind,
+            "do_work",
+            executor_configuration=configuration,
+        )
+    )
+
+    assert getattr(compiled, field) == expected
+
+
+def test_compile_workflow_requires_program_path() -> None:
+    with pytest.raises(ValueError, match="has no program_path"):
+        run_workflow.compile_workflow(_dispatch_workflow("Program", "do_work"))
+
+
+def test_compile_workflow_rejects_duplicate_executor_configuration() -> None:
+    with pytest.raises(ValueError, match="duplicate program_path"):
+        run_workflow.compile_workflow(
+            _dispatch_workflow(
+                "Program",
+                "do_work",
+                executor_configuration="""
+                program_path(worker) == "./bin/first";
+                program_path(worker) == "./bin/second";
+                """,
+            )
+        )
+
+
+def test_compile_workflow_rejects_unknown_residual_assertion() -> None:
+    with pytest.raises(ValueError, match="graph compiler cannot execute"):
+        run_workflow.compile_workflow(
+            _dispatch_workflow(
+                "Agent",
+                "do_work",
+                executor_configuration="worker == worker;",
+            )
+        )
 
 
 @pytest.mark.anyio
@@ -83,7 +148,11 @@ async def test_non_human_executor_receives_instruction_path_unchanged(
         return "completed"
 
     result = await run_workflow.execute_workflow(
-        _dispatch_workflow(executor_kind, instruction),
+        _dispatch_workflow(
+            executor_kind,
+            instruction,
+            executor_configuration=('program_path(worker) == "./bin/worker";' if executor_kind == "Program" else ""),
+        ),
         request="Do the work.",
         complete=complete,
     )
