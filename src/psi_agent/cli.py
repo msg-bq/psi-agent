@@ -7,6 +7,7 @@ import tyro
 from tyro import conf
 
 from psi_agent._run import Run
+from psi_agent._workspace_tool_worker import WorkspaceToolWorker
 from psi_agent.ai import Ai
 from psi_agent.channel.cli import ChannelCli
 from psi_agent.channel.feishu import ChannelFeishu
@@ -22,10 +23,17 @@ ChannelGroup = Annotated[
     | Annotated[ChannelFeishu, conf.subcommand(name="feishu")],
     conf.subcommand(name="channel", description="User interface channels"),
 ]
+WorkspaceToolWorkerCommand = Annotated[
+    WorkspaceToolWorker,
+    conf.subcommand(
+        name="workspace-tool-worker",
+        description="Internal entry point for detached workspace-tool workers",
+    ),
+]
 
 
 def main() -> None:
-    cmd = tyro.cli(Run | Ai | Session | ChannelGroup | Gateway)
+    cmd = tyro.cli(Run | Ai | Session | ChannelGroup | Gateway | WorkspaceToolWorkerCommand)
     anyio.run(cmd.run)
 
 

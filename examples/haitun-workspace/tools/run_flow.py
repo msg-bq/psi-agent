@@ -38,6 +38,7 @@ import aiohttp
 import anyio
 
 from psi_agent._sockets import resolve_connector_and_endpoint
+from psi_agent._workspace_tool_worker import is_standalone_executable
 from psi_agent.channel._core import ChannelCore
 from psi_agent.channel._types import TextChunk
 from psi_agent.session import Session, current_tool_ai_socket
@@ -1022,21 +1023,41 @@ def _pid_alive(pid: int) -> bool:
 
 async def _spawn_worker(state_path: anyio.Path, *, cwd: str) -> int:
     configured_python = os.environ.get("FLOW_NEXT_PYTHON", "").strip()
+    reset_pyinstaller_environment = False
     if configured_python:
         configured_python = _resolve_worker_python(configured_python)
         argv = [configured_python, _THIS_FILE, "--worker", str(state_path)]
+    elif is_standalone_executable():
+        argv = [
+            sys.executable,
+            "workspace-tool-worker",
+            _THIS_FILE,
+            str(state_path),
+        ]
+        reset_pyinstaller_environment = bool(vars(sys).get("frozen", False))
     else:
         argv = [sys.executable, _THIS_FILE, "--worker", str(state_path)]
+    state = await _read_json_object(state_path)
+    log_value = state.get("log_path") if state is not None else None
+    if not isinstance(log_value, str) or not log_value:
+        raise RuntimeError("worker state is missing log_path")
+    log_path = anyio.Path(log_value)
+    await log_path.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict[str, Any] = {
         "cwd": cwd,
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
         "start_new_session": True,
     }
+    if reset_pyinstaller_environment:
+        kwargs["env"] = {
+            **os.environ,
+            "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        }
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_BREAKAWAY_FROM_JOB
-    process = await anyio.open_process(argv, **kwargs)
+    async with await anyio.open_file(log_path, "ab") as worker_log:
+        process = await anyio.open_process(argv, stderr=worker_log.wrapped, **kwargs)
     return int(process.pid or 0)
 
 
