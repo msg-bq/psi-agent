@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import sys
-from collections import Counter
 from typing import Any, cast
 
+import anyio
 import pytest
 
-from psi_agent.workflow_execution import ExecutionPlanError, generate_plan
+from psi_agent.workflow_execution import generate_plan
 from psi_agent.workflow_graph.model import ConsumesEdge, ProducesEdge
 
 _EXAMPLE_DIR = os.path.join(
@@ -66,15 +67,32 @@ def _parse_context(source: str) -> ParseContext:
     return ParseContext(concepts=concepts, operators=operators)
 
 
-def test_catalyst_runner_reaches_catalog_assertion_boundary() -> None:
-    with open(_WORKFLOW_PATH, encoding="utf-8") as workflow_file:
-        source = workflow_file.read()
+@pytest.mark.anyio
+async def test_catalyst_runner_executes_the_complete_dataflow() -> None:
+    source = await anyio.Path(_WORKFLOW_PATH).read_text(encoding="utf-8")
+    inputs = json.loads(
+        await anyio.Path(os.path.join(_EXAMPLE_DIR, "catalyst.inputs.json")).read_text(encoding="utf-8")
+    )
+    prompts: list[str] = []
 
-    with pytest.raises(ValueError, match="workflow contains assertions that the graph compiler cannot execute"):
-        run_workflow.compile_workflow(source)
+    async def complete(prompt: str) -> dict[str, object]:
+        prompts.append(prompt)
+        outputs = json.loads(prompt.splitlines()[2].removeprefix("Outputs: "))
+        return {output_id: f"{output_id}: done" for output_id in outputs}
+
+    result = await run_workflow.execute_workflow(
+        source,
+        inputs=inputs,
+        complete=complete,
+    )
+
+    compiled = run_workflow.compile_workflow(source)
+    expected_outputs = {artifact.artifact_id for artifact in compiled.graph.artifacts if artifact.is_output}
+    assert set(result) == expected_outputs
+    assert len(prompts) == len(compiled.graph.steps) == 12
 
 
-def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary() -> None:
+def test_catalyst_example_migrates_instructions_and_preserves_dataflow() -> None:
     with open(_WORKFLOW_PATH, encoding="utf-8") as workflow_file:
         source = workflow_file.read()
     result = parse_workflow(source, context=_parse_context(source))
@@ -181,20 +199,5 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
         "tmp_candidates_directory_after_recommendations",
         "tmp_knowledge_directory",
     }
-    residual_operator_counts = Counter(
-        assertion.lhs.operator.name
-        for assertion in compilation.residual_assertions
-        if isinstance(assertion.lhs, CompoundTerm)
-    )
-    assert residual_operator_counts == Counter(
-        {
-            "allowed_tool": 11,
-            "batch_size": 1,
-            "exclusive_lease": 2,
-            "independent": 4,
-            "member_of": 6,
-            "parallelism": 1,
-        }
-    )
-    with pytest.raises(ExecutionPlanError, match="resource scheduling is not supported"):
-        generate_plan(compilation.graph)
+    assert compilation.residual_assertions == ()
+    generate_plan(compilation.graph)

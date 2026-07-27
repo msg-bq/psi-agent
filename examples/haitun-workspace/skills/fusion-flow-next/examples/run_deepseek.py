@@ -52,7 +52,7 @@ async def _complete_with_deepseek(prompt: str) -> dict[str, object]:
                     },
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=512,
+                max_tokens=4096,
                 temperature=0.0,
                 response_format={"type": "json_object"},
                 stream=False,

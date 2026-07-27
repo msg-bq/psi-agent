@@ -55,10 +55,11 @@ JSON is only the CLI/provider transport used by `run_deepseek.py`; the workflow
 and dispatcher contract remains an N-input/N-output Python mapping.
 
 `examples/catalyst/catalyst.workflow` preserves the larger Catalyst topology,
-instruction references, policies, resources, and catalog assertions. It parses
-and compiles to a graph, but full execution intentionally stops first at the
-residual catalog-assertion boundary. A direct planner probe then stops at
-`resource scheduling is not supported`, before any DeepSeek request.
+instruction references, and complete Artifact dataflow. Optional external
+catalog and resource policies (`allowed_tool`, grouping/parallelism,
+`batch_size`, and GPU leases) are omitted because they do not affect this
+one-shot dataflow example and the current runner does not implement them. The
+bundled test executes all 12 Steps with a mock completion boundary.
 
 ## Current scope and known gaps
 

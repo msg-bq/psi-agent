@@ -414,41 +414,6 @@ workflow coscientist_ows {
         prepare_workflow_step_result
     ];
 
-    -- The recommendation area contains four parallel independent branches.
-    -- parallelism=4 is the number of recommendation workers.
-    member_of(
-        recommend_1_step,
-        catalyst_recommendation_subagent_group
-    ) == True;
-    member_of(
-        recommend_2_step,
-        catalyst_recommendation_subagent_group
-    ) == True;
-    member_of(
-        recommend_3_step,
-        catalyst_recommendation_subagent_group
-    ) == True;
-    member_of(
-        recommend_4_step,
-        catalyst_recommendation_subagent_group
-    ) == True;
-    parallelism(catalyst_recommendation_subagent_group) == 4;
-    independent(recommend_1_step) == True;
-    independent(recommend_2_step) == True;
-    independent(recommend_3_step) == True;
-    independent(recommend_4_step) == True;
-
-    -- 鏅朵綋鐢熸垚璇勬祴鍖哄彧鍖呭惈 MatterGen 涓?MatterSim 涓や釜鎵ц姝ラ锛?
-    -- 涓棿鐨勫€欓€夊偓鍖栧墏缁撴瀯姹犳槸 Artifact锛屼笉鏄?Step銆?
-    member_of(
-        mattergen_step,
-        crystal_generation_evaluation_subagent_group
-    ) == True;
-    member_of(
-        mattersim_step,
-        crystal_generation_evaluation_subagent_group
-    ) == True;
-
     -- 鎵ц鍣ㄦ槧灏勶細鐧芥澘 subagent -> 瀵瑰簲涓氬姟 Step銆?
     step_instruction(
         recommend_1_step
@@ -501,54 +466,6 @@ workflow coscientist_ows {
         shutdown_step
     ) == "./instructions/shutdown-workflow.md";
     step_executor(shutdown_step) == main_coordinator_agent;
-
-    -- 鐧芥澘鏄庣‘鍑虹幇鈥滆仈缃戞悳绱⑩€濓紝浣嗘病鏈夌粰鍑?Model銆丒ngine銆丄piBase 绛夐厤缃紱
-    -- 鍥犳鍙０鏄庡厑璁镐娇鐢ㄧ殑宸ュ叿锛屼笉浼€?agent_config銆?
-    allowed_tool(recommender_1_agent, web_search_tool) == True;
-    allowed_tool(recommender_2_agent, web_search_tool) == True;
-    allowed_tool(recommender_3_agent, web_search_tool) == True;
-    allowed_tool(recommender_4_agent, web_search_tool) == True;
-    allowed_tool(
-        crystal_generation_evaluation_agent,
-        web_search_tool
-    ) == True;
-    allowed_tool(
-        synthesis_route_designer_agent,
-        web_search_tool
-    ) == True;
-    allowed_tool(
-        synthesis_route_designer_agent,
-        round_parallel_synthesis_advisor_skill
-    ) == True;
-    allowed_tool(
-        performance_prover_agent,
-        catalytic_performance_prover_skill
-    ) == True;
-    allowed_tool(
-        synthesis_safety_feasibility_judge_agent,
-        synthesis_safety_feasibility_judge_skill
-    ) == True;
-    allowed_tool(
-        crystal_generation_evaluation_agent,
-        mattergen_skill
-    ) == True;
-    allowed_tool(
-        crystal_generation_evaluation_agent,
-        mattersim_skill
-    ) == True;
-
-    -- 闄勪欢琛ュ厖鐨勫疄鐜板弬鏁帮紝涓嶆妸瀹冧滑鐢绘垚棰濆涓氬姟鑺傜偣锛?
-    --   * MatterSim 浠?8 涓?sampled candidate 涓轰竴涓?micro-batch锛?
-    --   * 涓や釜鎶€鑳藉悇闇€瑕?1 鍧?GPU锛?
-    --   * MatterGen ideally runs one subprocess per confirmed GPU ID, and each
-    --     subprocess owns one GPU ID while sampling;
-    --   * MatterSim 浠?8 涓?sampled candidate 涓轰竴涓?micro-batch锛屽苟鍚屾牱闇€瑕?
-    --     鎺掍粬 GPU銆?
-    batch_size(mattersim_step) == 8;
-    resource_requirement(mattergen_step, gpu_device) == 1;
-    resource_requirement(mattersim_step, gpu_device) == 1;
-    exclusive_lease(mattergen_step, gpu_device) == True;
-    exclusive_lease(mattersim_step, gpu_device) == True;
 
     -- 宸︿晶鐭ヨ瘑/瑙勫垯/鍘嗗彶鍒嗙粍棣堝叆鍥涗釜鎺ㄨ崘鍣ㄣ€?
     -- candidate_knowledge_base 瀵瑰簲椤堕儴姗欒壊鍙嶉绾匡紱

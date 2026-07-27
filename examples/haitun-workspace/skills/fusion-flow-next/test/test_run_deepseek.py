@@ -56,3 +56,4 @@ async def test_deepseek_completion_returns_named_mapping(monkeypatch: pytest.Mon
 
     assert result == {"draft": "short answer"}
     assert requests[0]["response_format"] == {"type": "json_object"}
+    assert requests[0]["max_tokens"] == 4096
