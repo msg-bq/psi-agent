@@ -27,6 +27,40 @@ compiler abstraction does not select or implement a concrete output target.
 from `psi_agent`, while `psi_agent.workflow_graph` does not import this example
 package.
 
+## Runnable examples
+
+`examples/run_workflow.py` is an opt-in adapter for the executable one-shot
+graph subset. `execute_workflow()` accepts every workflow input as one mapping.
+Each Agent, Program, or Human callback runs once per Step and returns one
+mapping containing every Artifact declared by that Step's `produces`
+relations. The shared executor validates those output keys exactly; the
+example adapter does not impose a single-input or single-output limit.
+
+Three compact workflows exercise a single Step, a sequential dependency, and a
+parallel fan-out/fan-in:
+
+- `examples/single_step.workflow`
+- `examples/sequential.workflow`
+- `examples/parallel_join.workflow`
+
+From this directory, run one against DeepSeek with a JSON object containing all
+workflow inputs:
+
+```powershell
+$env:DEEPSEEK_API_KEY = "..."
+uv run python -m examples.run_deepseek examples/sequential.workflow --inputs-file examples/sequential.inputs.json
+```
+
+JSON is only the CLI/provider transport used by `run_deepseek.py`; the workflow
+and dispatcher contract remains an N-input/N-output Python mapping.
+
+`examples/catalyst/catalyst.workflow` preserves the larger Catalyst topology,
+instruction references, and complete Artifact dataflow. Optional external
+catalog and resource policies (`allowed_tool`, grouping/parallelism,
+`batch_size`, and GPU leases) are omitted because they do not affect this
+one-shot dataflow example and the current runner does not implement them. The
+bundled test executes all 12 Steps with a mock completion boundary.
+
 ## Current scope and known gaps
 
 The language contract now covers file-level identity declarations, assertions, `!`/`AND`/`OR` formulas and comparisons, arithmetic, Lists, and value-producing `if(condition, then, else)` expressions. Workflow blocks contain assertions; a standalone Bool-returning operator call is shorthand for that call asserted equal to `True`. Concepts and operator signatures come from an external catalog. The 19 preset operators are split into four disjoint owner groups. The canonical dataflow operators `input_workflow(Workflow)`, `output_workflow(Workflow)`, `consumes(Step)`, and `produces(Step)` return ordinary List terms. `FusionFlow.g4` fixes `if` at three arguments while ordinary preset and externally registered operators keep flexible call arity for checker-owned validation.
@@ -70,9 +104,10 @@ Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimizat
 
 ## Activation boundary
 
-Do not connect `fusion_flow_next.execution` to `SKILL.md`, workspace tools, or
-the G4 graph runner merely because it now shares the correct package boundary.
-That integration still requires an explicit Core IR / `WorkflowGraph` runtime
+The example graph runner remains local and opt-in. Do not connect
+`fusion_flow_next.execution` to `SKILL.md`, workspace tools, or the G4 graph
+runner merely because they now share the correct package boundary. That
+integration still requires an explicit Core IR / `WorkflowGraph` runtime
 contract.
 
 Integrate in this order: generated parser -> real functions and checks -> inactive or opt-in Haitun checker tool -> prompt opt-in -> replace legacy only after migration is complete. Existing `fusion-flow` remains the source of truth until the final migration.

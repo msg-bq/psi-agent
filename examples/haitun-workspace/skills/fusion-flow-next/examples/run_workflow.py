@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -17,9 +18,9 @@ from fusion_flow_next import (
 from psi_agent.workflow_execution import StepDispatcher, execute_plan, generate_plan
 from psi_agent.workflow_graph import ProducesEdge, StepNode, WorkflowGraph
 
-type Completion = Callable[[str], Awaitable[str]]
+type Completion = Callable[[str], Awaitable[Mapping[str, object]]]
 type HumanInstructionPreparer = Callable[[str], Awaitable[str]]
-type HumanRequester = Callable[[str], Awaitable[object]]
+type HumanRequester = Callable[[str], Awaitable[Mapping[str, object]]]
 type ExecutorKind = Literal["Agent", "Human", "Program"]
 
 
@@ -56,8 +57,12 @@ _OPERATOR_NAMES = (
 def compile_workflow(source: str) -> CompiledWorkflow:
     """Parse and compile one workflow into an executable graph."""
 
-    concepts = {name: Concept(name) for name in _CONCEPT_NAMES}
-    operators = {name: Operator(name) for name in _OPERATOR_NAMES}
+    concept_names = set(_CONCEPT_NAMES)
+    concept_names.update(re.findall(r"(?m)^const\s+[A-Za-z_]\w*\s*:\s*([A-Za-z_]\w*)\s*;", source))
+    operator_names = set(_OPERATOR_NAMES)
+    operator_names.update(re.findall(r"(?m)^\s*([A-Za-z_]\w*)\s*\(", source))
+    concepts = {name: Concept(name) for name in concept_names}
+    operators = {name: Operator(name) for name in operator_names}
     operators["step_instruction"] = Operator(
         name="step_instruction",
         input_concepts=(concepts["Step"],),
@@ -113,9 +118,7 @@ def _build_dispatch(
     async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
         if step.instruction_id is None:
             raise ValueError(f"step {step.step_id!r} has no step_instruction")
-        output_ids = outputs_by_step[step.step_id]
-        if len(output_ids) != 1:
-            raise ValueError(f"step {step.step_id!r} must produce exactly one artifact")
+        output_ids = sorted(outputs_by_step[step.step_id])
         instruction = step.instruction_id
         if compiled.executor_kinds[step.executor_id] == "Human":
             if prepare_human_instruction is None or request_human is None:
@@ -127,19 +130,21 @@ def _build_dispatch(
                 f"Step: {step.step_id}\n"
                 f"Instruction or reference: {instruction}\n"
                 f"Inputs: {json.dumps(dict(inputs), ensure_ascii=False, sort_keys=True, default=str)}\n"
+                f"Outputs: {json.dumps(output_ids, ensure_ascii=False)}\n"
                 "Produce concise, readable guidance. Decide whether referenced resources need inspection "
                 "using your available tools and normal approval flow. Do not invent inaccessible contents."
             )
             prepared_instruction = await prepare_human_instruction(preparation_prompt)
             if not prepared_instruction.strip():
                 raise ValueError(f"step {step.step_id!r} human instruction preparation returned no text")
-            return {output_ids[0]: await request_human(prepared_instruction)}
+            return await request_human(prepared_instruction)
         prompt = (
             f"Instruction: {instruction}\n"
             f"Inputs: {json.dumps(dict(inputs), ensure_ascii=False, sort_keys=True, default=str)}\n"
-            "Return only the result for this workflow step."
+            f"Outputs: {json.dumps(output_ids, ensure_ascii=False)}\n"
+            "Return values for the named workflow outputs."
         )
-        return {output_ids[0]: await complete(prompt)}
+        return await complete(prompt)
 
     return dispatch
 
@@ -147,7 +152,7 @@ def _build_dispatch(
 async def execute_workflow(
     source: str,
     *,
-    request: str,
+    inputs: Mapping[str, object],
     complete: Completion,
     prepare_human_instruction: HumanInstructionPreparer | None = None,
     request_human: HumanRequester | None = None,
@@ -159,6 +164,6 @@ async def execute_workflow(
     return await execute_plan(
         generate_plan(graph),
         graph,
-        inputs={"request": request},
+        inputs=inputs,
         dispatch=_build_dispatch(compiled, complete, prepare_human_instruction, request_human),
     )
