@@ -281,7 +281,7 @@ Read `grammar/FusionFlow.g4` completely before using these patterns. The grammar
 | --- | --- | --- |
 | **Fan-out + fan-in** | Several Steps use `consumes(step) == [shared_artifact]`; one final Step uses `consumes(final_step) == [result_a, result_b]`. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
 | **Artifact pipeline** | Each Step produces the Artifact consumed by the next Step. Use `max_attempts` only as the attempt limit for a configured Step. | Writing process, ETL, refine-and-check work. |
-| **Per-item work + merge** | Use `foreach_item` for the repeated Step, `produces(repeated_step) == result_list` for its result List, and `consumes(merge_step) == result_list` on the merge Step. | N PRs, issues, docs, or log records into one report. |
+| **Per-item work + merge** | Use `foreach_item` for the repeated Step, `produces(repeated_step) == [result_list]` for its result List, and `consumes(merge_step) == [result_list]` on the merge Step. | N PRs, issues, docs, or log records into one report. |
 | **Conditional term selection** | Keep every candidate result explicit, then use `if(formula, then_term, else_term)` where one term is expected. Compose formulas with `!`, `AND`, and `OR`; nest `if` for priority selection. | Select one checker-compatible term for a downstream assertion without inventing control-flow syntax. |
 | **Composite workflow** | Combine only the artifact chains, fan-out/fan-in, per-item relations, and conditional term selections above. | When one simple pattern does not cover the task. |
 
@@ -389,7 +389,7 @@ Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole author
 - In `DATA FLOW`, show the complete graph in reading order: workflow inputs, every Step consume/produce relation, then workflow outputs.
 - Write each canonical data-flow operator with its single owner argument and compare it to a List term: `input_workflow(workflow) == [...]`, `output_workflow(workflow) == [...]`, `consumes(step) == [...]`, and `produces(step) == [...]`.
 - Declare external inputs and outputs with `input_workflow` and `output_workflow`. Their sole Workflow argument is the enclosing workflow name.
-- The right-hand side of each canonical data-flow assertion is a List of Artifacts. Use a one-item List for one Artifact and a declared List identity for a per-item result collection.
+- The right-hand side of each canonical data-flow assertion is a List term. Always wrap one Artifact or declared per-item collection identity in a one-item List.
 - Model sequencing through artifacts: a step that produces an artifact precedes a step that consumes it.
 - Model fan-out by making several steps consume the same artifact.
 - Model fan-in with `consumes(step) == [artifact_a, artifact_b];`.
@@ -493,10 +493,10 @@ const editor: Agent, Executor;
 
 workflow summarize_items {
   -- DATA FLOW
-  input_workflow(summarize_items) == items;
+  input_workflow(summarize_items) == [items];
   foreach_item(analyze_item, items) == item_result;
-  produces(analyze_item) == analyzed_items;
-  consumes(merge_summary) == analyzed_items;
+  produces(analyze_item) == [analyzed_items];
+  consumes(merge_summary) == [analyzed_items];
   produces(merge_summary) == [final_summary];
   output_workflow(summarize_items) == [final_summary];
 
