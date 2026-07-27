@@ -26,6 +26,7 @@ def _context() -> ParseContext:
             "ComplexNumber",
             "Count",
             "First",
+            "Instruction",
             "Name",
             "Second",
             "Step",
@@ -66,6 +67,11 @@ def _context() -> ParseContext:
         name="value",
         input_concepts=(concepts["Artifact"],),
         output_concept=concepts["Artifact"],
+    )
+    operators["step_instruction"] = Operator(
+        name="step_instruction",
+        input_concepts=(concepts["Step"],),
+        output_concept=concepts["Instruction"],
     )
     return ParseContext(concepts=concepts, operators=operators)
 
@@ -434,6 +440,26 @@ def test_undeclared_names_are_inferred_and_listed_in_first_use_order() -> None:
     call = result.core_ir.workflows[0].assertions[0].lhs
     assert isinstance(call, CompoundTerm)
     assert call.arguments == (second, first)
+
+
+def test_relative_instruction_path_infers_operator_output_concept() -> None:
+    context = _context()
+    result = parse_workflow(
+        """
+        const review: Step;
+        workflow instructions {
+          step_instruction(review) == "./instructions/review-file.md";
+        }
+        """,
+        context=context,
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    instruction = result.core_ir.workflows[0].assertions[0].rhs
+    assert isinstance(instruction, Constant)
+    assert instruction.symbol == "./instructions/review-file.md"
+    assert instruction.belong_concepts == (context.concepts["Instruction"],)
 
 
 @pytest.mark.parametrize(
