@@ -93,6 +93,8 @@ def compile_workflow(source: str) -> CompiledWorkflow:
         matches = {concept.name for concept in constant.belong_concepts} & {"Agent", "Human", "Program"}
         if len(matches) == 1:
             executor_kinds[constant.symbol] = cast(ExecutorKind, matches.pop())
+    for step in compilation.graph.steps:
+        executor_kinds.setdefault(step.executor_id, "Agent")
     return CompiledWorkflow(graph=compilation.graph, executor_kinds=executor_kinds)
 
 

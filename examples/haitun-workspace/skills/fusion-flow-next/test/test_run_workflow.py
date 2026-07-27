@@ -24,12 +24,13 @@ def _load_module(name: str, path: str) -> Any:
 run_workflow = _load_module("fusion_flow_next_workflow_runner", _RUNNER_PATH)
 
 
-def _dispatch_workflow(executor_kind: str, instruction: str) -> str:
+def _dispatch_workflow(executor_kind: str | None, instruction: str) -> str:
+    executor_declaration = "" if executor_kind is None else f"const worker: {executor_kind};"
     return f"""
 const dispatch: Workflow;
 const dispatch_step: Step;
 const dispatch_name: StepName;
-const worker: {executor_kind};
+{executor_declaration}
 const request: Artifact;
 const result: Artifact;
 
@@ -90,6 +91,25 @@ async def test_non_human_executor_receives_instruction_path_unchanged(
     assert result == {"result": "completed"}
     assert prompts[0].splitlines()[0] == f"Instruction: {instruction}"
     assert f'"{instruction}"' not in prompts[0]
+
+
+@pytest.mark.anyio
+async def test_untyped_executor_defaults_to_agent() -> None:
+    prompts: list[str] = []
+
+    async def complete(prompt: str) -> str:
+        prompts.append(prompt)
+        return "completed"
+
+    instruction = "./instructions/untyped-agent.txt"
+    result = await run_workflow.execute_workflow(
+        _dispatch_workflow(None, instruction),
+        request="Do the work.",
+        complete=complete,
+    )
+
+    assert result == {"result": "completed"}
+    assert prompts[0].splitlines()[0] == f"Instruction: {instruction}"
 
 
 @pytest.mark.anyio

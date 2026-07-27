@@ -147,8 +147,8 @@ class _CoreIRVisitor:
 
         terms = context.term()
         return Assertion(
-            lhs=self.visit_term(terms[0], self._operator_output_concept(terms[1])),
-            rhs=self.visit_term(terms[1], self._operator_output_concept(terms[0])),
+            lhs=self.visit_term(terms[0], self._term_output_concept(terms[1])),
+            rhs=self.visit_term(terms[1], self._term_output_concept(terms[0])),
         )
 
     def visit_formula(self, context: Any) -> Formula:
@@ -316,7 +316,11 @@ class _CoreIRVisitor:
         except KeyError:
             raise ValueError(f"Unknown FusionFlow operator {name!r}.") from None
 
-    def _operator_output_concept(self, context: Any) -> Concept | None:
+    def _term_output_concept(self, context: Any) -> Concept | None:
+        """Return a direct operator output concept through transparent parentheses."""
+
+        while context.LPAREN() is not None:
+            context = context.term(0)
         operator_call = context.operatorCall()
         if operator_call is None:
             return None

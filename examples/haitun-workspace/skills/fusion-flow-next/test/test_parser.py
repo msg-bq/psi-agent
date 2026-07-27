@@ -463,6 +463,34 @@ def test_relative_instruction_path_infers_operator_output_concept() -> None:
 
 
 @pytest.mark.parametrize(
+    "assertion_source",
+    (
+        '(step_instruction(review)) == "./instructions/review-file.md"',
+        '"./instructions/review-file.md" == (step_instruction(review))',
+    ),
+)
+def test_parenthesized_operator_output_concept_is_inferred(assertion_source: str) -> None:
+    context = _context()
+    result = parse_workflow(
+        f"""
+        const review: Step;
+        workflow instructions {{
+          {assertion_source};
+        }}
+        """,
+        context=context,
+    )
+
+    assert result.diagnostics == ()
+    assert isinstance(result.core_ir, WorkflowFile)
+    parsed_assertion = result.core_ir.workflows[0].assertions[0]
+    instruction = parsed_assertion.lhs if isinstance(parsed_assertion.lhs, Constant) else parsed_assertion.rhs
+    assert isinstance(instruction, Constant)
+    assert instruction.symbol == "./instructions/review-file.md"
+    assert instruction.belong_concepts == (context.concepts["Instruction"],)
+
+
+@pytest.mark.parametrize(
     "source",
     (
         "const foo: Agent; workflow conflict { typed(foo, foo) == true; }",
