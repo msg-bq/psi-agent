@@ -64,17 +64,26 @@ The user talks in natural language. Map what they **mean** to one of these actio
 | "跑一下这个 / 帮我跑 X / 执行这个 workflow" | Run the concrete FusionFlow G4 source the user points at, then surface `runId` + key bindings. **This skill does not ship runnable demo examples** — there is no keyword→example catalog to resolve against. |
 | "接着上次那个跑 / 只重跑改动的部分" | (v0.6) Re-run reusing the old `runs/<runId>/`; cached bindings skip the LLM. See "Resume" section |
 | "看看结果 / 刚才那个跑完了吗 / 上次跑得怎么样" | Read `<workDir>/runs/<runId>/execution-graph.json` (or the most recent run) and walk the user through it |
-| "环境齐不齐 / 能不能跑 / 帮我检查下" | Verify Node, the configured runner, the engine CLI on PATH, and authoring readiness (`<workDir>` has `node_modules`); run `npm run doctor` if present |
+| "环境齐不齐 / 能不能跑 / 帮我检查下" | In psi-agent, verify `run_flow` and the current Session AI socket; otherwise use the configured runner's readiness checks. |
 | **"帮我写个工作流做 X / 帮我编排 / 我想让几个 agent ..."** | **Author a new FusionFlow G4 workflow from natural language. See "Authoring Mode" below.** |
 | Anything else workflow-shaped | Interpret intent against this table |
 
 ## Running a Program
 
-Use the workspace's configured workflow runner for FusionFlow G4 source. It validates and executes the workflow as one operation; do not expose internal runtime artifacts to the user. In the psi-agent workspace, use the `flow_run` protocol described under "A flow run is long".
+Use the workspace's configured workflow runner for FusionFlow G4 source. It validates and executes the workflow as one operation; do not expose internal runtime artifacts to the user. In the psi-agent workspace, use the `run_flow` protocol described under "A flow run is long".
 
 ### G4-only boundary
 
 Only author and run FusionFlow G4 source. If the user points to any non-G4 workflow file, do not execute it, treat it as supported, or translate it implicitly. State that this skill accepts G4 source only. If the user explicitly asks to migrate that workflow, enter Authoring Mode and author one new G4 workflow from its intent.
+
+### Current psi-agent runner boundary
+
+`run_flow` lowers G4 through Core IR, `WorkflowGraph`, and `ExecutionPlan`, then
+executes each supported Step in a psi-agent Session. It currently accepts one
+one-shot acyclic Agent DAG. Program/Human executors, residual assertions,
+conditional term selection, foreach, resources, retries, and cycles fail during
+`start` preflight. This boundary overrides broader authoring examples below when
+deciding whether a workflow is runnable in psi-agent.
 
 `<workDir>` is **the directory the user is working in** — almost always the copied `fusion-flow/` bundle folder. How to resolve it:
 
@@ -84,7 +93,9 @@ Only author and run FusionFlow G4 source. If the user points to any non-G4 workf
 
 Never guess a path without verification. Never hardcode `D:/...` or any machine-specific path. Don't go scanning the filesystem for "a flow project" — work in the folder the user is actually in (see Hard-stop #4 in Authoring Mode).
 
-Pass named workflow inputs through the configured runner's input-override mechanism. Do not rewrite the G4 source just to inject one run's values.
+In psi-agent, pass exactly one value for every declared input Artifact, with no
+extra keys, through `inputs_json` or `inputs_path`. Do not rewrite the G4 source
+just to inject one run's values.
 
 Capture the `runId` and run directory returned by the runner.
 
@@ -92,7 +103,7 @@ Use that `runId` to walk the user through the run (see "Reading a Run").
 
 ### Resume
 
-If a run stopped halfway, or the user wants to re-execute only the parts whose inputs changed, submit the same G4 workflow through the configured runner with the prior `runId` as its resume target.
+If a run stopped halfway, or the user wants to re-execute only the parts whose inputs changed, submit the same G4 workflow through the configured runner with the prior `runId` as its resume target. In psi-agent, pass that exact ID as `resume_run_id`; do not use `last` or a run directory created by another runner.
 
 How it behaves:
 
@@ -110,6 +121,9 @@ Tokens reported in `meta.json` only count new calls. Total cost across the origi
 
 Before executing a FusionFlow G4 workflow with Agent-backed Steps:
 
+For psi-agent, confirm that `run_flow` can access the current Session AI socket
+and skip external engine CLI checks. For other configured runners:
+
 1. Confirm the configured engine CLI is on PATH (`claude --version` for the default). v0.7 auth is the engine CLI's own config, not a key in `<workDir>/.env`.
 2. Internally estimate cost/latency from the flow's node count (each LLM call is a CLI subprocess, ~3-10s each; a fan-out with N reviewer sessions ≈ N calls). Fold that into the single plain-language heads-up line ("预计几分钟") — don't dump the per-node math on the user.
 3. Say the one heads-up line, then **run — do not ask "要不要跑" or wait for approval.** The user already asked for the task; building + running the flow is how you do it. (Only exception: they explicitly said "只生成别跑".)
@@ -118,7 +132,7 @@ A workflow whose Steps all use local deterministic Executors and no Agent can sk
 
 ### Running is the runtime's job, not yours
 
-When the user asks to run a workflow, your ENTIRE job is: resolve `<workDir>`, submit the G4 source to the configured runner, then report what the runtime returned. The runtime spawns subprocesses under its own designed environment — git-bash autodetect, clean-env baseline, Windows shell handling. **You do not pre-flight the subprocess environment.** Specifically, before running:
+When the user asks to run a workflow, your ENTIRE job is: resolve `<workDir>`, submit the G4 source to the configured runner, then report what the runtime returned. In psi-agent, submit it only through `run_flow`; the subprocess guidance below applies to other configured runners.
 
 - Do NOT check whether `uv` / `python` / `claude` is "on PATH" in your shell. Your PATH is not the runtime's PATH. A missing binary in your shell does NOT mean the flow will fail.
 - Do NOT `pip install` / `npm install` / modify PATH to "fix" a tool you think is missing.
@@ -129,9 +143,9 @@ Just run the flow. If it actually fails, then go to "When a run fails".
 
 ### A flow run is long — never let a timeout kill it
 
-A workflow run is not a quick shell command. Every LLM step is an external CLI subprocess (10–20s cold start), and parallel or multi-step work routinely takes minutes. Two hard rules:
+A workflow run is not a quick shell command. Agent steps may take seconds, and parallel or multi-step work routinely takes minutes. Two hard rules:
 
-1. **If your client exposes a background/long-running run tool, use it — do NOT run the flow through a foreground shell tool that has a short default timeout.** In the psi-agent workspace this tool is `flow_run`: call `flow_run(action="start", flow_path=...)` to launch the flow in the background, then loop `flow_run(action="status", run_token=...)` — each call blocks until the next node finishes, the flow ends, or a keepalive window elapses — and report progress from what it returns; when it reports done, call `flow_run(action="result", run_token=...)`. This is the ONLY correct way to run a flow there.
+1. **If your client exposes a background/long-running run tool, use it — do NOT run the flow through a foreground shell tool that has a short default timeout.** In psi-agent, call `run_flow(action="start", flow_path=..., inputs_json=...)`, poll with `run_flow(action="status", run_token=...)`, and finish with `run_flow(action="result", run_token=...)`.
 2. **If no background run tool exists** (plain terminal client), use the configured FusionFlow runner with the longest timeout your run tool allows. The runtime writes node-level progress to `runs/<runId>/progress.jsonl` (one JSON line per node start/end, with the node label) while it runs — read that file to report progress, do not assume a silent run is stuck.
 
 ### When a run fails
@@ -581,8 +595,8 @@ Re-run validation after each repair. Stop after 3 failed rounds and report the r
 
 ### Running it (automatic, right after validation)
 
-1. Submit the validated FusionFlow G4 source to the configured workflow runner (no approval step — this follows directly from step 5 of the author loop). In psi-agent, use `flow_run(action="start", flow_path=...)`, then `status`, then `result`.
-2. Capture `[run] <runId>` and `[run] dir: ...` from stdout (these are for *you*, not for the user).
+1. Submit the validated FusionFlow G4 source to the configured workflow runner (no approval step — this follows directly from step 5 of the author loop). In psi-agent, use `run_flow` with `start`, then `status`, then `result`.
+2. Capture the returned `run_token`, `run_id`, and `run_dir` (these are for *you*, not for the user).
 3. After completion (or on error), fall back to the "Reading a Run" protocol — summarize the run for the user in plain business language. Lead with the result, not the file or the metrics.
 4. Only if the user asks how to re-run it later, tell them the workspace-specific invocation. Do not volunteer the source path or internal execution details.
 
