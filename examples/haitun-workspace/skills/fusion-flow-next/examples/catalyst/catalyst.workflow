@@ -150,6 +150,7 @@ const fail_candidates_directory_after_mattersim:Artifact;
 -- opportunistically while doing their original stage work, except recommendation
 -- steps, which write captured recommendation knowledge under
 -- <output_root>/tmp/knowledge first. The path is <output_root>/pools/knowledge.
+const candidate_knowledge_base_initial:Artifact;
 const candidate_knowledge_base:Artifact;
 
 -- Candidate pool handle initialized by prepare_workflow_step.
@@ -346,7 +347,10 @@ workflow coscientist_ows {
 
     -- 备选知识库和历史结果都是跨轮次持久状态，因此既可以有初始内容，
     -- 也会在本轮被追加后作为输出保留。
-    input_workflow(coscientist_ows, candidate_knowledge_base) == True;
+    input_workflow(
+        coscientist_ows,
+        candidate_knowledge_base_initial
+    ) == True;
     output_workflow(coscientist_ows, candidate_knowledge_base) == True;
     output_workflow(coscientist_ows, historical_results) == True;
 
@@ -397,6 +401,10 @@ workflow coscientist_ows {
     ) == "./instructions/prepare-workflow.md";
     step_executor(prepare_workflow_step) == prepare_workflow_program;
     consumes(prepare_workflow_step, result_directory_name) == True;
+    consumes(
+        prepare_workflow_step,
+        candidate_knowledge_base_initial
+    ) == True;
     produces(prepare_workflow_step, workflow_run_context) == True;
     produces(prepare_workflow_step, scheduler_state) == True;
     produces(prepare_workflow_step, mattergen_stage_directory_initial) == True;

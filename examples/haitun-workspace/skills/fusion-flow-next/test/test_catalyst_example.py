@@ -123,6 +123,10 @@ def test_catalyst_example_migrates_instructions_and_preserves_backend_boundary()
     assert isinstance(compiled, tuple)
     (compilation,) = compiled
 
+    input_artifacts = {artifact.artifact_id for artifact in compilation.graph.artifacts if artifact.is_input}
+    produced_artifacts = {edge.artifact_id for edge in compilation.graph.edges if isinstance(edge, ProducesEdge)}
+    assert input_artifacts.isdisjoint(produced_artifacts)
+
     expected_final_producers = {
         "tmp_candidates_directory": "performance_proof_step",
         "tmp_knowledge_directory": "merge_recommendation_outputs_step",
