@@ -186,18 +186,16 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         """
 
         # A top-level IfTerm has one executable graph representation: it must
-        # select between two Artifact constants into a named Artifact constant.
-        # Keep graph operators on the other side on their existing path so an
-        # inline IfTerm still reports the established unsupported-term error.
+        # select between two Artifact constants into a named Constant. Other
+        # term shapes remain on the existing graph-fact or residual path.
         for output_term, value_term in (
             (assertion.lhs, assertion.rhs),
             (assertion.rhs, assertion.lhs),
         ):
             if not isinstance(value_term, IfTerm):
                 continue
-            if isinstance(output_term, CompoundTerm) and output_term.operator.name in self._GRAPH_OPERATORS:
-                break
-            return self._compile_select(output_term, value_term)
+            if isinstance(output_term, Constant):
+                return self._compile_select(output_term, value_term)
 
         # Pair each possible graph call with the value on the other side.
         # Nested calls inside an unknown outer operator remain residual because

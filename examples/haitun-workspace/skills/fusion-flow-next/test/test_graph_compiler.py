@@ -235,6 +235,29 @@ def test_unknown_assertions_remain_residual() -> None:
     )
 
 
+def test_unknown_operator_with_if_value_remains_residual() -> None:
+    artifact = Concept("Artifact")
+    assertion = Assertion(
+        lhs=CompoundTerm(
+            operator=Operator("unknown_operator"),
+            arguments=(Constant("output", (artifact,)),),
+        ),
+        rhs=IfTerm(
+            condition=Assertion(
+                lhs=Constant("condition", (artifact,)),
+                rhs=Constant("True", (Concept("Bool"),)),
+            ),
+            when_true=Constant("primary", (artifact,)),
+            when_false=Constant("fallback", (artifact,)),
+        ),
+    )
+
+    compilation = _compile((assertion,))
+
+    assert compilation.graph.selectors == ()
+    assert compilation.residual_assertions == (assertion,)
+
+
 def test_supported_graph_operator_on_rhs_is_lowered_as_equality() -> None:
     reversed_input = Assertion(
         lhs=ListTerm((Constant("artifact2"),)),
