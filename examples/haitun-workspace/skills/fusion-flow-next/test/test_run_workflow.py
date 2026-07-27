@@ -5,7 +5,6 @@ import os
 import sys
 from typing import Any, cast
 
-import anyio
 import pytest
 
 _SKILL_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -56,7 +55,6 @@ async def test_in_memory_workflow_compiles_and_executes() -> None:
 
     result = await run_workflow.execute_workflow(
         _dispatch_workflow("Agent", "summarize_request"),
-        workflow_path="memory.workflow",
         request="Explain structured concurrency.",
         complete=complete,
     )
@@ -85,7 +83,6 @@ async def test_non_human_executor_receives_instruction_path_unchanged(
 
     result = await run_workflow.execute_workflow(
         _dispatch_workflow(executor_kind, instruction),
-        workflow_path="dispatch.workflow",
         request="Do the work.",
         complete=complete,
     )
@@ -96,167 +93,90 @@ async def test_non_human_executor_receives_instruction_path_unchanged(
 
 
 @pytest.mark.anyio
-async def test_human_executor_receives_utf8_instruction_contents(tmp_path: object) -> None:
-    instructions_dir = os.path.join(str(tmp_path), "instructions")
-    await anyio.Path(instructions_dir).mkdir()
-    instruction_path = "./instructions/human.txt"
-    expected = "请人工核对输入,并只返回确认结果。"
-    await anyio.Path(os.path.join(instructions_dir, "human.txt")).write_text(expected, encoding="utf-8")
-    prompts: list[str] = []
+async def test_human_instruction_is_prepared_by_agent_before_request() -> None:
+    preparation_prompts: list[str] = []
+    human_prompts: list[str] = []
 
     async def complete(prompt: str) -> str:
-        prompts.append(prompt)
-        return "confirmed"
+        pytest.fail(f"ordinary completion called with {prompt!r}")
+
+    async def prepare_human_instruction(prompt: str) -> str:
+        preparation_prompts.append(prompt)
+        return "Review the supplied proposal and answer approve or reject."
+
+    async def request_human(prompt: str) -> object:
+        human_prompts.append(prompt)
+        return {"decision": "approve"}
 
     result = await run_workflow.execute_workflow(
-        _dispatch_workflow("Human", instruction_path),
-        workflow_path=os.path.join(str(tmp_path), "human.workflow"),
-        request="请核对。",
+        _dispatch_workflow("Human", "./instructions/../proposal.txt"),
+        request="proposal-v2",
         complete=complete,
+        prepare_human_instruction=prepare_human_instruction,
+        request_human=request_human,
     )
 
-    assert result == {"result": "confirmed"}
-    assert f"Instruction: {expected}" in prompts[0]
-    assert instruction_path not in prompts[0]
+    assert result == {"result": {"decision": "approve"}}
+    assert len(preparation_prompts) == 1
+    assert "Step: dispatch_step" in preparation_prompts[0]
+    assert "Instruction or reference: ./instructions/../proposal.txt" in preparation_prompts[0]
+    assert '"request": "proposal-v2"' in preparation_prompts[0]
+    assert "available tools and normal approval flow" in preparation_prompts[0]
+    assert human_prompts == ["Review the supplied proposal and answer approve or reject."]
 
 
 @pytest.mark.anyio
-async def test_human_instruction_dispatch_error_identifies_step_and_path(tmp_path: object) -> None:
-    instruction_path = "./missing.txt"
-    compiled = run_workflow.compile_workflow(_dispatch_workflow("Human", instruction_path))
-
+async def test_human_preparation_failure_does_not_request_human() -> None:
     async def complete(prompt: str) -> str:
-        pytest.fail(f"completion called with {prompt!r}")
+        pytest.fail(f"ordinary completion called with {prompt!r}")
 
-    dispatch = run_workflow._build_dispatch(
-        compiled,
-        complete,
-        os.path.join(str(tmp_path), "missing.workflow"),
-    )
-    (step,) = compiled.graph.steps
+    async def prepare_human_instruction(prompt: str) -> str:
+        del prompt
+        raise PermissionError("resource access was not approved")
 
-    with pytest.raises(ValueError) as error:
-        await dispatch(step, {"request": "Do the work."})
+    async def request_human(prompt: str) -> str:
+        pytest.fail(f"human called with {prompt!r}")
 
-    assert step.step_id in str(error.value)
-    assert instruction_path in str(error.value)
+    with pytest.RaisesGroup(pytest.RaisesExc(PermissionError, match="not approved")):
+        await run_workflow.execute_workflow(
+            _dispatch_workflow("Human", "./private/reference.txt"),
+            request="review",
+            complete=complete,
+            prepare_human_instruction=prepare_human_instruction,
+            request_human=request_human,
+        )
 
 
 @pytest.mark.anyio
-async def test_human_instruction_dispatch_hides_physical_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    instruction_path = "./private.txt"
-    physical_path = "/credentials/private.txt"
-
-    async def deny_read(workflow_path: str, logical_path: str) -> str:
-        del workflow_path, logical_path
-        raise PermissionError(physical_path)
-
+async def test_human_preparation_must_return_text() -> None:
     async def complete(prompt: str) -> str:
-        pytest.fail(f"completion called with {prompt!r}")
+        pytest.fail(f"ordinary completion called with {prompt!r}")
 
-    monkeypatch.setattr(run_workflow, "_read_human_instruction", deny_read)
-    compiled = run_workflow.compile_workflow(_dispatch_workflow("Human", instruction_path))
-    dispatch = run_workflow._build_dispatch(compiled, complete, "private.workflow")
-    (step,) = compiled.graph.steps
+    async def prepare_human_instruction(prompt: str) -> str:
+        del prompt
+        return "  "
 
-    with pytest.raises(ValueError) as error:
-        await dispatch(step, {"request": "Do the work."})
+    async def request_human(prompt: str) -> str:
+        pytest.fail(f"human called with {prompt!r}")
 
-    assert step.step_id in str(error.value)
-    assert instruction_path in str(error.value)
-    assert physical_path not in str(error.value)
-
-
-@pytest.mark.anyio
-async def test_human_instruction_rejects_empty_file(tmp_path: object) -> None:
-    instruction_path = os.path.join(str(tmp_path), "empty.txt")
-    await anyio.Path(instruction_path).write_text("", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="must not be empty"):
-        await run_workflow._read_human_instruction(
-            os.path.join(str(tmp_path), "empty.workflow"),
-            "./empty.txt",
+    with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="preparation returned no text")):
+        await run_workflow.execute_workflow(
+            _dispatch_workflow("Human", "review_reference"),
+            request="review",
+            complete=complete,
+            prepare_human_instruction=prepare_human_instruction,
+            request_human=request_human,
         )
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    "instruction_path",
-    [
-        "/absolute/instruction.txt",
-        "C:/instruction.txt",
-        r"\\server\share\instruction.txt",
-    ],
-)
-async def test_human_instruction_rejects_absolute_drive_and_unc_paths(
-    tmp_path: object,
-    instruction_path: str,
-) -> None:
-    with pytest.raises(ValueError, match="relative"):
-        await run_workflow._read_human_instruction(
-            os.path.join(str(tmp_path), "absolute.workflow"),
-            instruction_path,
-        )
+async def test_human_step_requires_preparer_and_requester() -> None:
+    async def complete(prompt: str) -> str:
+        pytest.fail(f"ordinary completion called with {prompt!r}")
 
-
-@pytest.mark.anyio
-async def test_human_instruction_rejects_parent_segments(tmp_path: object) -> None:
-    with pytest.raises(ValueError, match=r"\.\."):
-        await run_workflow._read_human_instruction(
-            os.path.join(str(tmp_path), "parent.workflow"),
-            "./instructions/../secret.txt",
-        )
-
-
-@pytest.mark.anyio
-async def test_human_instruction_rejects_directory(tmp_path: object) -> None:
-    instruction_path = os.path.join(str(tmp_path), "directory")
-    await anyio.Path(instruction_path).mkdir()
-
-    with pytest.raises(ValueError, match="regular file"):
-        await run_workflow._read_human_instruction(
-            os.path.join(str(tmp_path), "directory.workflow"),
-            "./directory",
-        )
-
-
-@pytest.mark.anyio
-async def test_human_instruction_rejects_invalid_utf8(tmp_path: object) -> None:
-    instruction_path = os.path.join(str(tmp_path), "invalid.txt")
-    await anyio.Path(instruction_path).write_bytes(b"\xff")
-
-    with pytest.raises(ValueError, match="UTF-8"):
-        await run_workflow._read_human_instruction(
-            os.path.join(str(tmp_path), "invalid.workflow"),
-            "./invalid.txt",
-        )
-
-
-@pytest.mark.anyio
-async def test_human_instruction_rejects_symlink_escape(tmp_path: object) -> None:
-    workflow_dir = os.path.join(str(tmp_path), "workflow")
-    await anyio.Path(workflow_dir).mkdir()
-    outside_path = os.path.join(str(tmp_path), "outside.txt")
-    await anyio.Path(outside_path).write_text("outside", encoding="utf-8")
-    link_path = os.path.join(workflow_dir, "link.txt")
-    try:
-        await anyio.Path(link_path).symlink_to(outside_path)
-    except OSError as error:
-        pytest.skip(f"symlink creation denied: {error}")
-
-    with pytest.raises(ValueError, match="escapes"):
-        await run_workflow._read_human_instruction(
-            os.path.join(workflow_dir, "escape.workflow"),
-            "./link.txt",
-        )
-
-
-@pytest.mark.anyio
-async def test_human_instruction_requires_workflow_path(tmp_path: object) -> None:
-    with pytest.raises(ValueError, match=r"\.workflow"):
-        await run_workflow._read_human_instruction(
-            os.path.join(str(tmp_path), "workflow.txt"),
-            "./missing.txt",
+    with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="requires prepare_human_instruction and request_human")):
+        await run_workflow.execute_workflow(
+            _dispatch_workflow("Human", "review_reference"),
+            request="review",
+            complete=complete,
         )
