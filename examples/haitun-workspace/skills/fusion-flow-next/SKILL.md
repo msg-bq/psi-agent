@@ -282,10 +282,10 @@ Read `grammar/FusionFlow.g4` completely before using these patterns. The grammar
 | **Fan-out + fan-in** | Several Steps each use `consumes(step) == [shared_artifact]`; one final Step uses `consumes(final_step) == [result_a, result_b]`. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
 | **Artifact pipeline** | Each Step produces the Artifact consumed by the next Step. Use `max_attempts` only as the attempt limit for a configured Step. | Writing process, ETL, refine-and-check work. |
 | **Per-item work + merge** | Use `foreach_item` for the repeated Step. Declare a List that also participates in graph relations as `Artifact, List`, then connect it with `produces(step) == [result_collection]` and `consumes(merge_step) == [result_collection]`. | N PRs, issues, docs, or log records into one report. |
-| **Conditional term selection** | Keep every candidate result explicit, then use `if(formula, then_term, else_term)` where one term is expected. Compose formulas with `!`, `AND`, and `OR`; nest `if` for priority selection. | Select one checker-compatible term for a downstream assertion without inventing control-flow syntax. |
-| **Composite workflow** | Combine only the artifact chains, fan-out/fan-in, per-item relations, and conditional term selections above. | When one simple pattern does not cover the task. |
+| **Named Artifact selection** | Keep every candidate result explicit, then bind `selected_artifact == if(formula, artifact_a, artifact_b)` and use `selected_artifact` in ordinary dataflow. For priority selection, chain named intermediate Artifacts. | Eagerly run all candidate producers, then choose one value for downstream Steps. |
+| **Composite workflow** | Combine only the artifact chains, fan-out/fan-in, per-item relations, and named Artifact selections above. | When one simple pattern does not cover the task. |
 
-Before reporting a missing capability for a conditional request, first model it as term selection and validate it. Do not infer branch execution or eager/lazy semantics that belong to the checker/runtime. If the task still cannot be expressed with syntax and preset operators documented in `grammar/FusionFlow.g4`, report the missing capability. Never invent a keyword or operator to make the source look complete.
+Before reporting a missing capability for a conditional request, first check whether eager value selection is sufficient. Named Artifact selection runs every candidate producer and only selects the value passed downstream. If the request requires lazy branch activation or guarantees that an unselected producer will not run, report that limitation instead of emitting an approximation. Never invent a keyword or operator to make the source look complete.
 
 #### Full-featured in-context example
 
@@ -381,12 +381,19 @@ workflow code_review {
 
 ### G4 source of truth
 
-Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole authority for file structure, declarations, assertions, formulas, terms, `if(...)`, and preset operator names and signatures. Examples in this skill illustrate modeling only; they do not add syntax or operators. If this skill conflicts with the grammar, follow the grammar.
+Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole authority for surface syntax, declarations, assertions, formulas, terms, and preset operator signatures. This skill additionally defines which grammar-valid shapes the executable graph backend accepts.
+
+### Executable graph backend guardrails
+
+- Every dataflow operator has one owner and an explicit Artifact List RHS.
+- Every executable `if` has the top-level shape `selected_artifact == if(condition, artifact_a, artifact_b);`. Never put `if` inside a dataflow List or another `if`; chain named intermediate Artifacts instead.
+- Selection is eager: every candidate producer runs before the selected value is published.
+- Quoted constants are restricted IDs, not prose. Use declared `StepName`/`Instruction` identities or a `"./..."` instruction path; never place natural-language instructions in quotes.
 
 ### Modeling rules
 
 - Group assertions by concern in this exact order: `DATA FLOW`, `EXECUTOR ASSIGNMENT`, `STEP CONFIGURATION`, `WORKFLOW CONFIGURATION`, `AGENT CONFIGURATION`. Omit empty groups.
-- In `DATA FLOW`, declare the complete external input List once, then every Step's `consumes`/`produces` edges, then the complete external output List once.
+- In `DATA FLOW`, declare the complete external input List once, then every Step's `consumes`/`produces` edges and named Artifact selections in dependency order, then the complete external output List once.
 - Use exactly one symmetric Artifact dataflow contract: `input_workflow(workflow) == [artifact_a, artifact_b];`, `consumes(step) == [artifact_a, artifact_b];`, `produces(step) == [artifact_a, artifact_b];`, and `output_workflow(workflow) == [artifact_a, artifact_b];`. All four operators return `List`; even one Artifact requires an explicit List literal such as `[artifact]`. Never use these calls as standalone assertions, with `== True`, with an Artifact as a second argument, or through alternate multi variants.
 - Bool shorthand is only for non-dataflow presets that genuinely return Bool, such as `agent_config(...)` and `allowed_tool(...)`. Keep `== False` explicit. Retain the right-hand value for every non-Bool operator.
 - When the user supplies a grammar-valid literal as a typed constant name, including a restricted quoted ID or `"./..."` path, preserve that literal and use it directly as the required preset value; do not hide it behind an alias constant and an extra equality.
@@ -398,13 +405,13 @@ Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole author
 - Model per-item work with `foreach_item(step, items) == item_result;`. If a List also participates in graph relations, declare it as `Artifact, List` and still place it inside an explicit List RHS.
 - Bind each step to its executor with `step_executor`.
 - Configure concurrency, retries, timeouts, resources, and agent limits with the corresponding preset operators.
-- Use `if(formula, then_term, else_term)` wherever one term is expected. It selects a term; it is not a Step, block, loop, quality gate, or scoring mechanism.
+- Lower executable `if` as a named Artifact selection: `selected_artifact == if(formula, artifact_a, artifact_b);`, followed by ordinary list dataflow such as `consumes(final_step) == [selected_artifact];`.
 - Variables, quantifiers, rules, implications, biconditionals, query/SAT/optimization requests, local concept declarations, local operator declarations, and imperative blocks are outside this language.
 - Never emit imports, imperative runtime calls, `run(...)`, or invented `parallel`/`pipeline`/`for` blocks.
 
-#### Conditional term selection
+#### Named Artifact selection with `if`
 
-Keep every candidate result explicit and produced by a Step. The canonical downstream shape is `consumes(final_step) == [if(formula, artifact_a, artifact_b)];`. Use a nested `if` only to select the compatible Artifact consumed by the downstream Step:
+Keep every candidate result explicit and produced by a Step. Bind each `if` result to a declared Artifact before downstream dataflow:
 
 ```fusionflow
 const incoming_case: Artifact;
@@ -419,6 +426,8 @@ const exception_observation: Artifact;
 const primary_result: Artifact;
 const review_result: Artifact;
 const fallback_result: Artifact;
+const review_or_fallback: Artifact;
+const selected_result: Artifact;
 const final_result: Artifact;
 
 const triage_step: Step;
@@ -446,17 +455,17 @@ workflow priority_routing {
   produces(review_handler_step) == [review_result];
   consumes(fallback_handler_step) == [incoming_case];
   produces(fallback_handler_step) == [fallback_result];
-  consumes(final_step) == [
-    if(
-      (primary_observation = primary_criterion) AND !(block_observation = block_criterion),
-      primary_result,
-      if(
-        (review_observation = review_criterion) OR (exception_observation = exception_criterion),
-        review_result,
-        fallback_result
-      )
-    )
-  ];
+  review_or_fallback == if(
+    (review_observation = review_criterion) OR (exception_observation = exception_criterion),
+    review_result,
+    fallback_result
+  );
+  selected_result == if(
+    (primary_observation = primary_criterion) AND !(block_observation = block_criterion),
+    primary_result,
+    review_or_fallback
+  );
+  consumes(final_step) == [selected_result];
   produces(final_step) == [final_result];
   output_workflow(priority_routing) == [final_result];
 
@@ -471,9 +480,11 @@ workflow priority_routing {
 
 - Build conditions with `=`, `!=`, `<`, `<=`, `>`, or `>=`; reserve `==` for the surrounding assertion.
 - Combine comparisons with `!`, `AND`, and `OR`.
-- For more choices, continue nesting `if` expressions in priority order.
-- Let the checker validate branch concept compatibility. Let lowering/runtime decide dependencies and eager/lazy branch evaluation.
-- Do not replace candidate Artifacts with Boolean Step payloads, refuse valid term selection because `if` is not a Step, or invent `switch`, `choice`, or conditional blocks.
+- Both branches must be declared Artifacts. The selection result must also be a declared Artifact.
+- Every candidate producer runs. Selection is eager value routing, not lazy control flow.
+- For more choices, chain named intermediate Artifacts in priority order; do not nest an `if` directly inside another `if`.
+- Never place `if(...)` inline inside `input_workflow`, `consumes`, `produces`, or `output_workflow`; those operators still take explicit Artifact Lists.
+- Do not replace candidate Artifacts with Boolean Step payloads or invent `switch`, `choice`, or conditional blocks.
 
 #### Worked example: homogeneous per-item work + one summary
 

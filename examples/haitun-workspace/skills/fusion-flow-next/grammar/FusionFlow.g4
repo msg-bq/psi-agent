@@ -111,9 +111,10 @@ operatorCall
 
 /*
  * Value-producing if(condition formula, then term, else term), always arity 3.
- * N-way choice uses nested if expressions. Branch types, dependency collection,
- * and eager/lazy evaluation are checker/runtime concerns. if is surface syntax,
- * not one of the 19 preset operators and not a block or Step.
+ * The grammar permits recursive terms, but the executable graph backend accepts
+ * only a named Artifact equality and represents N-way priority with several
+ * named intermediate Artifacts. Inline and nested if terms remain syntax-only
+ * unless another backend implements them. if is not a block or Step.
  */
 ifExpression
     : IF LPAREN formula COMMA term COMMA term RPAREN

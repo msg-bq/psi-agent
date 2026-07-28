@@ -19,7 +19,8 @@ Artifact, references two candidate Artifacts, and carries a small serializable
 condition tree:
 
 - artifact and literal operands;
-- `=`, `!=`, `<`, `<=`, `>`, and `>=` comparisons;
+- `=`, `<`, `<=`, `>`, and `>=` comparison nodes; surface `!=` lowers to
+  `NOT(eq)` rather than adding a separate comparison kind;
 - `!`, `AND`, and `OR`.
 
 The selected output counts as producer-backed. It cannot also have a Step

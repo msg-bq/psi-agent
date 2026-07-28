@@ -9,6 +9,8 @@ import pytest
 
 _SKILL_DIR = os.path.dirname(os.path.dirname(__file__))
 _RUNNER_PATH = os.path.join(_SKILL_DIR, "examples", "run_workflow.py")
+if _SKILL_DIR not in sys.path:
+    sys.path.insert(0, _SKILL_DIR)
 
 
 def _load_module(name: str, path: str) -> Any:
