@@ -314,6 +314,55 @@ async def test_program_multiple_outputs_are_read_from_json_stdout(
     }
 
 
+@pytest.mark.parametrize(
+    "invalid_value",
+    (
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1e400",
+        '{"nested": NaN}',
+        '{"duplicate": 1, "duplicate": 2}',
+    ),
+)
+@pytest.mark.anyio
+async def test_program_multiple_outputs_reject_non_finite_json(
+    tmp_path: Any,
+    invalid_value: str,
+) -> None:
+    async def execute_program(invocation: Any) -> str:
+        del invocation
+        return f'{{"result": {invalid_value}, "extra": 1}}'
+
+    source = (
+        _dispatch_workflow(
+            "Program",
+            "produce_two",
+            executor_configuration='program_path(worker) == "./bin/worker";',
+        )
+        .replace(
+            "const result: Artifact;",
+            "const result: Artifact;\nconst extra: Artifact;",
+        )
+        .replace(
+            "output_workflow(dispatch) == [result];",
+            "output_workflow(dispatch) == [result, extra];",
+        )
+        .replace(
+            "produces(dispatch_step) == [result];",
+            "produces(dispatch_step) == [result, extra];",
+        )
+    )
+
+    with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="strict JSON object")):
+        await run_workflow.execute_workflow(
+            source,
+            request="Do the work.",
+            work_dir=tmp_path,
+            run_program=execute_program,
+        )
+
+
 @pytest.mark.anyio
 async def test_relative_program_path_requires_work_dir() -> None:
     with pytest.raises(

@@ -4,21 +4,33 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import signal
+import stat
+import subprocess
 import sys
-from collections.abc import Mapping
-from contextlib import aclosing
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import aclosing, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
 import anyio
+import anyio.lowlevel
+import anyio.to_thread
+from anyio.abc import ByteReceiveStream, Process
 
 from psi_agent.session.agent import SessionAgent, current_tool_ai_socket
 from psi_agent.session.ai_client import AiClient
 from psi_agent.session.conversation import Conversation
 from psi_agent.session.schedule_registry import ScheduleRegistry
 from psi_agent.session.tool_registry import FileEntry, ToolFunction, ToolRegistry
-from psi_agent.workflow_execution import ExecutionCheckpoint, ResourceCapacity
+from psi_agent.workflow_execution import (
+    ExecutionCheckpoint,
+    ResourceCapacity,
+    create_execution_checkpoint,
+    generate_plan,
+)
 
 _WORKSPACE_DIR = Path(__file__).parent.parent
 _SKILL_DIR = _WORKSPACE_DIR / "skills" / "fusion-flow"
@@ -57,8 +69,116 @@ _WORKFLOW_LAUNCHERS = frozenset({"flow_run", "run_flow", "run_flow_resume"})
 _NESTED_TURN_TOOLS = frozenset({"clarify"})
 _HUMAN_PREPARER_TOOLS = frozenset({"read"})
 _HUMAN_CONTROL_KEY = "$fusion_flow/control"
-_PROGRAM_TIMEOUT_SECONDS = 300
+_PROGRAM_STDOUT_LIMIT_BYTES = 4 * 1024 * 1024
+_PROGRAM_STDERR_LIMIT_BYTES = 1 * 1024 * 1024
+_PROGRAM_TERMINATION_GRACE_SECONDS = 1.0
+_PROGRAM_STDOUT_LIMIT_ENV = "PSI_FUSION_FLOW_PROGRAM_STDOUT_LIMIT_BYTES"
+_PROGRAM_STDERR_LIMIT_ENV = "PSI_FUSION_FLOW_PROGRAM_STDERR_LIMIT_BYTES"
+_PROGRAM_PLATFORM = "win32" if sys.platform == "win32" else os.name
+_POSIX_EXEC_BOOTSTRAP = """\
+import json
+import os
+import sys
+
+executable_fd = int(sys.argv[1])
+cwd_fd = int(sys.argv[2])
+exec_path = sys.argv[3]
+argv = json.loads(sys.argv[4])
+os.fchdir(cwd_fd)
+os.execve(exec_path or executable_fd, argv, os.environ)
+"""
 _JOB_STORE_RELATIVE_PATH = Path(".psi") / "fusion-flow" / "runs"
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    _PROCESS_SET_QUOTA = 0x0100
+    _PROCESS_TERMINATE = 0x0001
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+    _GENERIC_READ = 0x80000000
+    _FILE_SHARE_READ = 0x00000001
+    _OPEN_EXISTING = 3
+    _FILE_ATTRIBUTE_NORMAL = 0x00000080
+    _INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+
+    class _JobObjectBasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+    class _JobObjectExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _JobObjectBasicLimitInformation),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    _kernel32.CreateFileW.restype = wintypes.HANDLE
+    _kernel32.GetFinalPathNameByHandleW.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    )
+    _kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    _kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    _kernel32.SetInformationJobObject.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    )
+    _kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    _kernel32.OpenProcess.argtypes = (
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    )
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.AssignProcessToJobObject.argtypes = (
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+    )
+    _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _kernel32.TerminateJobObject.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel32.CloseHandle.restype = wintypes.BOOL
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +187,20 @@ class _PreparedHumanQuestion:
     options: tuple[str, ...] = ()
     recommended: int = 0
     default: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedProgram:
+    command: tuple[str, ...]
+    cwd: Path | None
+    pass_fds: tuple[int, ...] = ()
+    retained_fds: tuple[int, ...] = ()
+    retained_handle: int | None = None
+
+
+@dataclass(slots=True)
+class _WindowsJob:
+    handle: int | None
 
 
 class _HumanInputRequiredError(Exception):
@@ -217,6 +351,8 @@ def _checkpoint_human_response(
     values = dict(checkpoint.values)
     values.update(outputs)
     return ExecutionCheckpoint(
+        workflow_id=checkpoint.workflow_id,
+        plan_digest=checkpoint.plan_digest,
         values=values,
         completed_step_ids=tuple(sorted((*checkpoint.completed_step_ids, request.step_id))),
         completed_selection_ids=checkpoint.completed_selection_ids,
@@ -246,31 +382,524 @@ def _resource_payload(context: CompletionContext) -> dict[str, list[str]]:
     return {grant.resource_id: list(grant.instance_ids) for grant in context.dispatch.resource_lease.grants}
 
 
-async def _run_program(invocation: ProgramInvocation) -> str:
-    """Execute one already-resolved Program invocation without a shell."""
+def _posix_open_flags() -> tuple[int, int]:
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if not no_follow or not directory or os.open not in os.supports_dir_fd:
+        raise RuntimeError("secure Program execution requires POSIX openat() and O_NOFOLLOW support")
+    return no_follow, directory
+
+
+def _open_posix_relative(
+    root_fd: int,
+    relative_path: Path,
+    *,
+    directory: bool,
+    label: str,
+) -> int:
+    """Open one workspace-relative path without following any symlink component."""
+
+    no_follow, directory_flag = _posix_open_flags()
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    parts = relative_path.parts
+    if not parts:
+        if not directory:
+            raise ValueError("program_path must name a file inside the workspace")
+        return os.dup(root_fd)
+
+    parent_fd = os.dup(root_fd)
+    try:
+        for component in parts[:-1]:
+            next_fd = os.open(
+                component,
+                os.O_RDONLY | directory_flag | no_follow | close_on_exec,
+                dir_fd=parent_fd,
+            )
+            os.close(parent_fd)
+            parent_fd = next_fd
+        flags = os.O_RDONLY | no_follow | close_on_exec
+        if directory:
+            flags |= directory_flag
+        return os.open(
+            parts[-1],
+            flags,
+            dir_fd=parent_fd,
+        )
+    except OSError as error:
+        raise ValueError(f"{label} must not contain symbolic links and must stay inside the workspace") from error
+    finally:
+        os.close(parent_fd)
+
+
+def _find_posix_fd_root() -> str | None:
+    for candidate in ("/proc/self/fd", "/dev/fd"):
+        if os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+def _open_posix_program(
+    workspace: Path,
+    cwd_relative_path: Path,
+    executable_relative_path: Path,
+) -> tuple[int, int, bool]:
+    """Pin both cwd and executable beneath one symlink-free workspace root."""
+
+    no_follow, directory = _posix_open_flags()
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    root_fd = os.open(workspace, os.O_RDONLY | directory | no_follow | close_on_exec)
+    cwd_fd: int | None = None
+    executable_fd: int | None = None
+    try:
+        cwd_fd = _open_posix_relative(
+            root_fd,
+            cwd_relative_path,
+            directory=True,
+            label="Program working directory",
+        )
+        executable_fd = _open_posix_relative(
+            root_fd,
+            executable_relative_path,
+            directory=False,
+            label="program_path",
+        )
+    except BaseException:
+        if cwd_fd is not None:
+            os.close(cwd_fd)
+        if executable_fd is not None:
+            os.close(executable_fd)
+        raise
+    finally:
+        os.close(root_fd)
+
+    metadata = os.fstat(executable_fd)
+    if not stat.S_ISREG(metadata.st_mode):
+        os.close(cwd_fd)
+        os.close(executable_fd)
+        raise ValueError("program_path must name a regular file")
+    if metadata.st_mode & 0o111 == 0:
+        os.close(cwd_fd)
+        os.close(executable_fd)
+        raise ValueError("program_path must name an executable file")
+    return executable_fd, cwd_fd, os.pread(executable_fd, 2, 0) == b"#!"
+
+
+def _lexically_normalize_absolute_path(path: anyio.Path) -> Path:
+    return Path(os.path.normpath(str(path)))
+
+
+def _program_output_limit(environment_variable: str, default: int) -> int:
+    configured = os.environ.get(environment_variable)
+    if configured is None:
+        return default
+    if not configured or any(character < "0" or character > "9" for character in configured):
+        raise ValueError(f"{environment_variable} must be a positive integer")
+    limit = int(configured)
+    if limit <= 0:
+        raise ValueError(f"{environment_variable} must be a positive integer")
+    return limit
+
+
+def _windows_path_from_handle(handle: int) -> Path:
+    size = _kernel32.GetFinalPathNameByHandleW(handle, None, 0, 0)
+    if not size:
+        raise ctypes.WinError(ctypes.get_last_error())
+    buffer = ctypes.create_unicode_buffer(size + 1)
+    written = _kernel32.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0)
+    if not written or written >= len(buffer):
+        raise ctypes.WinError(ctypes.get_last_error())
+    path = buffer.value
+    if path.startswith("\\\\?\\UNC\\"):
+        path = f"\\\\{path[8:]}"
+    elif path.startswith("\\\\?\\"):
+        path = path[4:]
+    return Path(path)
+
+
+def _open_windows_executable(workspace: Path, candidate: Path) -> tuple[Path, int]:
+    handle = _kernel32.CreateFileW(
+        str(candidate),
+        _GENERIC_READ,
+        _FILE_SHARE_READ,
+        None,
+        _OPEN_EXISTING,
+        _FILE_ATTRIBUTE_NORMAL,
+        None,
+    )
+    if not handle or handle == _INVALID_HANDLE_VALUE:
+        raise OSError(ctypes.get_last_error(), f"cannot open Program executable: {candidate}")
+    typed_handle = cast(int, handle)
+    try:
+        final_path = _windows_path_from_handle(typed_handle)
+        if not final_path.is_relative_to(workspace):
+            raise ValueError("program_path must resolve inside the workspace")
+    except BaseException:
+        _kernel32.CloseHandle(typed_handle)
+        raise
+    return final_path, typed_handle
+
+
+def _close_prepared_program(prepared: _PreparedProgram) -> None:
+    for descriptor in prepared.retained_fds:
+        os.close(descriptor)
+    if prepared.retained_handle is not None and sys.platform == "win32":
+        _kernel32.CloseHandle(prepared.retained_handle)
+
+
+async def _prepare_program(invocation: ProgramInvocation) -> _PreparedProgram:
+    """Pin the executable before validation so path replacement cannot change the target."""
 
     workspace = await anyio.Path(_WORKSPACE_DIR).resolve()
+    workspace_path = Path(str(workspace))
+    if invocation.cwd is None:
+        cwd_candidate = workspace
+    else:
+        cwd_candidate = anyio.Path(invocation.cwd)
+        if not cwd_candidate.is_absolute():
+            cwd_candidate = workspace / cwd_candidate
+    cwd_path = _lexically_normalize_absolute_path(cwd_candidate)
+    if not cwd_path.is_relative_to(workspace_path):
+        raise ValueError("Program working directory must stay inside the workspace")
+    cwd_relative_path = cwd_path.relative_to(workspace_path)
+
     executable = anyio.Path(invocation.argv[0])
     if not executable.is_absolute():
-        if invocation.cwd is None:
-            raise ValueError("relative Program executable requires an explicit working directory")
-        executable = anyio.Path(invocation.cwd) / invocation.argv[0]
-    resolved_executable = await executable.resolve()
-    if not Path(str(resolved_executable)).is_relative_to(Path(str(workspace))):
-        raise ValueError("program_path must resolve inside the workspace")
+        executable = anyio.Path(cwd_path) / invocation.argv[0]
+    candidate = _lexically_normalize_absolute_path(executable)
+    if not candidate.is_relative_to(workspace_path):
+        raise ValueError("program_path must stay inside the workspace")
+    executable_relative_path = candidate.relative_to(workspace_path)
 
-    with anyio.fail_after(_PROGRAM_TIMEOUT_SECONDS):
-        completed = await anyio.run_process(
-            invocation.argv,
-            input=invocation.stdin.encode("utf-8"),
-            cwd=invocation.cwd,
-            check=False,
+    if _PROGRAM_PLATFORM == "posix":
+        if os.execve not in os.supports_fd:
+            raise RuntimeError("secure Program execution requires file-descriptor execve support")
+        with anyio.CancelScope(shield=True):
+            executable_fd, cwd_fd, has_shebang = await anyio.to_thread.run_sync(
+                _open_posix_program,
+                workspace_path,
+                cwd_relative_path,
+                executable_relative_path,
+            )
+            fd_root = await anyio.to_thread.run_sync(_find_posix_fd_root) if has_shebang else None
+        if has_shebang and fd_root is None:
+            os.close(executable_fd)
+            os.close(cwd_fd)
+            raise RuntimeError(
+                "shebang Program execution requires /proc/self/fd or /dev/fd; "
+                "native executables remain supported without either filesystem"
+            )
+        exec_path = f"{fd_root}/{executable_fd}" if fd_root is not None else ""
+        return _PreparedProgram(
+            command=(
+                sys.executable,
+                "-I",
+                "-c",
+                _POSIX_EXEC_BOOTSTRAP,
+                str(executable_fd),
+                str(cwd_fd),
+                exec_path,
+                json.dumps(list(invocation.argv), ensure_ascii=False),
+            ),
+            cwd=None,
+            pass_fds=(executable_fd, cwd_fd),
+            retained_fds=(executable_fd, cwd_fd),
         )
-    stdout = completed.stdout.decode("utf-8", errors="replace")
-    stderr = completed.stderr.decode("utf-8", errors="replace")
-    if completed.returncode != 0:
+    if _PROGRAM_PLATFORM == "win32":
+        resolved_cwd = await anyio.Path(cwd_path).resolve()
+        cwd_path = Path(str(resolved_cwd))
+        if not cwd_path.is_relative_to(workspace_path):
+            raise ValueError("Program working directory must resolve inside the workspace")
+        with anyio.CancelScope(shield=True):
+            final_path, handle = await anyio.to_thread.run_sync(
+                _open_windows_executable,
+                workspace_path,
+                candidate,
+            )
+        return _PreparedProgram(
+            command=(str(final_path), *invocation.argv[1:]),
+            cwd=cwd_path,
+            retained_handle=handle,
+        )
+    raise RuntimeError(f"secure Program execution is not supported on {sys.platform}")
+
+
+def _attach_windows_job(process: Process) -> _WindowsJob | None:
+    if sys.platform != "win32":
+        return None
+    job = _kernel32.CreateJobObjectW(None, None)
+    if not job or job == _INVALID_HANDLE_VALUE:
+        raise OSError(ctypes.get_last_error(), "cannot create Windows Job Object for Program")
+    typed_job = cast(int, job)
+    limits = _JobObjectExtendedLimitInformation()
+    limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not _kernel32.SetInformationJobObject(
+        typed_job,
+        _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+        ctypes.byref(limits),
+        ctypes.sizeof(limits),
+    ):
+        error = ctypes.get_last_error()
+        _kernel32.CloseHandle(typed_job)
+        raise OSError(error, "cannot configure Windows Job Object for Program")
+
+    handle = _kernel32.OpenProcess(
+        _PROCESS_SET_QUOTA | _PROCESS_TERMINATE | _PROCESS_QUERY_LIMITED_INFORMATION,
+        False,
+        process.pid,
+    )
+    if not handle or handle == _INVALID_HANDLE_VALUE:
+        error = ctypes.get_last_error()
+        _kernel32.CloseHandle(typed_job)
+        raise OSError(error, "cannot open Program process for Windows Job Object")
+    try:
+        if not _kernel32.AssignProcessToJobObject(typed_job, handle):
+            error = ctypes.get_last_error()
+            _kernel32.CloseHandle(typed_job)
+            raise OSError(error, "cannot assign Program process to Windows Job Object")
+    finally:
+        _kernel32.CloseHandle(handle)
+    return _WindowsJob(typed_job)
+
+
+def _close_windows_job(job: _WindowsJob | None) -> None:
+    if job is None or job.handle is None or sys.platform != "win32":
+        return
+    handle = job.handle
+    job.handle = None
+    if not _kernel32.CloseHandle(handle):
+        raise OSError(ctypes.get_last_error(), "cannot close Windows Program Job Object")
+
+
+def _signal_posix_process_group(process: Process, signal_number: signal.Signals) -> bool:
+    try:
+        os.killpg(process.pid, signal_number)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _posix_process_group_exists(process: Process) -> bool:
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+async def _terminate_process_tree(process: Process, windows_job: _WindowsJob | None) -> None:
+    """Shield cleanup and terminate every process descended within the Program boundary."""
+
+    with anyio.CancelScope(shield=True):
+        if sys.platform == "win32":
+            termination_error: OSError | None = None
+            if windows_job is not None and windows_job.handle is not None:
+                if not _kernel32.TerminateJobObject(windows_job.handle, 1):
+                    termination_error = OSError(
+                        ctypes.get_last_error(),
+                        "cannot terminate Windows Program Job Object",
+                    )
+                    # KILL_ON_JOB_CLOSE is the independent, kernel-enforced fallback.
+                    try:
+                        _close_windows_job(windows_job)
+                    except OSError as close_error:
+                        termination_error = close_error
+                        await anyio.run_process(
+                            ("taskkill", "/PID", str(process.pid), "/T", "/F"),
+                            check=False,
+                        )
+            else:
+                await anyio.run_process(
+                    ("taskkill", "/PID", str(process.pid), "/T", "/F"),
+                    check=False,
+                )
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            await process.wait()
+            if termination_error is not None:
+                raise termination_error
+            return
+
+        if os.name == "posix":
+            group_exists = _signal_posix_process_group(process, signal.SIGTERM)
+            if group_exists:
+                await anyio.sleep(_PROGRAM_TERMINATION_GRACE_SECONDS)
+            if _posix_process_group_exists(process):
+                _signal_posix_process_group(process, signal.SIGKILL)
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            await process.wait()
+            return
+
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
+        await process.wait()
+
+
+async def _drain_program_stream(
+    stream: ByteReceiveStream | None,
+    *,
+    stream_name: str,
+    limit: int,
+    invocation: ProgramInvocation,
+    stop_process: Callable[[RuntimeError], Awaitable[None]],
+) -> bytes:
+    if stream is None:
+        return b""
+    captured = bytearray()
+    kept = 0
+    stopped = False
+    while True:
+        try:
+            chunk = await stream.receive()
+        except anyio.EndOfStream:
+            break
+        remaining = limit - kept
+        if remaining > 0:
+            captured.extend(chunk[:remaining])
+            kept += min(remaining, len(chunk))
+        if len(chunk) > remaining and not stopped:
+            stopped = True
+            await stop_process(
+                RuntimeError(
+                    f"Program {invocation.name!r} {stream_name} exceeded the {limit}-byte limit; "
+                    "the subprocess tree was terminated"
+                )
+            )
+    return bytes(captured)
+
+
+async def _communicate_program(
+    process: Process,
+    invocation: ProgramInvocation,
+    windows_job: _WindowsJob | None,
+    *,
+    stdout_limit: int,
+    stderr_limit: int,
+) -> tuple[int, bytes, bytes]:
+    stdout = b""
+    stderr = b""
+    output_error: RuntimeError | None = None
+    termination_lock = anyio.Lock()
+
+    async def stop_process(error: RuntimeError) -> None:
+        nonlocal output_error
+        if output_error is None:
+            output_error = error
+        async with termination_lock:
+            await _terminate_process_tree(process, windows_job)
+
+    async def read_stdout() -> None:
+        nonlocal stdout
+        stdout = await _drain_program_stream(
+            process.stdout,
+            stream_name="stdout",
+            limit=stdout_limit,
+            invocation=invocation,
+            stop_process=stop_process,
+        )
+
+    async def read_stderr() -> None:
+        nonlocal stderr
+        stderr = await _drain_program_stream(
+            process.stderr,
+            stream_name="stderr",
+            limit=stderr_limit,
+            invocation=invocation,
+            stop_process=stop_process,
+        )
+
+    async def write_stdin() -> None:
+        if process.stdin is None:
+            return
+        try:
+            await process.stdin.send(invocation.stdin.encode("utf-8"))
+        except BrokenPipeError, anyio.BrokenResourceError, anyio.ClosedResourceError:
+            pass
+        finally:
+            with suppress(
+                BrokenPipeError,
+                anyio.BrokenResourceError,
+                anyio.ClosedResourceError,
+            ):
+                await process.stdin.aclose()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(read_stdout)
+        task_group.start_soon(read_stderr)
+        task_group.start_soon(write_stdin)
+        return_code = await process.wait()
+        # A direct child may exit while descendants keep inherited pipes open. Every
+        # Program owns its process tree, so terminate residual group/job members now.
+        async with termination_lock:
+            await _terminate_process_tree(process, windows_job)
+
+    if output_error is not None:
+        raise output_error
+    return return_code, stdout, stderr
+
+
+async def _run_program(invocation: ProgramInvocation) -> str:
+    """Execute one pinned Program invocation without a shell or an implicit timeout."""
+
+    stdout_limit = _program_output_limit(_PROGRAM_STDOUT_LIMIT_ENV, _PROGRAM_STDOUT_LIMIT_BYTES)
+    stderr_limit = _program_output_limit(_PROGRAM_STDERR_LIMIT_ENV, _PROGRAM_STDERR_LIMIT_BYTES)
+    prepared = await _prepare_program(invocation)
+    process: Process | None = None
+    windows_job: _WindowsJob | None = None
+    try:
+        await anyio.lowlevel.checkpoint_if_cancelled()
+        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+        with anyio.CancelScope(shield=True):
+            process = await anyio.open_process(
+                prepared.command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=prepared.cwd,
+                creationflags=creation_flags,
+                start_new_session=os.name == "posix",
+                pass_fds=prepared.pass_fds,
+            )
+            windows_job = _attach_windows_job(process)
+    except BaseException:
+        if process is not None:
+            try:
+                await _terminate_process_tree(process, windows_job)
+            finally:
+                with anyio.CancelScope(shield=True):
+                    await process.aclose()
+        raise
+    finally:
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(_close_prepared_program, prepared)
+
+    try:
+        await anyio.lowlevel.checkpoint_if_cancelled()
+        return_code, stdout_bytes, stderr_bytes = await _communicate_program(
+            process,
+            invocation,
+            windows_job,
+            stdout_limit=stdout_limit,
+            stderr_limit=stderr_limit,
+        )
+    except BaseException:
+        await _terminate_process_tree(process, windows_job)
+        raise
+    finally:
+        with anyio.CancelScope(shield=True):
+            try:
+                _close_windows_job(windows_job)
+            finally:
+                await process.aclose()
+
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+    if return_code != 0:
         output_tail = (stderr or stdout)[-300:].strip()
-        raise RuntimeError(f"Program {invocation.name!r} exited with code {completed.returncode}: {output_tail}")
+        raise RuntimeError(f"Program {invocation.name!r} exited with code {return_code}: {output_tail}")
     return stdout.rstrip("\r\n")
 
 
@@ -661,7 +1290,11 @@ async def run_flow(
             flow_source=source,
             inputs=inputs,
             resource_capacities=resource_capacities,
-            checkpoint=ExecutionCheckpoint(values=inputs),
+            checkpoint=create_execution_checkpoint(
+                generate_plan(compiled.graph),
+                compiled.graph,
+                values=inputs,
+            ),
         )
         async with store.acquire(run.run_id) as lease:
             return await _execute_persisted_run(

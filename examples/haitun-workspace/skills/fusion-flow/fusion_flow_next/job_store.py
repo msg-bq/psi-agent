@@ -8,22 +8,27 @@ UI or an input channel.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
+import os
 import re
 import secrets
+import threading
 from collections.abc import AsyncIterator, Mapping, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Literal, cast
+from typing import BinaryIO, Literal, Protocol, cast
 
 import anyio
+from anyio.to_thread import run_sync as run_sync_in_worker_thread
+from loguru import logger
 
 from psi_agent.workflow_execution import ExecutionCheckpoint, ResourceCapacity
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 type RunStatus = Literal[
     "running",
     "waiting_for_human",
@@ -52,6 +57,8 @@ _RUN_KEYS = frozenset(
 )
 _CHECKPOINT_KEYS = frozenset(
     {
+        "workflow_id",
+        "plan_digest",
         "values",
         "completed_step_ids",
         "completed_selection_ids",
@@ -68,6 +75,22 @@ _REQUEST_KEYS = frozenset(
         "default",
     }
 )
+_LOCKING_MODULE = __import__("msvcrt" if os.name == "nt" else "fcntl")
+_PROCESS_LOCK_RESERVATIONS: set[str] = set()
+_PROCESS_LOCK_RESERVATIONS_GUARD = threading.Lock()
+
+
+class _WindowsLockingModule(Protocol):
+    LK_NBLCK: int
+
+    def locking(self, fd: int, mode: int, nbytes: int, /) -> None: ...
+
+
+class _PosixLockingModule(Protocol):
+    LOCK_EX: int
+    LOCK_NB: int
+
+    def flock(self, fd: int, operation: int, /) -> None: ...
 
 
 class JobStoreError(RuntimeError):
@@ -79,7 +102,7 @@ class InvalidRunStateError(JobStoreError):
 
 
 class RunAlreadyActiveError(JobStoreError):
-    """Another caller currently owns the run's lock-directory lease."""
+    """Another caller currently owns the run's advisory-lock lease."""
 
 
 def new_opaque_id() -> str:
@@ -192,7 +215,7 @@ class HumanWorkflowRun:
 
 
 class RunLease:
-    """Exclusive access to one run while its lock directory exists."""
+    """Exclusive access to one run while its advisory lock is held."""
 
     __slots__ = ("_active", "_store", "run_id")
 
@@ -221,6 +244,59 @@ class RunLease:
 
     def _release(self) -> None:
         self._active = False
+
+
+class _RunLock:
+    """An OS-released advisory lock backed by one open file handle."""
+
+    __slots__ = ("_file", "_reservation_key")
+
+    def __init__(self, lock_file: BinaryIO, reservation_key: str) -> None:
+        self._file: BinaryIO | None = lock_file
+        self._reservation_key = reservation_key
+
+    @classmethod
+    async def try_acquire(cls, path: anyio.Path) -> _RunLock | None:
+        """Try once to lock ``path`` without blocking."""
+
+        with anyio.CancelScope(shield=True):
+            reservation_key = await run_sync_in_worker_thread(
+                _try_reserve_process_lock,
+                str(path),
+            )
+            if reservation_key is None:
+                return None
+            retained = False
+            try:
+                lock_file = await run_sync_in_worker_thread(
+                    _try_open_locked_file,
+                    str(path),
+                )
+                if lock_file is None:
+                    return None
+                run_lock = cls(lock_file, reservation_key)
+                retained = True
+                return run_lock
+            finally:
+                if not retained:
+                    await run_sync_in_worker_thread(
+                        _release_process_lock,
+                        reservation_key,
+                    )
+
+    async def release(self) -> None:
+        """Close the handle, releasing the lock even during cancellation."""
+
+        lock_file = self._file
+        if lock_file is None:
+            return
+        self._file = None
+        with anyio.CancelScope(shield=True):
+            await run_sync_in_worker_thread(
+                _close_locked_file,
+                lock_file,
+                self._reservation_key,
+            )
 
 
 class JobStore:
@@ -260,18 +336,20 @@ class JobStore:
                 resource_capacities=dict(resource_capacities or {}),
                 checkpoint=checkpoint,
             )
-            lock_path = self._lock_path(run_id)
+            run_lock: _RunLock | None = None
             try:
-                await lock_path.mkdir()
-            except FileExistsError:
-                continue
-            try:
+                run_lock = await _RunLock.try_acquire(self._lock_path(run_id))
+                if run_lock is None:
+                    continue
+                logger.debug(f"FusionFlow run lock acquired for create {run_id!r}")
                 if await self._run_path(run_id).exists():
                     continue
                 await self._write(run)
                 return run
             finally:
-                await lock_path.rmdir()
+                if run_lock is not None:
+                    await run_lock.release()
+                    logger.debug(f"FusionFlow run lock released for create {run_id!r}")
         raise JobStoreError("could not allocate a unique FusionFlow run ID")
 
     async def load(self, run_id: str) -> HumanWorkflowRun:
@@ -311,38 +389,44 @@ class JobStore:
 
     @asynccontextmanager
     async def acquire(self, run_id: str) -> AsyncIterator[RunLease]:
-        """Acquire a non-blocking, per-run lock-directory lease.
+        """Acquire a non-blocking, per-run advisory-lock lease.
 
         A concurrent caller is rejected instead of waiting so a duplicate
-        Haitun message cannot execute the same checkpoint twice.
+        Haitun message cannot execute the same checkpoint twice.  The open
+        file handle is released by the OS if this process exits unexpectedly.
         """
 
         _validate_opaque_id(run_id, "run_id", error_type=ValueError)
         if not await self._run_path(run_id).exists():
             raise FileNotFoundError(f"FusionFlow run {run_id!r} does not exist")
         await self._locks_dir.mkdir(parents=True, exist_ok=True)
-        lock_path = self._lock_path(run_id)
+        run_lock: _RunLock | None = None
+        lease: RunLease | None = None
         try:
-            await lock_path.mkdir()
-        except FileExistsError:
-            raise RunAlreadyActiveError(f"FusionFlow run {run_id!r} is already active") from None
-
-        lease = RunLease(self, run_id)
-        try:
+            run_lock = await _RunLock.try_acquire(self._lock_path(run_id))
+            if run_lock is None:
+                logger.debug(f"FusionFlow run lock busy for {run_id!r}")
+                raise RunAlreadyActiveError(f"FusionFlow run {run_id!r} is already active")
+            logger.debug(f"FusionFlow run lock acquired for {run_id!r}")
+            lease = RunLease(self, run_id)
             # Recheck under the lease in case a future deletion API races us.
             if not await self._run_path(run_id).exists():
                 raise FileNotFoundError(f"FusionFlow run {run_id!r} does not exist")
             yield lease
         finally:
-            lease._release()
-            with anyio.CancelScope(shield=True):
-                await lock_path.rmdir()
+            if lease is not None:
+                lease._release()
+            if run_lock is not None:
+                await run_lock.release()
+                logger.debug(f"FusionFlow run lock released for {run_id!r}")
 
     def _run_path(self, run_id: str) -> anyio.Path:
         return self.root / f"{run_id}.json"
 
     def _lock_path(self, run_id: str) -> anyio.Path:
-        return self._locks_dir / f"{run_id}.lock"
+        # The distinct suffix intentionally ignores pre-advisory ``.lock``
+        # directories, which could otherwise brick a run after an upgrade.
+        return self._locks_dir / f"{run_id}.lockfile"
 
     async def _write(self, run: HumanWorkflowRun) -> None:
         payload = _run_to_json(run)
@@ -363,11 +447,82 @@ class JobStore:
                 await temporary.unlink()
 
 
+def _try_open_locked_file(path: str) -> BinaryIO | None:
+    """Open ``path`` and take its platform advisory lock without waiting."""
+
+    with ExitStack() as stack:
+        lock_file = stack.enter_context(open(path, "a+b"))
+        if os.name == "nt":
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            locking_module = cast(_WindowsLockingModule, _LOCKING_MODULE)
+            try:
+                locking_module.locking(
+                    lock_file.fileno(),
+                    locking_module.LK_NBLCK,
+                    1,
+                )
+            except OSError as error:
+                if error.errno in {
+                    errno.EACCES,
+                    errno.EAGAIN,
+                    errno.EDEADLK,
+                }:
+                    return None
+                raise
+        else:
+            locking_module = cast(_PosixLockingModule, _LOCKING_MODULE)
+            try:
+                locking_module.flock(
+                    lock_file.fileno(),
+                    locking_module.LOCK_EX | locking_module.LOCK_NB,
+                )
+            except BlockingIOError:
+                return None
+        stack.pop_all()
+        return lock_file
+
+
+def _try_reserve_process_lock(path: str) -> str | None:
+    """Reserve one canonical lock path inside this process."""
+
+    reservation_key = os.path.normcase(os.path.realpath(os.path.abspath(path)))
+    with _PROCESS_LOCK_RESERVATIONS_GUARD:
+        if reservation_key in _PROCESS_LOCK_RESERVATIONS:
+            return None
+        _PROCESS_LOCK_RESERVATIONS.add(reservation_key)
+    return reservation_key
+
+
+def _release_process_lock(reservation_key: str) -> None:
+    """Release one process-local reservation after its OS lock is gone."""
+
+    with _PROCESS_LOCK_RESERVATIONS_GUARD:
+        _PROCESS_LOCK_RESERVATIONS.remove(reservation_key)
+
+
+def _close_locked_file(
+    lock_file: BinaryIO,
+    reservation_key: str,
+) -> None:
+    """Close the OS lock before making its process reservation available."""
+
+    try:
+        lock_file.close()
+    finally:
+        _release_process_lock(reservation_key)
+
+
 def _run_to_json(run: HumanWorkflowRun) -> dict[str, object]:
     _validate_run(run, error_type=ValueError)
     checkpoint: dict[str, object] | None = None
     if run.checkpoint is not None:
         checkpoint = {
+            "workflow_id": run.checkpoint.workflow_id,
+            "plan_digest": run.checkpoint.plan_digest,
             "values": _copy_json_mapping(
                 run.checkpoint.values,
                 context="checkpoint.values",
@@ -411,7 +566,7 @@ def _run_from_json(payload: object) -> HumanWorkflowRun:
         raise InvalidRunStateError("run state must be a JSON object")
     payload = cast(dict[str, object], payload)
     _require_exact_keys(payload, _RUN_KEYS, "run state")
-    if payload["version"] != STATE_VERSION:
+    if type(payload["version"]) is not int or payload["version"] != STATE_VERSION:
         raise InvalidRunStateError(f"unsupported run state version: {payload['version']!r}")
 
     checkpoint_payload = payload["checkpoint"]
@@ -423,20 +578,31 @@ def _run_from_json(payload: object) -> HumanWorkflowRun:
             raise InvalidRunStateError("checkpoint must be an object or null")
         checkpoint_payload = cast(dict[str, object], checkpoint_payload)
         _require_exact_keys(checkpoint_payload, _CHECKPOINT_KEYS, "checkpoint")
-        checkpoint = ExecutionCheckpoint(
-            values=_require_json_mapping(
-                checkpoint_payload["values"],
-                context="checkpoint.values",
-            ),
-            completed_step_ids=_require_string_tuple(
-                checkpoint_payload["completed_step_ids"],
-                context="checkpoint.completed_step_ids",
-            ),
-            completed_selection_ids=_require_string_tuple(
-                checkpoint_payload["completed_selection_ids"],
-                context="checkpoint.completed_selection_ids",
-            ),
-        )
+        try:
+            checkpoint = ExecutionCheckpoint(
+                workflow_id=_require_string(
+                    checkpoint_payload["workflow_id"],
+                    context="checkpoint.workflow_id",
+                ),
+                plan_digest=_require_string(
+                    checkpoint_payload["plan_digest"],
+                    context="checkpoint.plan_digest",
+                ),
+                values=_require_json_mapping(
+                    checkpoint_payload["values"],
+                    context="checkpoint.values",
+                ),
+                completed_step_ids=_require_string_tuple(
+                    checkpoint_payload["completed_step_ids"],
+                    context="checkpoint.completed_step_ids",
+                ),
+                completed_selection_ids=_require_string_tuple(
+                    checkpoint_payload["completed_selection_ids"],
+                    context="checkpoint.completed_selection_ids",
+                ),
+            )
+        except ValueError as error:
+            raise InvalidRunStateError(str(error)) from error
 
     request_payload = payload["prepared_request"]
     request: HumanRequestSpec | None
@@ -509,7 +675,7 @@ def _run_from_json(payload: object) -> HumanWorkflowRun:
                 None if payload["outputs"] is None else _require_json_mapping(payload["outputs"], context="outputs")
             ),
             error=(None if payload["error"] is None else _require_string(payload["error"], context="error")),
-            version=cast(int, payload["version"]),
+            version=payload["version"],
         )
     except (TypeError, ValueError) as error:
         raise InvalidRunStateError(str(error)) from error
@@ -525,6 +691,8 @@ def _copy_checkpoint(
     if not isinstance(checkpoint, ExecutionCheckpoint):
         raise error_type("checkpoint must be an ExecutionCheckpoint or None")
     return ExecutionCheckpoint(
+        workflow_id=checkpoint.workflow_id,
+        plan_digest=checkpoint.plan_digest,
         values=_copy_json_mapping(
             checkpoint.values,
             context="checkpoint.values",
@@ -540,7 +708,7 @@ def _validate_run(
     *,
     error_type: type[Exception],
 ) -> None:
-    if run.version != STATE_VERSION:
+    if type(run.version) is not int or run.version != STATE_VERSION:
         raise error_type(f"version must be {STATE_VERSION}")
     _validate_opaque_id(run.run_id, "run_id", error_type=error_type)
     if run.status not in {

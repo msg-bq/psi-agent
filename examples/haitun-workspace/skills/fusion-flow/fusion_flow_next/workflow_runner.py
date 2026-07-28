@@ -362,10 +362,29 @@ def _normalize_program_stdout(
             named_mapping_required=False,
         )
 
+    def reject_non_finite_constant(value: str) -> object:
+        raise ValueError(f"non-finite JSON constant {value!r}")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON object key {key!r}")
+            result[key] = value
+        return result
+
     try:
-        result = json.loads(stdout)
-    except json.JSONDecodeError as error:
-        raise ValueError(f"Program step {step_id!r} must write a JSON object keyed by artifact ID") from error
+        result = json.loads(
+            stdout,
+            parse_constant=reject_non_finite_constant,
+            object_pairs_hook=reject_duplicate_keys,
+        )
+        # ``json.loads("1e400")`` produces infinity without invoking
+        # ``parse_constant``. Re-encoding with ``allow_nan=False`` validates
+        # every nested number and catches that overflow case as well.
+        json.dumps(result, allow_nan=False)
+    except (json.JSONDecodeError, OverflowError, ValueError) as error:
+        raise ValueError(f"Program step {step_id!r} must write a strict JSON object keyed by artifact ID") from error
     return _normalize_outputs(
         step_id,
         output_ids,

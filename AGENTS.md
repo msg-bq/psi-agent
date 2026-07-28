@@ -62,9 +62,11 @@ shielded release。`DispatchContext.resource_lease` 负责把具体实例传给 
 
 **WorkflowGraph checkpoint 与 Human 跨回合等待的边界是什么？**
 `ExecutionCheckpoint` 只保存已经物化的 Artifact 值，以及依赖闭包完整的已完成
-Step / Select ID。恢复时执行器严格校验输入和值集合，预先发布已完成事件并跳过这些
-操作；`checkpoint_observer` 必须成功持久化后才允许依赖者继续。它不是任意缓存命中
-或 legacy `flow.*` run-directory resume。
+Step / Select ID，并绑定非空 `workflow_id` 与 graph/plan 结构摘要。checkpoint 值只
+接受 finite JSON；恢复时按 JSON 类型和值递归比较，因此 `true` 不等于 `1`。执行器
+还会严格校验已完成 ID、输入和值集合，预先发布已完成事件并跳过这些操作；
+`checkpoint_observer` 必须成功持久化后才允许依赖者继续。它不是任意缓存命中或
+legacy `flow.*` run-directory resume。
 
 Session 在一个请求的完整 agent/tool loop 期间持有 `_lock`，因此 workspace tool
 不能在 Human Step 内阻塞等待“下一条用户消息”，否则下一条消息无法进入同一

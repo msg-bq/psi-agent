@@ -37,6 +37,8 @@ All are optional and only affect the dynamic suffix / runtime line:
 | `HAITUN_AGENT_ID` | Agent ID shown in the runtime line. |
 | `HAITUN_CHANNEL` | Channel name shown in the runtime line. |
 | `HAITUN_TIMEZONE` | Time zone for the date/time section (default `UTC`). |
+| `PSI_FUSION_FLOW_PROGRAM_STDOUT_LIMIT_BYTES` | Positive-integer retained stdout byte limit for G4 Program Steps (default 4 MiB). |
+| `PSI_FUSION_FLOW_PROGRAM_STDERR_LIMIT_BYTES` | Positive-integer retained stderr byte limit for G4 Program Steps (default 1 MiB). |
 | `XFYUN_STT_APP_ID`, `XFYUN_STT_API_KEY`, `XFYUN_STT_API_SECRET` | iFLYTEK streaming STT credentials. |
 | `XFYUN_TTS_APP_ID`, `XFYUN_TTS_API_KEY`, `XFYUN_TTS_API_SECRET` | iFLYTEK online TTS credentials. |
 | `XFYUN_APP_ID`, `XFYUN_API_KEY`, `XFYUN_API_SECRET` | Optional shared fallback when both services use one app. |

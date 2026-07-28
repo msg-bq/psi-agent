@@ -114,6 +114,12 @@ Resolve the workspace-relative G4 path, submit it to `run_flow`, and report the 
 
 Agent/Program-only workflows finish in the initial `run_flow` call. A Human workflow executes to the next Human frontier, persists a checkpoint, releases the current Session turn, and continues only through `run_flow_resume`. Do not call the legacy `.flow.ts` `flow_run(start/status/result)` tool for G4 source, and do not invent polling, PIDs, workers, or a separate approval inbox.
 
+### Checkpoint integrity and resume safety
+
+An `ExecutionCheckpoint` is valid only for its exact non-empty `workflow_id` and `plan_digest`. The digest is SHA-256 over a canonical serialization of the current graph semantics and explicit execution-plan fibers; matching Step and Artifact IDs from another workflow or graph version are not enough. Values must be strict, finite JSON values, and resume compares them recursively with type identity, so JSON `true` never matches JSON `1`. The executor also validates unique known operation IDs, dependency closure, and the exact set of materialized values before it skips any work.
+
+The public `run_flow_resume` boundary additionally validates the current `.workflow` source against the source digest recorded when the run was created. Human-run state uses the strict state-v2 schema. Each resume is protected by an OS-released advisory file lock plus an in-process reservation guard; a leftover lock file is not ownership, and an abrupt process exit releases the live advisory lease. Do not copy checkpoints between workflows, edit persisted state, or bypass the matching `run_id` / `request_id` protocol.
+
 ### When a run fails
 
 A compilation or Step exception is a **STOP-and-report point**. Report the failing Step or diagnostic exposed by `run_flow`, state one best hypothesis, and hand back to the user.
@@ -351,7 +357,7 @@ const worker: Program, Executor;
 program_path(worker) == "./bin/worker";
 ```
 
-The public workspace runner has no catalog path resolver, so do not use a bare Path identity. The resolved executable must stay inside the workspace, including after symbolic-link resolution. `program_path` names one executable, not a shell command: do not append arguments, operators, pipes, or environment assignments. The runtime launches `argv == ("./bin/worker",)` without a shell, from the workspace directory, and sends one newline-terminated JSON object on stdin:
+The public workspace runner has no catalog path resolver, so do not use a bare Path identity. `program_path` names one executable, not a shell command: do not append arguments, operators, pipes, or environment assignments. The runtime launches without a shell from the workspace directory and sends one newline-terminated JSON object on stdin:
 
 ```json
 {
@@ -362,7 +368,11 @@ The public workspace runner has no catalog path resolver, so do not use a bare P
 }
 ```
 
-For one produced Artifact, stdout is that Artifact's string value. For multiple produced Artifacts, stdout must be exactly one JSON object keyed by all and only those Artifact IDs. A Program that produces no Artifacts must not write stdout.
+For one produced Artifact, stdout is that Artifact's string value. For multiple produced Artifacts, stdout must be exactly one strict, finite JSON object keyed by all and only those Artifact IDs; `NaN`, `Infinity`, numeric overflow to infinity, nested non-finite values, and duplicate object keys are rejected. A Program that produces no Artifacts must not write stdout.
+
+The public adapter pins the executable before launch. On POSIX, every executable and working-directory path component must be non-symlink; a trusted isolated bootstrap `fchdir()`s to the opened directory and executes the opened inode. Native binaries work without procfs. Shebang scripts require `/proc/self/fd` or `/dev/fd`, and their `$0` / `__file__` is the descriptor-backed path rather than the authored `program_path`. On Windows, the adapter retains a non-replaceable handle, validates its final path as workspace-contained, and starts that final path; this Windows branch has not been dynamically verified in this change.
+
+Programs run in a separate POSIX process group or Windows Job Object. Shielded cleanup terminates members of that boundary on failure, declared Step/workflow timeout, cancellation, output overflow, and after a direct child exits with managed descendants still present. There is no internal 300-second Program timeout. Stdout and stderr are streamed with retained-output defaults of 4 MiB and 1 MiB respectively; set `PSI_FUSION_FLOW_PROGRAM_STDOUT_LIMIT_BYTES` or `PSI_FUSION_FLOW_PROGRAM_STDERR_LIMIT_BYTES` to a positive integer to override them. Exceeding either limit terminates the process boundary. This is lifecycle management for trusted workspace Programs, not a host sandbox; on POSIX, code that deliberately creates a new session/process group leaves the managed group.
 
 #### Named Artifact selection with `if`
 
@@ -574,4 +584,4 @@ When the user asks what this skill can do ("你能帮我做什么 / 我能用这
 
 ## Security + Approvals
 
-Agent Steps run through ephemeral psi Sessions with a filtered workspace tool snapshot; nested workflow launchers and `clarify` are unavailable to them. Human instruction preparers receive only a workspace-confined, read-only `read` tool, so a referenced file cannot escape the workspace through `..`, an absolute path, or a symbolic link. Review user-supplied G4 source before execution, but do not add an approval gate unless the workflow itself declares a Human Step. Human interaction reuses the parent Session's existing `clarify` flow and never creates a separate approval UI. Refuse remote URLs: `run_flow` accepts workspace-local `.workflow` files only, and Program executables must resolve inside the workspace.
+Agent Steps run through ephemeral psi Sessions with a filtered workspace tool snapshot; nested workflow launchers and `clarify` are unavailable to them. Human instruction preparers receive only a workspace-confined, read-only `read` tool, so a referenced file cannot escape the workspace through `..`, an absolute path, or a symbolic link. Review user-supplied G4 source before execution, but do not add an approval gate unless the workflow itself declares a Human Step. Human interaction reuses the parent Session's existing `clarify` flow and never creates a separate approval UI. Refuse remote URLs: `run_flow` accepts workspace-local `.workflow` files only, and Program executables must satisfy the pinned workspace-containment contract above.

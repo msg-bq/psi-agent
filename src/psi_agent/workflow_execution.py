@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import heapq
+import json
+import math
 import operator
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -129,21 +132,139 @@ type ResourceCapacity = int | Sequence[str]
 
 @dataclass(frozen=True, slots=True)
 class ExecutionCheckpoint:
-    """A JSON-friendly snapshot of materialized values and completed operations."""
+    """A plan-bound JSON snapshot of materialized values and completed operations."""
 
+    workflow_id: str
+    plan_digest: str
     values: dict[str, object]
     completed_step_ids: tuple[str, ...] = ()
     completed_selection_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Defensively snapshot mutable inputs and normalize ID collections."""
+        """Validate the execution identity and defensively copy JSON values."""
 
-        object.__setattr__(self, "values", dict(self.values))
-        object.__setattr__(self, "completed_step_ids", tuple(self.completed_step_ids))
-        object.__setattr__(self, "completed_selection_ids", tuple(self.completed_selection_ids))
+        if not isinstance(self.workflow_id, str) or not self.workflow_id:
+            raise ValueError("checkpoint workflow_id must be a non-empty string")
+        if (
+            not isinstance(self.plan_digest, str)
+            or len(self.plan_digest) != 64
+            or any(character not in "0123456789abcdef" for character in self.plan_digest)
+        ):
+            raise ValueError("checkpoint plan_digest must be 64 lowercase hexadecimal characters")
+        object.__setattr__(
+            self,
+            "values",
+            _copy_json_mapping(
+                self.values,
+                context="checkpoint values",
+            ),
+        )
+        for field_name, identifiers in (
+            ("completed_step_ids", self.completed_step_ids),
+            ("completed_selection_ids", self.completed_selection_ids),
+        ):
+            if isinstance(identifiers, str | bytes):
+                raise ValueError(f"checkpoint {field_name} must be a sequence of operation IDs")
+            normalized = tuple(identifiers)
+            if not all(isinstance(identifier, str) and identifier for identifier in normalized):
+                raise ValueError(f"checkpoint {field_name} must contain only non-empty strings")
+            if len(set(normalized)) != len(normalized):
+                raise ValueError(f"checkpoint {field_name} must not contain duplicates")
+            object.__setattr__(self, field_name, normalized)
 
 
 type CheckpointObserver = Callable[[ExecutionCheckpoint], Awaitable[None]]
+
+
+def execution_plan_digest(
+    plan: ExecutionPlan,
+    graph: WorkflowGraph,
+) -> str:
+    """Return a stable digest of graph semantics and explicit plan structure."""
+
+    if not isinstance(plan, ExecutionPlan):
+        raise ExecutionPlanError("plan must be an ExecutionPlan")
+    if not isinstance(graph, WorkflowGraph):
+        raise ExecutionPlanError("graph must be a WorkflowGraph")
+    if plan.workflow_id != graph.workflow_id:
+        raise ExecutionPlanError(f"plan targets {plan.workflow_id}, not {graph.workflow_id}")
+
+    fibers: list[dict[str, object]] = []
+    for fiber in sorted(plan.fibers, key=lambda item: item.fiber_id):
+        instructions: list[dict[str, object]] = []
+        for instruction in fiber.instructions:
+            if isinstance(instruction, Await):
+                instructions.append(
+                    {
+                        "kind": "await_steps",
+                        "step_ids": sorted(instruction.step_ids),
+                    }
+                )
+            elif isinstance(instruction, AwaitSelections):
+                instructions.append(
+                    {
+                        "artifact_ids": sorted(instruction.artifact_ids),
+                        "kind": "await_selections",
+                    }
+                )
+            elif isinstance(instruction, Invoke):
+                instructions.append(
+                    {
+                        "kind": "invoke",
+                        "step_id": instruction.step_id,
+                    }
+                )
+            elif isinstance(instruction, Select):
+                instructions.append(
+                    {
+                        "kind": "select",
+                        "output_artifact_id": instruction.output_artifact_id,
+                    }
+                )
+            else:
+                raise ExecutionPlanError(f"plan contains unknown instruction: {type(instruction).__name__}")
+        fibers.append(
+            {
+                "fiber_id": fiber.fiber_id,
+                "instructions": instructions,
+            }
+        )
+
+    payload = {
+        "format": "psi-agent-execution-checkpoint-v1",
+        "graph": graph.to_dict(),
+        "plan": {
+            "fibers": fibers,
+            "workflow_id": plan.workflow_id,
+        },
+    }
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def create_execution_checkpoint(
+    plan: ExecutionPlan,
+    graph: WorkflowGraph,
+    *,
+    values: Mapping[str, object],
+    completed_step_ids: Sequence[str] = (),
+    completed_selection_ids: Sequence[str] = (),
+) -> ExecutionCheckpoint:
+    """Create a checkpoint bound to exactly one workflow and execution plan."""
+
+    return ExecutionCheckpoint(
+        workflow_id=graph.workflow_id,
+        plan_digest=execution_plan_digest(plan, graph),
+        values=dict(values),
+        completed_step_ids=tuple(completed_step_ids),
+        completed_selection_ids=tuple(completed_selection_ids),
+    )
 
 
 @dataclass(slots=True)
@@ -441,6 +562,7 @@ async def execute_plan(
     if resource_capacities is not None and allocator is not None:
         raise ExecutionPlanError("resource_capacities and allocator are mutually exclusive")
 
+    current_plan_digest = execution_plan_digest(plan, graph)
     expected_inputs = {artifact.artifact_id for artifact in graph.artifacts if artifact.is_input}
     supplied_inputs = set(inputs)
     if supplied_inputs != expected_inputs:
@@ -568,6 +690,12 @@ async def execute_plan(
     if checkpoint is not None:
         if not isinstance(checkpoint, ExecutionCheckpoint):
             raise ExecutionPlanError("checkpoint must be an ExecutionCheckpoint")
+        if checkpoint.workflow_id != graph.workflow_id:
+            raise ExecutionPlanError(
+                f"checkpoint targets workflow {checkpoint.workflow_id!r}, not {graph.workflow_id!r}"
+            )
+        if checkpoint.plan_digest != current_plan_digest:
+            raise ExecutionPlanError("checkpoint plan digest does not match the current graph and execution plan")
         if len(set(checkpoint.completed_step_ids)) != len(checkpoint.completed_step_ids):
             raise ExecutionPlanError("checkpoint contains duplicate completed step IDs")
         if len(set(checkpoint.completed_selection_ids)) != len(checkpoint.completed_selection_ids):
@@ -616,13 +744,7 @@ async def execute_plan(
                 f"got {sorted(actual_checkpoint_values)}"
             )
         for artifact_id in expected_inputs:
-            try:
-                inputs_match = checkpoint.values[artifact_id] == inputs[artifact_id]
-                if not isinstance(inputs_match, bool):
-                    inputs_match = bool(inputs_match)
-            except TypeError, ValueError:
-                inputs_match = False
-            if not inputs_match:
+            if not _json_values_equal(checkpoint.values[artifact_id], inputs[artifact_id]):
                 raise ExecutionPlanError(f"checkpoint input does not match current input: {artifact_id}")
 
     requirements_by_step = {
@@ -722,7 +844,9 @@ async def execute_plan(
                         values.update(outputs)
                         completed_step_ids.add(step.step_id)
                         await checkpoint_observer(
-                            ExecutionCheckpoint(
+                            create_execution_checkpoint(
+                                plan,
+                                graph,
                                 values=values,
                                 completed_step_ids=tuple(sorted(completed_step_ids)),
                                 completed_selection_ids=tuple(sorted(completed_selection_ids)),
@@ -758,7 +882,9 @@ async def execute_plan(
                         values[selector.output_artifact_id] = selected_value
                         completed_selection_ids.add(selector.output_artifact_id)
                         await checkpoint_observer(
-                            ExecutionCheckpoint(
+                            create_execution_checkpoint(
+                                plan,
+                                graph,
                                 values=values,
                                 completed_step_ids=tuple(sorted(completed_step_ids)),
                                 completed_selection_ids=tuple(sorted(completed_selection_ids)),
@@ -782,6 +908,163 @@ async def execute_plan(
             await run_fibers()
 
     return {artifact.artifact_id: values[artifact.artifact_id] for artifact in graph.artifacts if artifact.is_output}
+
+
+def _copy_json_mapping(
+    value: object,
+    *,
+    context: str,
+) -> dict[str, object]:
+    """Deep-copy one finite JSON object while rejecting ambiguous values."""
+
+    if not isinstance(value, Mapping):
+        raise ExecutionPlanError(f"{context} must be a mapping")
+    copied = _copy_json_value(
+        value,
+        context=context,
+        active=set(),
+    )
+    return cast(dict[str, object], copied)
+
+
+def _copy_json_value(
+    value: object,
+    *,
+    context: str,
+    active: set[int],
+) -> object:
+    """Deep-copy one strict JSON value, rejecting cycles and non-finite numbers."""
+
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ExecutionPlanError(f"{context} contains a non-finite number")
+        return value
+    if isinstance(value, list):
+        identity = id(value)
+        if identity in active:
+            raise ExecutionPlanError(f"{context} contains a reference cycle")
+        active.add(identity)
+        try:
+            return [
+                _copy_json_value(
+                    item,
+                    context=f"{context}[{index}]",
+                    active=active,
+                )
+                for index, item in enumerate(value)
+            ]
+        finally:
+            active.remove(identity)
+    if isinstance(value, Mapping):
+        identity = id(value)
+        if identity in active:
+            raise ExecutionPlanError(f"{context} contains a reference cycle")
+        active.add(identity)
+        try:
+            copied: dict[str, object] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise ExecutionPlanError(f"{context} contains a non-string object key")
+                copied[key] = _copy_json_value(
+                    item,
+                    context=f"{context}.{key}",
+                    active=active,
+                )
+            return copied
+        finally:
+            active.remove(identity)
+    raise ExecutionPlanError(f"{context} contains a non-JSON value of type {type(value).__name__}")
+
+
+def _json_values_equal(left: object, right: object) -> bool:
+    """Compare finite JSON values recursively without Python bool/int coercion."""
+
+    return _json_values_equal_inner(
+        left,
+        right,
+        active_left=set(),
+        active_right=set(),
+    )
+
+
+def _json_values_equal_inner(
+    left: object,
+    right: object,
+    *,
+    active_left: set[int],
+    active_right: set[int],
+) -> bool:
+    """Compare one pair of strict JSON values and reject cyclic containers."""
+
+    if left is None or right is None:
+        return left is None and right is None
+    if type(left) is bool or type(right) is bool:
+        return type(left) is bool and type(right) is bool and left is right
+    if type(left) is int or type(right) is int:
+        return type(left) is int and type(right) is int and left == right
+    if type(left) is float or type(right) is float:
+        return (
+            type(left) is float
+            and type(right) is float
+            and math.isfinite(left)
+            and math.isfinite(right)
+            and left == right
+        )
+    if type(left) is str or type(right) is str:
+        return type(left) is str and type(right) is str and left == right
+    if isinstance(left, list) or isinstance(right, list):
+        if not isinstance(left, list) or not isinstance(right, list) or len(left) != len(right):
+            return False
+        left_id = id(left)
+        right_id = id(right)
+        if left_id in active_left or right_id in active_right:
+            return False
+        active_left.add(left_id)
+        active_right.add(right_id)
+        try:
+            return all(
+                _json_values_equal_inner(
+                    left_item,
+                    right_item,
+                    active_left=active_left,
+                    active_right=active_right,
+                )
+                for left_item, right_item in zip(left, right, strict=True)
+            )
+        finally:
+            active_left.remove(left_id)
+            active_right.remove(right_id)
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+            return False
+        if not all(isinstance(key, str) for key in left) or not all(isinstance(key, str) for key in right):
+            return False
+        left_mapping = cast(Mapping[str, object], left)
+        right_mapping = cast(Mapping[str, object], right)
+        if left_mapping.keys() != right_mapping.keys():
+            return False
+        left_id = id(left_mapping)
+        right_id = id(right_mapping)
+        if left_id in active_left or right_id in active_right:
+            return False
+        active_left.add(left_id)
+        active_right.add(right_id)
+        try:
+            return all(
+                _json_values_equal_inner(
+                    left_mapping[key],
+                    right_mapping[key],
+                    active_left=active_left,
+                    active_right=active_right,
+                )
+                for key in left_mapping
+            )
+        finally:
+            active_left.remove(left_id)
+            active_right.remove(right_id)
+    return False
 
 
 def _evaluate_condition(

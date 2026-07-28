@@ -75,16 +75,29 @@ cancellation 路径都会在 shielded cleanup 中归还资源。当前 allocator
 
 ### 3.1 checkpoint / resume
 
-`execute_plan()` 可接收 `ExecutionCheckpoint(values, completed_step_ids,
-completed_selection_ids)`。恢复前会验证：ID 已知且无重复、已完成操作对计划依赖闭包
-封闭、`values` 恰好包含 workflow inputs 与所有已完成操作物化的 Artifact、输入值与
-本次调用一致。通过验证后，执行器预先 set 已完成事件、跳过相应 `Invoke` / `Select`，
-并只为未完成资源 Step 做 allocator preflight。
+`execute_plan()` 可接收 `ExecutionCheckpoint(workflow_id, plan_digest, values,
+completed_step_ids, completed_selection_ids)`。其中 `workflow_id` 必须与当前 workflow
+一致；`plan_digest` 是对规范化的图语义与显式 plan fiber 结构序列化后计算的 SHA-256，
+所以仅仅复用相同的 Step / Artifact ID 不能把另一张图或旧 plan 的 checkpoint
+移植过来。
+
+checkpoint 值只接受严格、有限的 JSON 类型：`null`、字符串、布尔、整数、有限浮点数、
+数组，以及字符串键对象；非有限数、非 JSON 对象和循环引用均被拒绝。恢复时递归比较
+JSON 类型和值，不使用 Python 的宽松相等语义，因此 `true` 与 `1` 不相等。此外还会
+验证 ID 已知且无重复、已完成操作对计划依赖闭包封闭、`values` 恰好包含 workflow
+inputs 与所有已完成操作物化的 Artifact。通过验证后，执行器预先 set 已完成事件、
+跳过相应 `Invoke` / `Select`，并只为未完成资源 Step 做 allocator preflight。
 
 调用方可注入 async `checkpoint_observer`。每个 Step/Select 的输出先在执行器内提交，
 observer 成功持久化完整快照后，completion event 才对依赖者可见；observer 失败会让
 本次执行失败，不能发布一个未持久化的前驱。这是 one-shot DAG 操作级 checkpoint，
 不是任意缓存命中、后台 worker 协议或 legacy `flow.*` run-directory resume。
+
+核心执行器不读取 workflow 源文件；workspace 的公开 `run_flow_resume` adapter 在
+此合同之外另行校验当前 `.workflow` 内容是否仍匹配创建 run 时保存的 source digest。
+Human run 使用严格的 state-v2 JSON schema 保存上述 workflow/plan 身份字段，并以
+OS 自动释放的 advisory file lock 加进程内 reservation guard 串行化同一个 run 的
+恢复。锁文件存在本身不代表持有租约；进程异常退出时内核会释放实际 advisory lock。
 
 ## 4. 与 FusionFlow Next Python execution 子包的边界
 
