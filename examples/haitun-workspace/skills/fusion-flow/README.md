@@ -1,8 +1,13 @@
 # FusionFlow
 
-FusionFlow is the workspace-local G4 parser/compiler, graph compiler, synchronous
-workflow runner, and authoring Skill. The `fusion_flow_next.execution` compatibility
-package is retained for historical parity tests but is not part of the active workspace path.
+FusionFlow is the workspace-local G4 parser/compiler, graph compiler, workflow
+runner, and authoring Skill. Program-backed Steps use an injected Program runner
+contract; the workspace entry point implements it with AnyIO subprocess
+execution. Human-backed Steps use a dedicated instruction-preparation Agent,
+the existing Haitun `clarify` flow, and a private checkpoint that crosses
+conversation turns. The `fusion_flow_next.execution` compatibility package is
+retained for historical parity tests but is not part of the active workspace
+path.
 
 ## Modules
 
@@ -15,7 +20,8 @@ package is retained for historical parity tests but is not part of the active wo
 - `fusion_flow_next/checker.py`: static semantics boundary.
 - `fusion_flow_next/compiler.py`: target-neutral Core IR traversal and backend hook boundary.
 - `fusion_flow_next/graph_compiler.py`: concrete `CoreIRCompiler` backend that builds `psi_agent.workflow_graph` models.
-- `fusion_flow_next/workflow_runner.py`: fail-closed compile/plan/execute entry point with legacy and contextual dispatcher contracts.
+- `fusion_flow_next/workflow_runner.py`: fail-closed compile/plan/execute entry point with Agent, Human, Program, and checkpoint injection boundaries.
+- `fusion_flow_next/job_store.py`: strict, versioned JSON state and exclusive leases for G4 runs waiting on Human input.
 - `fusion_flow_next/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
 - `fusion_flow_next/execution/`: inactive Python parity port of legacy `flow.*` primitives; `run_flow` does not import or dispatch through it.
 - `test/test_graph_compiler.py`: real Core IR to WorkflowGraph compiler contract checks.
@@ -57,11 +63,14 @@ Unknown well-formed assertions remain in `residual_assertions`. A top-level
 `SelectNode`; both candidates must be declared Artifacts and both producers run.
 Downstream dataflow consumes `[selected]`. Priority selection uses named
 intermediate Artifacts; inline or nested `if` terms fail closed.
-`program_path`, `agent_system_prompt`, and `allowed_tool` remain residual for a
-future catalog/dispatcher. Malformed supported relations and unsupported
-recursive terms fail explicitly. An official execution entry point must reject
-any final residual rather than skip or delete it. The graph is serializable,
-but the compilation is not a replacement for the original Core IR.
+The graph compiler preserves `program_path`, `agent_system_prompt`, and
+`allowed_tool` as residual catalog/dispatcher configuration. The official
+workflow runner consumes and validates `program_path`; `agent_system_prompt`
+and `allowed_tool` remain unsupported residuals and stop execution. Malformed
+supported relations and unsupported recursive terms fail explicitly. An
+official execution entry point must reject any final residual rather than skip
+or delete it. The graph is serializable, but the compilation is not a
+replacement for the original Core IR.
 
 Because `Assertion` is equality, one recognized graph call may appear on either
 side. The backend normalizes that call before lowering and explicitly rejects an
@@ -70,12 +79,55 @@ equality containing recognized graph calls on both sides.
 The package exports `WorkflowGraphCompiler`, `WorkflowGraphCompilation`, and
 `WorkflowGraphCompilationError`.
 
-The one-shot executor supports fixed resource pools supplied as positive
+The graph executor supports fixed resource pools supplied as positive
 capacities or concrete instance IDs. It validates every requirement before
 dispatch, atomically leases all resources needed by one Step, waits when
 capacity is temporarily unavailable, and releases leases on success, failure,
 timeout, or cancellation. Workflow `max_concurrency` and resource capacity both
 apply.
+
+A Program executor must have exactly one `program_path(program) == path`
+declaration. Absolute and explicit `./...` paths pass through; other path
+identities require an injected resolver, and relative resolved paths require an
+explicit working directory. The runner supplies only the resolved executable
+in `argv`, sends `{"instruction": ..., "inputs": ...}` plus a newline on stdin,
+and uses the Step ID as the invocation binding name. The injected Program
+runner returns stdout. One produced Artifact keeps it as a scalar string;
+multiple produced Artifacts require it to be one JSON object keyed exactly by
+those Artifact IDs.
+
+The generic runner keeps the injected path contract from the original Program
+implementation. The public Haitun workspace adapter applies the tighter
+security boundary: the executable must resolve inside the workspace, including
+after symbolic-link resolution. It launches the original one-element `argv`
+without a shell.
+
+A Human executor keeps instruction preparation and actual user input separate.
+The runner gives a contextual preparer the original instruction/reference,
+consumed Artifact values, resource lease, and exact output IDs. The public
+adapter runs that preparer in its own ephemeral Session with a workspace-bound,
+read-only `read` tool, validates its exact
+`question/options/recommended/default` JSON, and persists a
+`HumanRequestSpec`. It does not build a second approval UI.
+
+The initial `run_flow` call returns a `waiting_for_human` envelope under the
+reserved `$fusion_flow/control` key, which cannot collide with a G4 Artifact
+ID. The parent Session passes its nested request fields to the existing
+`clarify` tool, shows that tool's formatted text verbatim, and ends the turn.
+The next user message is JSON-encoded and submitted with the matching `run_id`
+and `request_id` to `run_flow_resume`. The generic executor validates and
+restores an `ExecutionCheckpoint`, skips completed Steps/selections, and
+continues until final outputs or the next Human Step. The request text is never
+an Artifact; the submitted choice, free text, or structured value is the Human
+Step result.
+
+Checkpoint observers publish state before releasing dependent operations.
+Human waits release resource leases and Session ownership; workflow and Step
+timeouts restart for each resumed execution phase rather than including time
+spent waiting for a person. A wait cancels unfinished parallel fibers, so an
+uncheckpointed side-effecting Step can run again after resume; workflows should
+not place such a Step concurrently with a Human frontier when exactly-once
+effects matter.
 
 `independent(step)` is a non-binding scheduling hint and never overrides
 Artifact or explicit control dependencies. `depends_on(step, predecessor)`
@@ -102,14 +154,17 @@ Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimizat
 
 | Item | Intended contract | Current gap | Required compiler behavior |
 | --- | --- | --- | --- |
-| `S01` | `input_workflow` and `output_workflow` declare external artifacts. | The compatibility-only `fusion_flow_next.execution` operations are not wired to those declarations. | The generic `WorkflowGraph` executor already enforces the exact input boundary; connecting the compatibility execution package still requires a separate runtime value contract. |
+| `S01` | `input_workflow` and `output_workflow` declare external artifacts. | No gap in the official graph runner. | The generic `WorkflowGraph` executor enforces the exact input/output boundary and adapts Program stdout at the injected dispatcher boundary. |
 
 ## Activation boundary
 
-Do not connect `fusion_flow_next.execution` to `SKILL.md`, workspace tools, or
-the G4 graph runner merely because it now shares the correct package boundary.
-That integration still requires an explicit Core IR / `WorkflowGraph` runtime
-contract.
+Keep Program execution behind the injected runner boundary: one resolved
+executable path in `argv`, step instruction and consumed Artifacts as JSON
+stdin, and stdout as the produced value. The workspace implementation launches
+the argv directly with AnyIO and no shell. Agent Steps continue through the
+injected contextual completion boundary. Human Steps continue through
+contextual preparation/request callbacks plus the generic checkpoint API; they
+do not depend on `fusion_flow_next.execution`.
 
 `AgentConfig.system_prompt` is the only Python field for an Agent's stable
 system prompt. `AgentInvocation.prompt` remains the per-call prompt. The removed

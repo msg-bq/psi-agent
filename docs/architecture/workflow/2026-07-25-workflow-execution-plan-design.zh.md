@@ -73,30 +73,40 @@ dispatcher 暴露具体实例。退出 dispatch 的 success、exception、timeou
 cancellation 路径都会在 shielded cleanup 中归还资源。当前 allocator 是进程内
 固定资源池，不提供跨进程锁或 shared/exclusive 租约模式。
 
+### 3.1 checkpoint / resume
+
+`execute_plan()` 可接收 `ExecutionCheckpoint(values, completed_step_ids,
+completed_selection_ids)`。恢复前会验证：ID 已知且无重复、已完成操作对计划依赖闭包
+封闭、`values` 恰好包含 workflow inputs 与所有已完成操作物化的 Artifact、输入值与
+本次调用一致。通过验证后，执行器预先 set 已完成事件、跳过相应 `Invoke` / `Select`，
+并只为未完成资源 Step 做 allocator preflight。
+
+调用方可注入 async `checkpoint_observer`。每个 Step/Select 的输出先在执行器内提交，
+observer 成功持久化完整快照后，completion event 才对依赖者可见；observer 失败会让
+本次执行失败，不能发布一个未持久化的前驱。这是 one-shot DAG 操作级 checkpoint，
+不是任意缓存命中、后台 worker 协议或 legacy `flow.*` run-directory resume。
+
 ## 4. 与 FusionFlow Next Python execution 子包的边界
 
-`StepNode.executor_id` 只是稳定身份，不包含 Agent 配置、ServiceHandle、argv 或
-可调用对象，因此通用执行器不能仅凭图决定调用哪个 `flow.*` 原语。调用方负责提供：
+`StepNode.executor_id` 只是稳定身份，不包含 Agent 配置、Human channel、argv 或
+可调用对象，因此通用执行器不能仅凭图决定实际能力。调用方负责提供 dispatcher：
 
 ```python
-from fusion_flow_next.execution import flow
-
-
-async def dispatch(step, inputs):
+async def dispatch(step, inputs, context):
     if step.executor_id == "writer":
-        text = await flow.session(writer, str(inputs["notes"]))
+        text = await complete_agent(step, inputs, context)
         return {"draft_text": text}
     if step.executor_id == "formatter":
-        result = await flow.exec("formatter", ["formatter"])
-        return {"article": result.stdout}
+        stdout = await run_program(step, inputs, context)
+        return {"article": stdout}
     raise LookupError(step.executor_id)
 ```
 
-dispatcher 可以调用 `fusion_flow_next.execution` 中的 `flow.session`、
-`flow.call` 或 `flow.exec`；需要具体资源实例时使用三参数 contextual dispatcher，
-从 `DispatchContext.resource_lease` 读取 grant。计划执行器只负责并发、等待、
-资源 admission、输入收集和输出提交。核心执行器不依赖这个示例 Skill 子包，
-也不会在 graph package 中复制 executor catalog。
+需要具体资源实例时，contextual dispatcher 从
+`DispatchContext.resource_lease` 读取 grant。计划执行器只负责并发、等待、资源
+admission、输入收集、输出提交与 checkpoint；核心执行器不依赖示例 Skill，也不会
+在 graph package 中复制 executor catalog。官方 G4 runner 的 Agent/Program/Human
+adapter 与隔离保留的 `fusion_flow_next.execution` 兼容层没有运行时耦合。
 
 ## 5. 初版明确拒绝
 

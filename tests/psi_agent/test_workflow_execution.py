@@ -11,6 +11,7 @@ import psi_agent.workflow_execution as workflow_execution
 from psi_agent.workflow_execution import (
     Await,
     DispatchContext,
+    ExecutionCheckpoint,
     ExecutionPlan,
     ExecutionPlanError,
     Fiber,
@@ -1286,3 +1287,98 @@ async def test_resource_is_released_after_failure_timeout_and_cancel() -> None:
 
     with anyio.fail_after(1):
         await execute_plan(generate_plan(normal), normal, inputs={}, dispatch=succeed, allocator=allocator)
+
+
+@pytest.mark.anyio
+async def test_execute_plan_resumes_from_dependency_closed_checkpoint() -> None:
+    graph = _diamond_graph()
+    invoked: list[str] = []
+
+    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+        invoked.append(step.step_id)
+        if step.step_id == "draft":
+            return {"draft_text": inputs["notes"]}
+        if step.step_id == "review":
+            return {"review_text": inputs["notes"]}
+        if step.step_id == "publish":
+            return {"article": f"{inputs['draft_text']}/{inputs['review_text']}"}
+        raise AssertionError(step.step_id)
+
+    result = await execute_plan(
+        generate_plan(graph),
+        graph,
+        inputs={"topic": "async"},
+        dispatch=dispatch,
+        checkpoint=ExecutionCheckpoint(
+            values={"topic": "async", "notes": "resumed"},
+            completed_step_ids=("research",),
+        ),
+    )
+
+    assert set(invoked) == {"draft", "review", "publish"}
+    assert result == {"article": "resumed/resumed"}
+
+
+@pytest.mark.anyio
+async def test_execute_plan_rejects_checkpoint_without_dependency_closure() -> None:
+    graph = _diamond_graph()
+
+    with pytest.raises(ExecutionPlanError, match=r"dependency-closed.*research"):
+        await execute_plan(
+            generate_plan(graph),
+            graph,
+            inputs={"topic": "async"},
+            dispatch=_unexpected_dispatch,
+            checkpoint=ExecutionCheckpoint(
+                values={"topic": "async", "draft_text": "draft"},
+                completed_step_ids=("draft",),
+            ),
+        )
+
+
+@pytest.mark.anyio
+async def test_checkpoint_observer_finishes_before_dependent_is_released() -> None:
+    graph = WorkflowGraph(
+        "persist-before-release",
+        (
+            StepNode("prepare", "prepare", "executor"),
+            StepNode("publish", "publish", "executor", depends_on=("prepare",)),
+        ),
+        (),
+    )
+    observer_entered = anyio.Event()
+    release_observer = anyio.Event()
+    publish_entered = anyio.Event()
+    checkpoints: list[ExecutionCheckpoint] = []
+
+    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+        assert inputs == {}
+        if step.step_id == "publish":
+            publish_entered.set()
+        return {}
+
+    async def observe(checkpoint: ExecutionCheckpoint) -> None:
+        checkpoints.append(checkpoint)
+        if checkpoint.completed_step_ids == ("prepare",):
+            observer_entered.set()
+            await release_observer.wait()
+
+    async def run() -> None:
+        await execute_plan(
+            generate_plan(graph),
+            graph,
+            inputs={},
+            dispatch=dispatch,
+            checkpoint_observer=observe,
+        )
+
+    with anyio.fail_after(1):
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(run)
+            await observer_entered.wait()
+            await checkpoint()
+            assert not publish_entered.is_set()
+            release_observer.set()
+
+    assert publish_entered.is_set()
+    assert checkpoints[-1].completed_step_ids == ("prepare", "publish")

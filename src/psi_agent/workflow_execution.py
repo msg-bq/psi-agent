@@ -127,6 +127,25 @@ type ContextualStepDispatcher = Callable[
 type ResourceCapacity = int | Sequence[str]
 
 
+@dataclass(frozen=True, slots=True)
+class ExecutionCheckpoint:
+    """A JSON-friendly snapshot of materialized values and completed operations."""
+
+    values: dict[str, object]
+    completed_step_ids: tuple[str, ...] = ()
+    completed_selection_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Defensively snapshot mutable inputs and normalize ID collections."""
+
+        object.__setattr__(self, "values", dict(self.values))
+        object.__setattr__(self, "completed_step_ids", tuple(self.completed_step_ids))
+        object.__setattr__(self, "completed_selection_ids", tuple(self.completed_selection_ids))
+
+
+type CheckpointObserver = Callable[[ExecutionCheckpoint], Awaitable[None]]
+
+
 @dataclass(slots=True)
 class _AdmissionState:
     """Run-local counters committed under one allocator condition."""
@@ -410,8 +429,10 @@ async def execute_plan(
     contextual_dispatch: ContextualStepDispatcher | None = None,
     resource_capacities: Mapping[str, ResourceCapacity] | None = None,
     allocator: ResourceAllocator | None = None,
+    checkpoint: ExecutionCheckpoint | None = None,
+    checkpoint_observer: CheckpointObserver | None = None,
 ) -> dict[str, object]:
-    """Start all fibers and interpret their awaits and invocations."""
+    """Start or resume all fibers and interpret their awaits and invocations."""
 
     if plan.workflow_id != graph.workflow_id:
         raise ExecutionPlanError(f"plan targets {plan.workflow_id}, not {graph.workflow_id}")
@@ -542,7 +563,71 @@ async def execute_plan(
             plan_dependencies[operation_id].update(("select", artifact_id) for artifact_id in satisfied_selections)
     _reject_cycles(plan_dependencies)
 
-    requirements_by_step = {step.step_id: step.resources for step in graph.steps}
+    completed_step_ids: set[str] = set()
+    completed_selection_ids: set[str] = set()
+    if checkpoint is not None:
+        if not isinstance(checkpoint, ExecutionCheckpoint):
+            raise ExecutionPlanError("checkpoint must be an ExecutionCheckpoint")
+        if len(set(checkpoint.completed_step_ids)) != len(checkpoint.completed_step_ids):
+            raise ExecutionPlanError("checkpoint contains duplicate completed step IDs")
+        if len(set(checkpoint.completed_selection_ids)) != len(checkpoint.completed_selection_ids):
+            raise ExecutionPlanError("checkpoint contains duplicate completed selection IDs")
+        if not all(isinstance(step_id, str) and step_id for step_id in checkpoint.completed_step_ids):
+            raise ExecutionPlanError("checkpoint completed step IDs must be non-empty strings")
+        if not all(isinstance(artifact_id, str) and artifact_id for artifact_id in checkpoint.completed_selection_ids):
+            raise ExecutionPlanError("checkpoint completed selection IDs must be non-empty strings")
+
+        completed_step_ids.update(checkpoint.completed_step_ids)
+        completed_selection_ids.update(checkpoint.completed_selection_ids)
+        unknown_completed_steps = completed_step_ids - steps.keys()
+        if unknown_completed_steps:
+            raise ExecutionPlanError(f"checkpoint contains unknown completed steps: {sorted(unknown_completed_steps)}")
+        unknown_completed_selections = completed_selection_ids - selectors.keys()
+        if unknown_completed_selections:
+            raise ExecutionPlanError(
+                f"checkpoint contains unknown completed selections: {sorted(unknown_completed_selections)}"
+            )
+
+        completed_operations = {
+            *(("step", step_id) for step_id in completed_step_ids),
+            *(("select", artifact_id) for artifact_id in completed_selection_ids),
+        }
+        for operation_id in sorted(completed_operations):
+            missing_dependencies = plan_dependencies[operation_id] - completed_operations
+            if missing_dependencies:
+                formatted_operation = f"{operation_id[0]}:{operation_id[1]}"
+                formatted_missing = sorted(f"{kind}:{identity}" for kind, identity in missing_dependencies)
+                raise ExecutionPlanError(
+                    f"checkpoint is not dependency-closed for {formatted_operation}: missing {formatted_missing}"
+                )
+
+        if not all(isinstance(artifact_id, str) for artifact_id in checkpoint.values):
+            raise ExecutionPlanError("checkpoint values must have string artifact IDs")
+        expected_checkpoint_values = set(expected_inputs)
+        expected_checkpoint_values.update(
+            artifact_id for step_id in completed_step_ids for artifact_id in produced[step_id]
+        )
+        expected_checkpoint_values.update(completed_selection_ids)
+        actual_checkpoint_values = set(checkpoint.values)
+        if actual_checkpoint_values != expected_checkpoint_values:
+            raise ExecutionPlanError(
+                "checkpoint values must match materialized artifacts exactly: "
+                f"expected {sorted(expected_checkpoint_values)}, "
+                f"got {sorted(actual_checkpoint_values)}"
+            )
+        for artifact_id in expected_inputs:
+            try:
+                inputs_match = checkpoint.values[artifact_id] == inputs[artifact_id]
+                if not isinstance(inputs_match, bool):
+                    inputs_match = bool(inputs_match)
+            except TypeError, ValueError:
+                inputs_match = False
+            if not inputs_match:
+                raise ExecutionPlanError(f"checkpoint input does not match current input: {artifact_id}")
+
+    requirements_by_step = {
+        step.step_id: step.resources for step in graph.steps if step.step_id not in completed_step_ids
+    }
     has_resources = any(requirements_by_step.values())
     if allocator is None:
         if resource_capacities is None:
@@ -553,9 +638,14 @@ async def execute_plan(
             allocator = ResourceAllocator(resource_capacities)
     await allocator.preflight(requirements_by_step)
 
-    values = dict(inputs)
+    values = dict(inputs if checkpoint is None else checkpoint.values)
     completed_steps = {step_id: anyio.Event() for step_id in steps}
     completed_selections = {artifact_id: anyio.Event() for artifact_id in selectors}
+    for step_id in completed_step_ids:
+        completed_steps[step_id].set()
+    for artifact_id in completed_selection_ids:
+        completed_selections[artifact_id].set()
+    checkpoint_lock = anyio.Lock()
     capacity = graph.policy.max_concurrency or max(1, len(steps))
     admission_state = _AdmissionState(
         max_concurrency=capacity,
@@ -606,6 +696,8 @@ async def execute_plan(
                 continue
 
             if isinstance(instruction, Invoke):
+                if instruction.step_id in completed_step_ids:
+                    continue
                 step = steps.get(instruction.step_id)
                 if step is None:
                     raise ExecutionPlanError(f"plan invokes unknown step: {instruction.step_id}")
@@ -622,12 +714,27 @@ async def execute_plan(
                         f"expected {sorted(expected_outputs)}, "
                         f"got {sorted(actual_outputs)}"
                     )
-                values.update(outputs)
+                if checkpoint_observer is None:
+                    values.update(outputs)
+                    completed_step_ids.add(step.step_id)
+                else:
+                    async with checkpoint_lock:
+                        values.update(outputs)
+                        completed_step_ids.add(step.step_id)
+                        await checkpoint_observer(
+                            ExecutionCheckpoint(
+                                values=values,
+                                completed_step_ids=tuple(sorted(completed_step_ids)),
+                                completed_selection_ids=tuple(sorted(completed_selection_ids)),
+                            )
+                        )
                 completed_steps[step.step_id].set()
                 logger.debug(f"Completed workflow step: {step.step_id}")
                 continue
 
             if isinstance(instruction, Select):
+                if instruction.output_artifact_id in completed_selection_ids:
+                    continue
                 selector = selectors.get(instruction.output_artifact_id)
                 if selector is None:
                     raise ExecutionPlanError(f"plan executes unknown selection: {instruction.output_artifact_id}")
@@ -638,11 +745,25 @@ async def execute_plan(
                     else selector.when_false_artifact_id
                 )
                 try:
-                    values[selector.output_artifact_id] = values[candidate_artifact_id]
+                    selected_value = values[candidate_artifact_id]
                 except KeyError:
                     raise ExecutionPlanError(
                         f"select {selector.output_artifact_id} is missing candidate artifact: {candidate_artifact_id}"
                     ) from None
+                if checkpoint_observer is None:
+                    values[selector.output_artifact_id] = selected_value
+                    completed_selection_ids.add(selector.output_artifact_id)
+                else:
+                    async with checkpoint_lock:
+                        values[selector.output_artifact_id] = selected_value
+                        completed_selection_ids.add(selector.output_artifact_id)
+                        await checkpoint_observer(
+                            ExecutionCheckpoint(
+                                values=values,
+                                completed_step_ids=tuple(sorted(completed_step_ids)),
+                                completed_selection_ids=tuple(sorted(completed_selection_ids)),
+                            )
+                        )
                 completed_selections[selector.output_artifact_id].set()
                 logger.debug(f"Completed workflow select: {selector.output_artifact_id}")
                 continue
