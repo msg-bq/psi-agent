@@ -18,7 +18,6 @@ class ResourceRequirementDict(TypedDict):
 
     resource_id: str
     amount: int
-    exclusive: NotRequired[bool]
 
 
 class StepNodeDict(TypedDict):
@@ -32,6 +31,7 @@ class StepNodeDict(TypedDict):
     max_attempts: int
     resources: list[ResourceRequirementDict]
     independent: NotRequired[bool]
+    depends_on: NotRequired[list[str]]
 
 
 class ArtifactNodeDict(TypedDict):
@@ -147,7 +147,6 @@ class ResourceRequirement:
 
     resource_id: str
     amount: int
-    exclusive: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,9 +161,10 @@ class StepNode:
     max_attempts: int = 1
     resources: tuple[ResourceRequirement, ...] = ()
     independent: bool = False
+    depends_on: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Reject mutable or incorrectly typed resource collections early."""
+        """Reject mutable or malformed nested collections early."""
 
         # Frozen dataclasses are only deeply immutable when nested collections
         # are immutable too; accepting a list here would leak caller mutation.
@@ -172,6 +172,15 @@ class StepNode:
             raise WorkflowGraphError("resources must be a tuple")
         if not all(isinstance(requirement, ResourceRequirement) for requirement in self.resources):
             raise WorkflowGraphError("resources must contain only ResourceRequirement")
+        if not isinstance(self.depends_on, tuple):
+            raise WorkflowGraphError("depends_on must be a tuple")
+        seen_dependencies: set[str] = set()
+        for predecessor_id in self.depends_on:
+            if not isinstance(predecessor_id, str) or not predecessor_id:
+                raise WorkflowGraphError("depends_on must contain only non-empty step IDs")
+            if predecessor_id in seen_dependencies:
+                raise WorkflowGraphError(f"duplicate depends_on step: {predecessor_id}")
+            seen_dependencies.add(predecessor_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,12 +483,24 @@ class WorkflowGraph:
             for requirement in step.resources:
                 self._require_identity(requirement.resource_id, "resource_id")
                 self._require_positive(requirement.amount, "resource amount")
-                if type(requirement.exclusive) is not bool:
-                    raise WorkflowGraphError("exclusive must be a boolean")
                 resource_key = (step.step_id, requirement.resource_id)
                 if resource_key in resource_keys:
                     raise WorkflowGraphError(f"duplicate resource requirement: {resource_key}")
                 resource_keys.add(resource_key)
+
+        # Explicit ordering constraints reference steps rather than artifacts.
+        # Validate them only after collecting every step ID so forward
+        # references are valid.  Cycles remain legal in this declarative model;
+        # an execution planner may reject the one-shot cyclic subset.
+        for step in self.steps:
+            seen_dependencies: set[str] = set()
+            for predecessor_id in step.depends_on:
+                self._require_identity(predecessor_id, "depends_on step_id")
+                if predecessor_id in seen_dependencies:
+                    raise WorkflowGraphError(f"duplicate depends_on step: {predecessor_id}")
+                seen_dependencies.add(predecessor_id)
+                if predecessor_id not in step_ids:
+                    raise WorkflowGraphError(f"unknown depends_on step: {predecessor_id}")
 
         # Artifact pass: validate identities/flags/owners and build the lookup
         # needed by later edge checks.
@@ -667,8 +688,6 @@ class WorkflowGraph:
                     resource_id=requirement.resource_id,
                     amount=requirement.amount,
                 )
-                if requirement.exclusive:
-                    requirement_payload["exclusive"] = True
                 resources.append(requirement_payload)
 
             step_payload = StepNodeDict(
@@ -682,6 +701,8 @@ class WorkflowGraph:
             )
             if step.independent:
                 step_payload["independent"] = True
+            if step.depends_on:
+                step_payload["depends_on"] = sorted(step.depends_on)
             step_payloads.append(step_payload)
 
         # Artifacts have one stable identity key.

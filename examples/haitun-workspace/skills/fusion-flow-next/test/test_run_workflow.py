@@ -26,6 +26,17 @@ def _load_module(name: str, path: str) -> Any:
 run_workflow = _load_module("fusion_flow_next_workflow_runner", _RUNNER_PATH)
 
 
+def test_runner_catalog_includes_typed_depends_on() -> None:
+    context = run_workflow._default_parse_context()
+
+    depends_on = context.operators["depends_on"]
+    assert tuple(concept.name for concept in depends_on.input_concepts) == (
+        "Step",
+        "Step",
+    )
+    assert depends_on.output_concept == context.concepts["Bool"]
+
+
 def _dispatch_workflow(executor_kind: str | None, instruction: str) -> str:
     executor_declaration = "" if executor_kind is None else f"const worker: {executor_kind};"
     return f"""
@@ -318,10 +329,7 @@ async def test_contextual_completion_receives_resource_lease() -> None:
         )
         .replace(
             "\n}",
-            (
-                "\n    resource_requirement(dispatch_step, gpu) == 1;"
-                "\n    exclusive_lease(dispatch_step, gpu) == True;\n}"
-            ),
+            "\n    resource_requirement(dispatch_step, gpu) == 1;\n}",
         )
     )
     leases: list[tuple[str, ...]] = []
@@ -332,7 +340,6 @@ async def test_contextual_completion_receives_resource_lease() -> None:
     ) -> dict[str, object]:
         assert prompt.startswith("Instruction: use_gpu")
         leases.append(context.dispatch.resource_lease.instances("gpu"))
-        assert context.dispatch.resource_lease.grants[0].exclusive is True
         return {"result": "completed"}
 
     result = await run_workflow.execute_workflow(
@@ -344,6 +351,62 @@ async def test_contextual_completion_receives_resource_lease() -> None:
 
     assert result == {"result": "completed"}
     assert leases == [("cuda:0",)]
+
+
+@pytest.mark.anyio
+async def test_depends_on_orders_steps_without_an_artifact_dependency() -> None:
+    source = """
+const explicit_order: Workflow;
+const after_step: Step;
+const before_step: Step;
+const after_name: StepName;
+const before_name: StepName;
+const worker: Agent;
+const request: Artifact;
+const after_result: Artifact;
+const before_result: Artifact;
+
+workflow explicit_order {
+    input_workflow(explicit_order) == [request];
+    output_workflow(explicit_order) == [after_result, before_result];
+
+    step_name(after_step) == after_name;
+    step_instruction(after_step) == "after";
+    step_executor(after_step) == worker;
+    consumes(after_step) == [request];
+    produces(after_step) == [after_result];
+
+    step_name(before_step) == before_name;
+    step_instruction(before_step) == "before";
+    step_executor(before_step) == worker;
+    consumes(before_step) == [request];
+    produces(before_step) == [before_result];
+
+    depends_on(after_step, before_step) == True;
+}
+"""
+    before_finished = False
+
+    async def complete(prompt: str) -> str:
+        nonlocal before_finished
+        instruction = prompt.splitlines()[0].removeprefix("Instruction: ")
+        if instruction == "before":
+            before_finished = True
+            return "BEFORE"
+        assert instruction == "after"
+        assert before_finished
+        return "AFTER"
+
+    result = await run_workflow.execute_workflow(
+        source,
+        request="run",
+        complete=complete,
+    )
+
+    assert result == {
+        "after_result": "AFTER",
+        "before_result": "BEFORE",
+    }
 
 
 @pytest.mark.anyio

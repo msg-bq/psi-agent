@@ -45,9 +45,12 @@ The Core IR contains catalog-owned `Concept` and `Operator` references, typed co
 including `ListTerm.items` returned by the four canonical dataflow operators,
 and returns one `WorkflowGraphCompilation` per workflow. Recognized dependency
 assertions become graph nodes, edges, or typed policy. In addition to dataflow
-and ordinary Step policy, the backend consumes `independent` and
-`exclusive_lease`. Unknown well-formed assertions remain in
-`residual_assertions`. A top-level
+and ordinary Step policy, the backend consumes `independent`,
+`resource_requirement`, and the explicit control-order relation `depends_on`.
+`depends_on` is a runner-registered typed catalog extension over the grammar's
+generic operator-call syntax, not a new member of the grammar's 21 canonical
+preset operators.
+Unknown well-formed assertions remain in `residual_assertions`. A top-level
 `selected == if(condition, artifact_a, artifact_b)` lowers to an eager
 `SelectNode`; both candidates must be declared Artifacts and both producers run.
 Downstream dataflow consumes `[selected]`. Priority selection uses named
@@ -73,11 +76,14 @@ timeout, or cancellation. Workflow `max_concurrency` and resource capacity both
 apply.
 
 `independent(step)` is a non-binding scheduling hint and never overrides
-Artifact dependencies. Exclusive resource leases require a contextual
-dispatcher so the concrete lease is visible during execution.
+Artifact or explicit control dependencies. `depends_on(step, predecessor)`
+forces the first Step to wait for the second even when no Artifact flows
+between them; repeat the relation for multiple predecessors. Declaration order
+has no scheduling meaning.
 
 `ForeachEdge`, `max_attempts != 1`, feedback/input-plus-producer graphs, and
-circular awaits remain fail-closed execution-plan boundaries.
+circular Artifact or explicit control awaits remain fail-closed execution-plan
+boundaries.
 
 This remains an example-local package rather than a wheel dependency. The
 execution subpackage is a compatibility boundary, not the G4 runtime. Run all

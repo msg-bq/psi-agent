@@ -129,6 +129,79 @@ def test_generate_plan_lowers_artifact_dependencies_to_awaits() -> None:
     )
 
 
+def test_generate_plan_lowers_explicit_dependencies_without_data_edges() -> None:
+    graph = WorkflowGraph(
+        workflow_id="ordered",
+        steps=(
+            StepNode("prepare", "prepare", "executor"),
+            StepNode("publish", "publish", "executor", depends_on=("prepare",)),
+        ),
+        artifacts=(),
+    )
+
+    assert generate_plan(graph) == ExecutionPlan(
+        workflow_id="ordered",
+        fibers=(
+            Fiber("prepare", (Invoke("prepare"),)),
+            Fiber("publish", (Await(("prepare",)), Invoke("publish"))),
+        ),
+    )
+
+
+def test_generate_plan_lowers_multiple_explicit_dependencies() -> None:
+    graph = WorkflowGraph(
+        workflow_id="multiple-predecessors",
+        steps=(
+            StepNode("left", "left", "executor"),
+            StepNode("right", "right", "executor"),
+            StepNode(
+                "join",
+                "join",
+                "executor",
+                depends_on=("right", "left"),
+            ),
+        ),
+        artifacts=(),
+    )
+
+    assert generate_plan(graph) == ExecutionPlan(
+        workflow_id="multiple-predecessors",
+        fibers=(
+            Fiber("join", (Await(("left", "right")), Invoke("join"))),
+            Fiber("left", (Invoke("left"),)),
+            Fiber("right", (Invoke("right"),)),
+        ),
+    )
+
+
+def test_generate_plan_merges_and_deduplicates_data_and_explicit_dependencies() -> None:
+    graph = WorkflowGraph(
+        workflow_id="merged-dependencies",
+        steps=(
+            StepNode("producer", "producer", "executor"),
+            StepNode(
+                "consumer",
+                "consumer",
+                "executor",
+                depends_on=("producer",),
+            ),
+        ),
+        artifacts=(ArtifactNode("value"),),
+        edges=(
+            ProducesEdge("producer", "value"),
+            ConsumesEdge("value", "consumer"),
+        ),
+    )
+
+    assert generate_plan(graph) == ExecutionPlan(
+        workflow_id="merged-dependencies",
+        fibers=(
+            Fiber("consumer", (Await(("producer",)), Invoke("consumer"))),
+            Fiber("producer", (Invoke("producer"),)),
+        ),
+    )
+
+
 def test_generate_plan_rejects_cycles() -> None:
     graph = WorkflowGraph(
         workflow_id="cycle",
@@ -143,6 +216,31 @@ def test_generate_plan_rejects_cycles() -> None:
             ConsumesEdge("left_value", "right"),
             ProducesEdge("right", "right_value"),
         ),
+    )
+
+    with pytest.raises(ExecutionPlanError, match="cycle"):
+        generate_plan(graph)
+
+
+def test_generate_plan_rejects_explicit_dependency_cycles() -> None:
+    graph = WorkflowGraph(
+        workflow_id="explicit-cycle",
+        steps=(
+            StepNode("left", "left", "executor", depends_on=("right",)),
+            StepNode("right", "right", "executor", depends_on=("left",)),
+        ),
+        artifacts=(),
+    )
+
+    with pytest.raises(ExecutionPlanError, match="cycle"):
+        generate_plan(graph)
+
+
+def test_generate_plan_rejects_explicit_self_dependency() -> None:
+    graph = WorkflowGraph(
+        workflow_id="self-cycle",
+        steps=(StepNode("step", "step", "executor", depends_on=("step",)),),
+        artifacts=(),
     )
 
     with pytest.raises(ExecutionPlanError, match="cycle"):
@@ -253,6 +351,76 @@ async def test_execute_plan_starts_ready_steps_in_parallel() -> None:
 
 
 @pytest.mark.anyio
+async def test_execute_plan_enforces_explicit_dependency_without_data_edge() -> None:
+    graph = WorkflowGraph(
+        workflow_id="ordered",
+        steps=(
+            StepNode("prepare", "prepare", "executor"),
+            StepNode("publish", "publish", "executor", depends_on=("prepare",)),
+        ),
+        artifacts=(),
+    )
+    prepare_completed = False
+    invoked: list[str] = []
+
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        nonlocal prepare_completed
+        assert inputs == {}
+        if step.step_id == "prepare":
+            await checkpoint()
+            prepare_completed = True
+        else:
+            assert prepare_completed
+        invoked.append(step.step_id)
+        return {}
+
+    await execute_plan(
+        generate_plan(graph),
+        graph,
+        inputs={},
+        dispatch=dispatch,
+    )
+
+    assert invoked == ["prepare", "publish"]
+
+
+@pytest.mark.anyio
+async def test_execute_plan_does_not_invoke_explicit_dependent_after_predecessor_failure() -> None:
+    graph = WorkflowGraph(
+        workflow_id="ordered-failure",
+        steps=(
+            StepNode("prepare", "prepare", "executor"),
+            StepNode("publish", "publish", "executor", depends_on=("prepare",)),
+        ),
+        artifacts=(),
+    )
+    invoked: list[str] = []
+
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        assert inputs == {}
+        invoked.append(step.step_id)
+        if step.step_id == "prepare":
+            raise RuntimeError("prepare failed")
+        return {}
+
+    with pytest.RaisesGroup(pytest.RaisesExc(RuntimeError, match="prepare failed")):
+        await execute_plan(
+            generate_plan(graph),
+            graph,
+            inputs={},
+            dispatch=dispatch,
+        )
+
+    assert invoked == ["prepare"]
+
+
+@pytest.mark.anyio
 async def test_execute_plan_rejects_missing_plan_dependency() -> None:
     graph = _diamond_graph()
     valid_plan = generate_plan(graph)
@@ -272,6 +440,28 @@ async def test_execute_plan_rejects_missing_plan_dependency() -> None:
 
     with pytest.raises(ExecutionPlanError, match=r"missing dependencies.*research"):
         await execute_plan(plan, graph, inputs={"topic": "async"}, dispatch=dispatch)
+
+
+@pytest.mark.anyio
+async def test_execute_plan_rejects_missing_explicit_dependency() -> None:
+    graph = WorkflowGraph(
+        workflow_id="ordered",
+        steps=(
+            StepNode("prepare", "prepare", "executor"),
+            StepNode("publish", "publish", "executor", depends_on=("prepare",)),
+        ),
+        artifacts=(),
+    )
+    plan = ExecutionPlan(
+        workflow_id=graph.workflow_id,
+        fibers=(
+            Fiber("prepare", (Invoke("prepare"),)),
+            Fiber("publish", (Invoke("publish"),)),
+        ),
+    )
+
+    with pytest.raises(ExecutionPlanError, match=r"missing dependencies.*prepare"):
+        await execute_plan(plan, graph, inputs={}, dispatch=_unexpected_dispatch)
 
 
 @pytest.mark.anyio
@@ -910,7 +1100,7 @@ async def test_context_contains_resource_lease() -> None:
                 "step",
                 "step",
                 "agent",
-                resources=(ResourceRequirement("gpu_device", 1, exclusive=True),),
+                resources=(ResourceRequirement("gpu_device", 1),),
             ),
         ),
     )
@@ -934,7 +1124,6 @@ async def test_context_contains_resource_lease() -> None:
     )
 
     assert contexts[0].resource_lease.instances("gpu_device") == ("gpu_device-0",)
-    assert contexts[0].resource_lease.grants[0].exclusive is True
 
 
 @pytest.mark.anyio
@@ -945,7 +1134,7 @@ async def test_explicit_resource_instance_ids_are_preserved() -> None:
                 "step",
                 "step",
                 "agent",
-                resources=(ResourceRequirement("gpu_device", 1, exclusive=True),),
+                resources=(ResourceRequirement("gpu_device", 1),),
             ),
         )
     )
@@ -1097,34 +1286,3 @@ async def test_resource_is_released_after_failure_timeout_and_cancel() -> None:
 
     with anyio.fail_after(1):
         await execute_plan(generate_plan(normal), normal, inputs={}, dispatch=succeed, allocator=allocator)
-
-
-@pytest.mark.anyio
-async def test_legacy_dispatcher_rejects_exclusive_lease_before_dispatch() -> None:
-    graph = _steps_graph(
-        (
-            StepNode(
-                "step",
-                "step",
-                "agent",
-                resources=(ResourceRequirement("gpu", 1, exclusive=True),),
-            ),
-        )
-    )
-    dispatch_count = 0
-
-    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
-        nonlocal dispatch_count
-        del step, inputs
-        dispatch_count += 1
-        return {}
-
-    with pytest.raises(ExecutionPlanError, match="exclusive"):
-        await execute_plan(
-            generate_plan(graph),
-            graph,
-            inputs={},
-            dispatch=dispatch,
-            resource_capacities={"gpu": 1},
-        )
-    assert dispatch_count == 0

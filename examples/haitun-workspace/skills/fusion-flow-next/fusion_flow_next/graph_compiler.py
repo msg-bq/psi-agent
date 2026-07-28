@@ -102,15 +102,8 @@ class _StepDraft:
     # make a second max_attempts assertion a duplicate.
     max_attempts: int | None = None
     independent: bool | None = None
-    resources: dict[str, _ResourceDraft] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class _ResourceDraft:
-    """Order-independent resource amount and exclusive-lease facts."""
-
-    amount: int | None = None
-    exclusive: bool | None = None
+    resources: dict[str, int] = field(default_factory=dict)
+    depends_on: set[str] = field(default_factory=set)
 
 
 class WorkflowGraphCompiler(CoreIRCompiler):
@@ -148,7 +141,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             "workflow_timeout",
             # Catalog-backed scheduling metadata.
             "independent",
-            "exclusive_lease",
+            "depends_on",
         }
     )
     # Executor concepts are mutually exclusive in the graph target.
@@ -489,37 +482,29 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                         "resource identity",
                     )
                     amount = self._positive_integer(fact_value, operator_name)
-                    resource_draft = step_draft.resources.setdefault(
-                        resource_id,
-                        _ResourceDraft(),
-                    )
-                    if resource_draft.amount is not None:
+                    if resource_id in step_draft.resources:
                         raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, resource_id)!r}")
-                    resource_draft.amount = amount
+                    step_draft.resources[resource_id] = amount
 
-                case "exclusive_lease":
-                    # exclusive_lease(step, resource) == True augments a matching
-                    # resource_requirement regardless of assertion order.
+                case "depends_on":
+                    # depends_on(step, predecessor) == True declares an explicit
+                    # control dependency without inventing an Artifact edge.
                     self._require_arity(arguments, 2, operator_name)
                     self._require_true(fact_value, operator_name)
                     step_id = self._concept_symbol(
                         arguments[0],
                         "Step",
-                        "exclusive_lease step",
+                        "depends_on step",
                     )
-                    resource_id = self._concept_symbol(
+                    predecessor_id = self._concept_symbol(
                         arguments[1],
-                        "Resource",
-                        "exclusive_lease resource",
+                        "Step",
+                        "depends_on predecessor",
                     )
                     step_draft = step_drafts.setdefault(step_id, _StepDraft())
-                    resource_draft = step_draft.resources.setdefault(
-                        resource_id,
-                        _ResourceDraft(),
-                    )
-                    if resource_draft.exclusive is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, resource_id)!r}")
-                    resource_draft.exclusive = True
+                    if predecessor_id in step_draft.depends_on:
+                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, predecessor_id)!r}")
+                    step_draft.depends_on.add(predecessor_id)
 
                 case _:
                     # _compile_assertion recognizes names through
@@ -533,23 +518,25 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             # second set of completed step IDs.
             steps: list[StepNode] = []
             for step_id, step_draft in sorted(step_drafts.items()):
+                if step_draft.depends_on and (step_draft.name_id is None or step_draft.executor_id is None):
+                    raise WorkflowGraphCompilationError(f"depends_on target {step_id!r} is not a fully declared step")
+                for predecessor_id in sorted(step_draft.depends_on):
+                    predecessor = step_drafts.get(predecessor_id)
+                    if predecessor is None or predecessor.name_id is None or predecessor.executor_id is None:
+                        raise WorkflowGraphCompilationError(
+                            f"depends_on predecessor {predecessor_id!r} is not a fully declared step"
+                        )
                 if step_draft.name_id is None:
                     raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_name")
                 if step_draft.executor_id is None:
                     raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_executor")
-                resources: list[ResourceRequirement] = []
-                for resource_id, resource_draft in sorted(step_draft.resources.items()):
-                    if resource_draft.amount is None:
-                        raise WorkflowGraphCompilationError(
-                            f"exclusive_lease requires a matching resource_requirement: {(step_id, resource_id)!r}"
-                        )
-                    resources.append(
-                        ResourceRequirement(
-                            resource_id=resource_id,
-                            amount=resource_draft.amount,
-                            exclusive=resource_draft.exclusive is True,
-                        )
+                resources = [
+                    ResourceRequirement(
+                        resource_id=resource_id,
+                        amount=amount,
                     )
+                    for resource_id, amount in sorted(step_draft.resources.items())
+                ]
                 steps.append(
                     StepNode(
                         step_id=step_id,
@@ -562,6 +549,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                         max_attempts=step_draft.max_attempts if step_draft.max_attempts is not None else 1,
                         resources=tuple(resources),
                         independent=step_draft.independent is True,
+                        depends_on=tuple(sorted(step_draft.depends_on)),
                     )
                 )
 

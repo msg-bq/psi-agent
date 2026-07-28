@@ -92,7 +92,7 @@ _OPERATOR_SIGNATURES: Mapping[
     "comparison_lt_op": ((), None),
     "comparison_lte_op": ((), None),
     "consumes": (("Step",), "List"),
-    "exclusive_lease": (("Step", "Resource"), "Bool"),
+    "depends_on": (("Step", "Step"), "Bool"),
     "foreach_item": (("Step", "List"), "Artifact"),
     "independent": (("Step",), "Bool"),
     "input_workflow": (("Workflow",), "List"),

@@ -90,7 +90,6 @@ class ResourceGrant:
 
     resource_id: str
     instance_ids: tuple[str, ...]
-    exclusive: bool = False
 
     @property
     def amount(self) -> int:
@@ -200,11 +199,6 @@ class ResourceAllocator:
                         f"step {step_id!r} requires {requirement.amount} of {resource_id!r}, "
                         f"but total capacity is {capacity}"
                     )
-                exclusive = getattr(requirement, "exclusive", False)
-                if type(exclusive) is not bool:
-                    raise ExecutionPlanError(
-                        f"step {step_id!r} exclusive resource flag for {resource_id!r} must be a boolean"
-                    )
 
     @asynccontextmanager
     async def lease(
@@ -280,7 +274,6 @@ class ResourceAllocator:
                     ResourceGrant(
                         resource_id=requirement.resource_id,
                         instance_ids=instance_ids,
-                        exclusive=getattr(requirement, "exclusive", False),
                     )
                 )
             lease = ResourceLease(tuple(grants))
@@ -310,7 +303,7 @@ class ResourceAllocator:
 
 
 def generate_plan(graph: WorkflowGraph) -> ExecutionPlan:
-    """Lower one-shot producer/consumer dependencies into async fibers."""
+    """Lower one-shot data and explicit step dependencies into async fibers."""
 
     if any(isinstance(edge, ForeachEdge) for edge in graph.edges):
         raise ExecutionPlanError("foreach execution is not supported")
@@ -326,7 +319,14 @@ def generate_plan(graph: WorkflowGraph) -> ExecutionPlan:
         ):
             raise ExecutionPlanError(f"input artifact is also produced: {artifact.artifact_id}")
 
-    awaited_steps_by_step: dict[str, set[str]] = {step.step_id: set() for step in graph.steps}
+    step_ids = {step.step_id for step in graph.steps}
+    awaited_steps_by_step: dict[str, set[str]] = {}
+    for step in graph.steps:
+        explicit_dependencies = set(step.depends_on)
+        unknown_dependencies = explicit_dependencies - step_ids
+        if unknown_dependencies:
+            raise ExecutionPlanError(f"step {step.step_id!r} depends on unknown steps: {sorted(unknown_dependencies)}")
+        awaited_steps_by_step[step.step_id] = explicit_dependencies
     awaited_selections_by_step: dict[str, set[str]] = {step.step_id: set() for step in graph.steps}
     for edge in graph.edges:
         if not isinstance(edge, ConsumesEdge):
@@ -489,11 +489,12 @@ async def execute_plan(
             satisfied_steps = awaited_steps | invoked_earlier
             satisfied_selections = awaited_selections | selected_earlier
             if isinstance(instruction, Invoke):
-                required_steps = {
+                required_steps = set(steps[instruction.step_id].depends_on)
+                required_steps.update(
                     step_producer_by_artifact[artifact_id]
                     for artifact_id in consumed[instruction.step_id]
                     if artifact_id in step_producer_by_artifact
-                }
+                )
                 missing_steps = required_steps - satisfied_steps
                 if missing_steps:
                     raise ExecutionPlanError(
@@ -543,13 +544,6 @@ async def execute_plan(
 
     requirements_by_step = {step.step_id: step.resources for step in graph.steps}
     has_resources = any(requirements_by_step.values())
-    has_exclusive = any(
-        getattr(requirement, "exclusive", False)
-        for requirements in requirements_by_step.values()
-        for requirement in requirements
-    )
-    if contextual_dispatch is None and has_exclusive:
-        raise ExecutionPlanError("exclusive resource leases require contextual_dispatch")
     if allocator is None:
         if resource_capacities is None:
             if has_resources:
