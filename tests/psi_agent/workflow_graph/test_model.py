@@ -40,8 +40,9 @@ def test_cycle_is_valid_and_serialization_is_deterministic() -> None:
         "writer",
         resources=(
             ResourceRequirement("gpu", 1),
-            ResourceRequirement("cpu", 2),
+            ResourceRequirement("cpu", 2, exclusive=True),
         ),
+        independent=True,
     )
     s2 = StepNode("s2", "review", "reviewer")
     a = ArtifactNode("a", is_input=True)
@@ -53,23 +54,106 @@ def test_cycle_is_valid_and_serialization_is_deterministic() -> None:
         ProducesEdge("s2", "a"),
     )
 
-    left = WorkflowGraph("flow", (s2, s1), (b, a), tuple(reversed(edges)))
-    right = WorkflowGraph("flow", (s1, s2), (a, b), edges)
+    left = WorkflowGraph(
+        "flow",
+        (s2, s1),
+        (b, a),
+        tuple(reversed(edges)),
+    )
+    right = WorkflowGraph(
+        "flow",
+        (s1, s2),
+        (a, b),
+        edges,
+    )
 
     assert left.to_dict() == right.to_dict()
     payload = left.to_dict()
     assert payload["steps"][0]["executor_id"] == "writer"
     assert "executor_kind" not in payload["steps"][0]
     assert payload["steps"][0]["resources"] == [
-        {"resource_id": "cpu", "amount": 2},
+        {"resource_id": "cpu", "amount": 2, "exclusive": True},
         {"resource_id": "gpu", "amount": 1},
     ]
+    assert payload["steps"][0]["independent"] is True
     assert [edge["kind"] for edge in payload["edges"]] == [
         "consumes",
         "consumes",
         "produces",
         "produces",
     ]
+
+
+def test_default_catalog_fields_preserve_the_exact_legacy_payload() -> None:
+    graph = WorkflowGraph(
+        "legacy",
+        (
+            StepNode(
+                "step",
+                "step-name",
+                "agent",
+                instruction_id="instruction",
+                timeout_seconds=30,
+                max_attempts=2,
+                resources=(ResourceRequirement("cpu", 2),),
+            ),
+        ),
+        (
+            ArtifactNode("input", is_input=True),
+            ArtifactNode("output", is_output=True),
+        ),
+        (
+            ConsumesEdge("input", "step"),
+            ProducesEdge("step", "output"),
+        ),
+        policy=WorkflowPolicy(max_concurrency=1, timeout_seconds=60),
+    )
+
+    assert graph.to_dict() == {
+        "workflow_id": "legacy",
+        "steps": [
+            {
+                "step_id": "step",
+                "name_id": "step-name",
+                "executor_id": "agent",
+                "instruction_id": "instruction",
+                "timeout_seconds": 30,
+                "max_attempts": 2,
+                "resources": [{"resource_id": "cpu", "amount": 2}],
+            }
+        ],
+        "artifacts": [
+            {
+                "artifact_id": "input",
+                "is_input": True,
+                "is_output": False,
+                "binding_step_id": None,
+            },
+            {
+                "artifact_id": "output",
+                "is_input": False,
+                "is_output": True,
+                "binding_step_id": None,
+            },
+        ],
+        "edges": [
+            {
+                "kind": "consumes",
+                "artifact_id": "input",
+                "step_id": "step",
+            },
+            {
+                "kind": "produces",
+                "step_id": "step",
+                "artifact_id": "output",
+            },
+        ],
+        "policy": {
+            "max_concurrency": 1,
+            "timeout_seconds": 60,
+        },
+        "selectors": [],
+    }
 
 
 def test_input_artifact_may_also_have_a_producer() -> None:
@@ -633,6 +717,24 @@ def test_local_binding_cannot_be_referenced_by_multiple_foreach_edges() -> None:
 )
 def test_step_limits_must_be_positive_integers(step: StepNode) -> None:
     with pytest.raises(ValueError, match="positive integer"):
+        WorkflowGraph("flow", (step,), ())
+
+
+@pytest.mark.parametrize("field_name", ["independent", "exclusive"])
+@pytest.mark.parametrize("value", [1, "true", None])
+def test_catalog_booleans_require_actual_booleans(
+    field_name: str,
+    value: object,
+) -> None:
+    step = StepNode("step", "name", "agent")
+    if field_name == "independent":
+        object.__setattr__(step, field_name, value)
+    else:
+        requirement = ResourceRequirement("gpu", 1)
+        object.__setattr__(requirement, field_name, value)
+        object.__setattr__(step, "resources", (requirement,))
+
+    with pytest.raises(WorkflowGraphError, match=f"{field_name} must be a boolean"):
         WorkflowGraph("flow", (step,), ())
 
 

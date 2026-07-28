@@ -30,6 +30,7 @@ from psi_agent.workflow_graph.model import (
     ComparisonOperator,
     LiteralOperand,
     LogicalCondition,
+    ResourceRequirement,
     SelectNode,
     WorkflowGraphError,
 )
@@ -118,7 +119,12 @@ def test_compiles_all_graph_operators() -> None:
                 "instruction_id": "instruction",
                 "timeout_seconds": 30,
                 "max_attempts": 2,
-                "resources": [{"resource_id": "gpu", "amount": 3}],
+                "resources": [
+                    {
+                        "resource_id": "gpu",
+                        "amount": 3,
+                    }
+                ],
             }
         ],
         "artifacts": [
@@ -154,6 +160,80 @@ def test_compiles_all_graph_operators() -> None:
         "policy": {"max_concurrency": 4, "timeout_seconds": 120},
         "selectors": [],
     }
+
+
+def test_compiles_scheduling_policies_order_independently() -> None:
+    step = Constant("step", (Concept("Step"),))
+    gpu = Constant("gpu", (Concept("Resource"),))
+    true = Constant("True", (Concept("Bool"),))
+    assertions = (
+        *_step_declarations("step"),
+        _assertion("independent", (step,), true),
+        _assertion("exclusive_lease", (step, gpu), true),
+        _assertion("resource_requirement", (step, gpu), Constant("1")),
+    )
+
+    left = _compile(assertions)
+    right = _compile(tuple(reversed(assertions)))
+
+    assert left.residual_assertions == right.residual_assertions == ()
+    assert left.graph.to_dict() == right.graph.to_dict()
+    compiled_step = next(item for item in left.graph.steps if item.step_id == "step")
+    assert compiled_step.independent is True
+    assert compiled_step.resources == (ResourceRequirement("gpu", 1, exclusive=True),)
+
+
+@pytest.mark.parametrize(
+    ("operator_name", "arguments"),
+    [
+        ("independent", (Constant("step", (Concept("Step"),)),)),
+        (
+            "exclusive_lease",
+            (
+                Constant("step", (Concept("Step"),)),
+                Constant("gpu", (Concept("Resource"),)),
+            ),
+        ),
+    ],
+)
+def test_catalog_bool_relations_accept_only_true(
+    operator_name: str,
+    arguments: tuple[Term, ...],
+) -> None:
+    with pytest.raises(
+        WorkflowGraphCompilationError,
+        match="RHS must be the Boolean constant True",
+    ):
+        _compile(
+            (
+                *_step_declarations(),
+                _assertion(
+                    operator_name,
+                    arguments,
+                    Constant("False", (Concept("Bool"),)),
+                ),
+            )
+        )
+
+
+def test_exclusive_lease_requires_matching_resource_requirement() -> None:
+    with pytest.raises(
+        WorkflowGraphCompilationError,
+        match="exclusive_lease requires a matching resource_requirement",
+    ):
+        _compile(
+            (
+                *_step_declarations(),
+                _assertion(
+                    "exclusive_lease",
+                    (
+                        Constant("step", (Concept("Step"),)),
+                        Constant("gpu", (Concept("Resource"),)),
+                    ),
+                    Constant("True", (Concept("Bool"),)),
+                ),
+            )
+        )
 
 
 def test_graph_dataflow_operators_read_multiple_list_term_items() -> None:

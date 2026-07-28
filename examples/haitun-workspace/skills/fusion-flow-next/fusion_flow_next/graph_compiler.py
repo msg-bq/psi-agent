@@ -101,7 +101,16 @@ class _StepDraft:
     # None means the assertion was absent; an explicit value of 1 must still
     # make a second max_attempts assertion a duplicate.
     max_attempts: int | None = None
-    resources: dict[str, ResourceRequirement] = field(default_factory=dict)
+    independent: bool | None = None
+    resources: dict[str, _ResourceDraft] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class _ResourceDraft:
+    """Order-independent resource amount and exclusive-lease facts."""
+
+    amount: int | None = None
+    exclusive: bool | None = None
 
 
 class WorkflowGraphCompiler(CoreIRCompiler):
@@ -137,6 +146,9 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             "resource_requirement",
             "max_concurrency",
             "workflow_timeout",
+            # Catalog-backed scheduling metadata.
+            "independent",
+            "exclusive_lease",
         }
     )
     # Executor concepts are mutually exclusive in the graph target.
@@ -448,19 +460,66 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                         raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
                     step_draft.max_attempts = max_attempts
 
+                case "independent":
+                    # independent(step) == True is preserved as a non-binding hint.
+                    self._require_arity(arguments, 1, operator_name)
+                    self._require_true(fact_value, operator_name)
+                    step_id = self._concept_symbol(
+                        arguments[0],
+                        "Step",
+                        "independent step",
+                    )
+                    step_draft = step_drafts.setdefault(step_id, _StepDraft())
+                    if step_draft.independent is not None:
+                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                    step_draft.independent = True
+
                 case "resource_requirement":
                     # resource_requirement(step, resource) = positive_amount
                     self._require_arity(arguments, 2, operator_name)
-                    step_id = self._symbol(arguments[0], "resource_requirement step")
-                    step_draft = step_drafts.setdefault(step_id, _StepDraft())
-                    resource_id = self._symbol(arguments[1], "resource identity")
-                    amount = self._positive_integer(fact_value, operator_name)
-                    if resource_id in step_draft.resources:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, resource_id)!r}")
-                    step_draft.resources[resource_id] = ResourceRequirement(
-                        resource_id=resource_id,
-                        amount=amount,
+                    step_id = self._concept_symbol(
+                        arguments[0],
+                        "Step",
+                        "resource_requirement step",
                     )
+                    step_draft = step_drafts.setdefault(step_id, _StepDraft())
+                    resource_id = self._concept_symbol(
+                        arguments[1],
+                        "Resource",
+                        "resource identity",
+                    )
+                    amount = self._positive_integer(fact_value, operator_name)
+                    resource_draft = step_draft.resources.setdefault(
+                        resource_id,
+                        _ResourceDraft(),
+                    )
+                    if resource_draft.amount is not None:
+                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, resource_id)!r}")
+                    resource_draft.amount = amount
+
+                case "exclusive_lease":
+                    # exclusive_lease(step, resource) == True augments a matching
+                    # resource_requirement regardless of assertion order.
+                    self._require_arity(arguments, 2, operator_name)
+                    self._require_true(fact_value, operator_name)
+                    step_id = self._concept_symbol(
+                        arguments[0],
+                        "Step",
+                        "exclusive_lease step",
+                    )
+                    resource_id = self._concept_symbol(
+                        arguments[1],
+                        "Resource",
+                        "exclusive_lease resource",
+                    )
+                    step_draft = step_drafts.setdefault(step_id, _StepDraft())
+                    resource_draft = step_draft.resources.setdefault(
+                        resource_id,
+                        _ResourceDraft(),
+                    )
+                    if resource_draft.exclusive is not None:
+                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, resource_id)!r}")
+                    resource_draft.exclusive = True
 
                 case _:
                     # _compile_assertion recognizes names through
@@ -478,6 +537,19 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_name")
                 if step_draft.executor_id is None:
                     raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_executor")
+                resources: list[ResourceRequirement] = []
+                for resource_id, resource_draft in sorted(step_draft.resources.items()):
+                    if resource_draft.amount is None:
+                        raise WorkflowGraphCompilationError(
+                            f"exclusive_lease requires a matching resource_requirement: {(step_id, resource_id)!r}"
+                        )
+                    resources.append(
+                        ResourceRequirement(
+                            resource_id=resource_id,
+                            amount=resource_draft.amount,
+                            exclusive=resource_draft.exclusive is True,
+                        )
+                    )
                 steps.append(
                     StepNode(
                         step_id=step_id,
@@ -488,9 +560,8 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                         # The graph model defaults retries to one when the DSL
                         # omits max_attempts.
                         max_attempts=step_draft.max_attempts if step_draft.max_attempts is not None else 1,
-                        resources=tuple(
-                            step_draft.resources[resource_id] for resource_id in sorted(step_draft.resources)
-                        ),
+                        resources=tuple(resources),
+                        independent=step_draft.independent is True,
                     )
                 )
 
@@ -714,6 +785,34 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         """Extract the identity/literal text carried by a compiled constant."""
 
         return cls._constant(value, context).symbol
+
+    @classmethod
+    def _concept_symbol(
+        cls,
+        value: object,
+        concept_name: str,
+        context: str,
+    ) -> str:
+        """Extract an identity and reject a conflicting explicit concept tag.
+
+        Untyped constants remain accepted for compatibility with hand-built
+        Core IR. The official parser/catalog path supplies concept tags, which
+        must include the operator position's required concept.
+        """
+
+        constant = cls._constant(value, context)
+        if constant.belong_concepts and concept_name not in {concept.name for concept in constant.belong_concepts}:
+            raise WorkflowGraphCompilationError(f"{context} must belong to {concept_name}")
+        return constant.symbol
+
+    @classmethod
+    def _require_true(cls, value: object, operator_name: str) -> None:
+        """Require the positive form of a catalog Bool relation."""
+
+        constant = cls._constant(value, f"{operator_name} RHS")
+        concept_names = {concept.name for concept in constant.belong_concepts}
+        if constant.symbol != "True" or (concept_names and "Bool" not in concept_names):
+            raise WorkflowGraphCompilationError(f"{operator_name} RHS must be the Boolean constant True")
 
     @classmethod
     def _list_symbols(cls, value: object, operator_name: str) -> tuple[str, ...]:

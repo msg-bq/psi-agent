@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import isfinite
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 
 class ResourceRequirementDict(TypedDict):
@@ -18,6 +18,7 @@ class ResourceRequirementDict(TypedDict):
 
     resource_id: str
     amount: int
+    exclusive: NotRequired[bool]
 
 
 class StepNodeDict(TypedDict):
@@ -30,6 +31,7 @@ class StepNodeDict(TypedDict):
     timeout_seconds: int | None
     max_attempts: int
     resources: list[ResourceRequirementDict]
+    independent: NotRequired[bool]
 
 
 class ArtifactNodeDict(TypedDict):
@@ -145,6 +147,7 @@ class ResourceRequirement:
 
     resource_id: str
     amount: int
+    exclusive: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +161,7 @@ class StepNode:
     timeout_seconds: int | None = None
     max_attempts: int = 1
     resources: tuple[ResourceRequirement, ...] = ()
+    independent: bool = False
 
     def __post_init__(self) -> None:
         """Reject mutable or incorrectly typed resource collections early."""
@@ -462,12 +466,16 @@ class WorkflowGraph:
                 allow_none=True,
             )
             self._require_positive(step.max_attempts, "max_attempts")
+            if type(step.independent) is not bool:
+                raise WorkflowGraphError("independent must be a boolean")
             if step.step_id in step_ids:
                 raise WorkflowGraphError(f"duplicate step_id: {step.step_id}")
             step_ids.add(step.step_id)
             for requirement in step.resources:
                 self._require_identity(requirement.resource_id, "resource_id")
                 self._require_positive(requirement.amount, "resource amount")
+                if type(requirement.exclusive) is not bool:
+                    raise WorkflowGraphError("exclusive must be a boolean")
                 resource_key = (step.step_id, requirement.resource_id)
                 if resource_key in resource_keys:
                     raise WorkflowGraphError(f"duplicate resource requirement: {resource_key}")
@@ -650,27 +658,31 @@ class WorkflowGraph:
         # cannot affect serialized output.
         step_payloads: list[StepNodeDict] = []
         for step in sorted(self.steps, key=lambda item: item.step_id):
-            resources = [
-                ResourceRequirementDict(
+            resources: list[ResourceRequirementDict] = []
+            for requirement in sorted(
+                step.resources,
+                key=lambda item: item.resource_id,
+            ):
+                requirement_payload = ResourceRequirementDict(
                     resource_id=requirement.resource_id,
                     amount=requirement.amount,
                 )
-                for requirement in sorted(
-                    step.resources,
-                    key=lambda item: item.resource_id,
-                )
-            ]
-            step_payloads.append(
-                StepNodeDict(
-                    step_id=step.step_id,
-                    name_id=step.name_id,
-                    executor_id=step.executor_id,
-                    instruction_id=step.instruction_id,
-                    timeout_seconds=step.timeout_seconds,
-                    max_attempts=step.max_attempts,
-                    resources=resources,
-                )
+                if requirement.exclusive:
+                    requirement_payload["exclusive"] = True
+                resources.append(requirement_payload)
+
+            step_payload = StepNodeDict(
+                step_id=step.step_id,
+                name_id=step.name_id,
+                executor_id=step.executor_id,
+                instruction_id=step.instruction_id,
+                timeout_seconds=step.timeout_seconds,
+                max_attempts=step.max_attempts,
+                resources=resources,
             )
+            if step.independent:
+                step_payload["independent"] = True
+            step_payloads.append(step_payload)
 
         # Artifacts have one stable identity key.
         artifact_payloads = [
@@ -742,7 +754,7 @@ class WorkflowGraph:
             )
         ]
 
-        return WorkflowGraphDict(
+        payload = WorkflowGraphDict(
             workflow_id=self.workflow_id,
             steps=step_payloads,
             artifacts=artifact_payloads,
@@ -753,6 +765,7 @@ class WorkflowGraph:
             ),
             selectors=selector_payloads,
         )
+        return payload
 
     @staticmethod
     def _require_identity(value: object, field_name: str) -> None:
