@@ -19,7 +19,7 @@ from psi_agent.session.tool_registry import FileEntry, ToolRegistry
 from psi_agent.workflow_execution import ResourceCapacity
 
 _WORKSPACE_DIR = Path(__file__).parent.parent
-_SKILL_DIR = _WORKSPACE_DIR / "skills" / "fusion-flow-next"
+_SKILL_DIR = _WORKSPACE_DIR / "skills" / "fusion-flow"
 if str(_SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(_SKILL_DIR))
 
