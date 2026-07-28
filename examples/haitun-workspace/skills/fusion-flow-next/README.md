@@ -44,7 +44,11 @@ including `ListTerm.items` returned by the four canonical dataflow operators,
 and returns one `WorkflowGraphCompilation` per workflow. Recognized dependency assertions
 become graph nodes, edges, or policy; unknown well-formed assertions remain in
 `residual_assertions`; malformed recognized relations and unsupported recursive
-terms fail explicitly. The graph is serializable, but the compilation is not a
+terms fail explicitly. A top-level `selected == if(condition, artifact_a,
+artifact_b)` lowers to an eager `SelectNode`; both candidates must be declared
+Artifacts and both producers run. Downstream dataflow consumes `[selected]`.
+Priority selection uses named intermediate Artifacts; inline or nested `if`
+terms fail closed. The graph is serializable, but the compilation is not a
 replacement for the original Core IR.
 
 Because `Assertion` is equality, one recognized graph call may appear on either
@@ -66,7 +70,7 @@ Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimizat
 
 | Item | Intended contract | Current gap | Required compiler behavior |
 | --- | --- | --- | --- |
-| `S01` | `input_workflow` and `output_workflow` declare external artifacts. | The current runtime operations require values that are absent from those declarations. | The graph backend preserves the external-artifact relation, while the original Core IR remains authoritative for values; activation still requires a runtime value contract. |
+| `S01` | `input_workflow` and `output_workflow` declare external artifacts. | The compatibility-only `fusion_flow_next.execution` operations are not wired to those declarations. | The generic `WorkflowGraph` executor already enforces the exact input boundary; connecting the compatibility execution package still requires a separate runtime value contract. |
 
 ## Activation boundary
 
