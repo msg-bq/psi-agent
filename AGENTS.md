@@ -60,6 +60,22 @@ shielded release。`DispatchContext.resource_lease` 负责把具体实例传给 
 但执行器不会自行绑定 GPU、设置环境变量或调用工具。allocator 是进程内对象；
 跨进程/跨主机租约和 shared/exclusive 模式不在当前合同内。
 
+**WorkflowGraph checkpoint 与 Human 跨回合等待的边界是什么？**
+`ExecutionCheckpoint` 只保存已经物化的 Artifact 值，以及依赖闭包完整的已完成
+Step / Select ID，并绑定非空 `workflow_id` 与 graph/plan 结构摘要。checkpoint 值只
+接受 finite JSON；恢复时按 JSON 类型和值递归比较，因此 `true` 不等于 `1`。执行器
+还会严格校验已完成 ID、输入和值集合，预先发布已完成事件并跳过这些操作；
+`checkpoint_observer` 必须成功持久化后才允许依赖者继续。它不是任意缓存命中或
+legacy `flow.*` run-directory resume。
+
+Session 在一个请求的完整 agent/tool loop 期间持有 `_lock`，因此 workspace tool
+不能在 Human Step 内阻塞等待“下一条用户消息”，否则下一条消息无法进入同一
+Session。G4 workspace adapter 必须先保存 checkpoint 和 Human request，返回到父
+Session，通过既有 `clarify` 格式化问题并结束当前 turn；下一轮再用匹配的
+`run_id` / `request_id` 恢复。人工等待期间不保留资源 lease，workflow/Step timeout
+也在每个恢复阶段重新计时。该 adapter 属于 workspace，不把 Human 交互或持久化
+塞进 `psi_agent.workflow_execution` 核心。
+
 **FusionFlow 的跨语言兼容边界是什么？**
 运行结果与核心行为优先兼容，包括同一运行时内的 binding 恢复、配对的 `node_start` / `node_end` progress 事件、分组 token 汇总、程序快照和 `exec()` 截断标记。真实 TypeScript `inputHash` 与 Python `cache_key` 的输入、provider 身份和长度不同，因此两种运行目录不保证直接互相命中缓存；camelCase metadata 别名只保证字段可读。graph、meta 和 trace 使用各自语言的数据结构：Python 命名 trace 是通用 `ExecutionTrace`，不是 TypeScript 的扁平 provider/model/prompt 对象；只有 `progress.jsonl` 保持共享格式。单节点 trace / progress 写入是 best-effort，最终 graph/meta 才是权威产物，不追随 TypeScript 的诊断写失败即中止。`flow.output()` / `ctx.save()` 写入带 metadata 的单赋值 binding，不额外创建 output graph node。
 
@@ -130,7 +146,7 @@ src/
     │   ├── cli/                    # 单次消息 CLI thin client
     │   ├── telegram/               # Telegram bot channel
     │   ├── feishu/                 # Feishu bot channel
-    ├── workflow_execution.py       # WorkflowGraph → Fiber/Await/Select/Invoke plan + async executor
+    ├── workflow_execution.py       # WorkflowGraph → plan + async executor + validated checkpoints
     ├── workflow_graph/
     │   ├── __init__.py             # 声明式图模型 API
     │   └── model.py                # Step–Artifact 静态图 + eager SelectNode
@@ -160,8 +176,8 @@ src/
 - **Channel 层**: `src/psi_agent/channel/AGENTS.md` — ChannelCore 公共部件、REPL/CLI/Telegram/Feishu 约定
 - **Gateway 层**: `src/psi_agent/gateway/AGENTS.md` — 生命周期管理、REST API、Web Console SPA、CI 打包
 - **Workflow Graph**: `docs/architecture/workflow/2026-07-23-workflow-graph-design.zh.md` — 允许有环的声明式 Step–Artifact 图及待讨论语义；具体 Core IR 后端位于 `examples/haitun-workspace/skills/fusion-flow/fusion_flow/graph_compiler.py`
-- **Workflow Execution**: `docs/architecture/workflow/2026-07-25-workflow-execution-plan-design.zh.md` — one-shot 无环子集的 Fiber/Await/Invoke 计划、全量异步启动和 dispatcher 边界
-- **FusionFlow Execution**: `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/` — FusionFlow Skill 内隔离保存的旧 TypeScript `flow.*` Python 兼容层；不属于 `psi_agent` wheel，也不是 G4 Core IR / WorkflowGraph runner
+- **Workflow Execution**: `docs/architecture/workflow/2026-07-25-workflow-execution-plan-design.zh.md` — one-shot 无环子集的 Fiber/Await/Invoke 计划、全量异步启动、dispatcher 与 validated checkpoint 边界
+- **FusionFlow Compatibility Execution**: `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/` — 示例 Skill 内隔离保存的旧 TypeScript `flow.*` Python 兼容层；不属于 `psi_agent` wheel，也不是 G4 Core IR / WorkflowGraph runner
 
 ## 核心通信协议
 

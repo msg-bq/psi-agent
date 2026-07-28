@@ -64,8 +64,11 @@ async def test_exact_workflow_command_precedes_natural_language_routing():
     assert inspect_index < collect_index < call_index
     assert "end the turn without calling `run_flow`" in section
     assert "default empty input object" in section
-    assert "exactly once, passing `flow_path` and the complete `inputs_json`" in section
-    assert "only when the declaration requires no inputs" in section
+    assert "exactly once for the initial execution, passing `flow_path` and the complete" in section
+    assert "Use an empty input object only when the declaration requires" in section
+    assert "`$fusion_flow/control`" in section
+    assert "`run_flow_resume` once with the matching `run_id`, `request_id`" in section
+    assert "Repeat only when that resume returns another Human" in section
     assert "adds no operator or manifest protocol" in section
     assert "must not route through" in section
     assert "`flow_manage`" in section

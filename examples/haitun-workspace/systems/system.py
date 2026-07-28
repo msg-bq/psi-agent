@@ -890,8 +890,15 @@ For this command:
    Do not extend the command syntax, guess values, or probe the runner with its
    default empty input object.
 5. Once all required values are available, call the existing `run_flow` runner
-   exactly once, passing `flow_path` and the complete `inputs_json`. Use an empty
-   input object only when the declaration requires no inputs.
+   exactly once for the initial execution, passing `flow_path` and the complete
+   `inputs_json`. Use an empty input object only when the declaration requires
+   no inputs. Do not retry that initial call merely to discover inputs.
+6. If the result contains `$fusion_flow/control`, pass the nested
+   `request.question/options/recommended/default` fields to `clarify`, show its
+   returned text verbatim, and end the turn. On the user's next reply, call
+   `run_flow_resume` once with the matching `run_id`, `request_id`, and
+   JSON-encoded response. Repeat only when that resume returns another Human
+   request.
 
 The registry root is fixed at {workflow_registry_dir}. Save reusable
 declarations there with the existing file-writing capability. This command
@@ -928,15 +935,18 @@ To activate:
    Layout:
    - {flows_dir}/<task-slug>/<task-slug>.workflow
 3. Review the source against `skills/fusion-flow/grammar/FusionFlow.g4`.
-4. Run it exactly once with the workspace `run_flow` tool, passing all declared inputs through
+4. Start it exactly once with the workspace `run_flow` tool, passing all declared inputs through
    `inputs_json` and any declared resource pools through `resource_capacities_json`.
-5. Report the returned output Artifact mapping in plain language.
+5. Report the returned output Artifact mapping in plain language. If the result instead contains
+   `$fusion_flow/control`, use `clarify` and next-turn `run_flow_resume` exactly as described above.
 
-The runtime is synchronous and owns parsing, planning, dependency scheduling, resource leasing,
-and Agent Step execution. Do not create polling tokens, background workers, run directories,
-or manual substitutes. Legacy `.flow.ts` files are not executable by this runtime; if a user
-explicitly points to one, explain that it needs migration instead of silently running or
-translating it.
+The runtime owns parsing, planning, dependency scheduling, resource leasing, Agent/Program Step
+execution, and checkpointed Human waits. Agent/Program-only workflows complete in the initial
+`run_flow` call; Human workflows may return a wait envelope and continue only through
+`run_flow_resume`. Do not invent polling tokens, background workers, alternate run directories,
+or manual substitutes; the runtime alone owns its ignored `.psi/fusion-flow/runs/` state.
+Legacy `.flow.ts` files are not executable by this runtime; if a user explicitly points to one,
+explain that it needs migration instead of silently running or translating it.
 
 ### Self-evolution tools
 - `skill_manage`: list, view, create, and patch workspace skills.
