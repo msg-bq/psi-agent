@@ -54,7 +54,33 @@ jobs:
         run: uv run pyinstaller $PYINSTALLER_COMMON_FLAGS src/psi_agent/cli.py
       - name: Smoke test packaged CLI
         shell: pwsh
-        run: pyinstaller-dist/psi-agent.exe --help
+        run: |
+          pyinstaller-dist/psi-agent.exe --help
+          $stdout = Join-Path $env:RUNNER_TEMP "psi-agent-session.out"
+          $stderr = Join-Path $env:RUNNER_TEMP "psi-agent-session.err"
+          $process = Start-Process `
+            -FilePath "pyinstaller-dist/psi-agent.exe" `
+            -ArgumentList @(
+              "session",
+              "--workspace", "examples/haitun-workspace",
+              "--ai-socket", "http://127.0.0.1:65534",
+              "--channel-socket", "http://127.0.0.1:48765"
+            ) `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
+            -PassThru
+          Start-Sleep -Seconds 10
+          if ($process.HasExited) {
+            Get-Content $stdout, $stderr -ErrorAction SilentlyContinue
+            throw "Packaged Session exited while loading the Haitun workspace"
+          }
+          Stop-Process -Id $process.Id -Force
+          $process.WaitForExit()
+          $logs = Get-Content $stdout, $stderr -ErrorAction SilentlyContinue
+          $logs
+          if (-not ($logs -match "Session server listening")) {
+            throw "Packaged Session did not load the workspace and start its server"
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: psi-agent-pyinstaller-${{ matrix.os }}

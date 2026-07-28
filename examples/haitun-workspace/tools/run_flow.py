@@ -79,11 +79,13 @@ def _parse_resource_capacities(value: str) -> Mapping[str, ResourceCapacity] | N
 async def _read_flow_source(flow_path: str) -> str:
     workspace = await anyio.Path(str(_WORKSPACE_DIR)).resolve()
     candidate = anyio.Path(flow_path)
-    if not candidate.is_absolute():
-        candidate = workspace / flow_path
+    if candidate.is_absolute():
+        raise ValueError("flow_path must be relative to the workspace")
+    candidate = workspace / flow_path
     resolved = await candidate.resolve()
-    if not Path(str(resolved)).is_relative_to(Path(str(workspace))):
-        raise ValueError("flow_path must stay inside the workspace")
+    flows_dir = await (workspace / "flows").resolve()
+    if not Path(str(resolved)).is_relative_to(Path(str(flows_dir))):
+        raise ValueError("flow_path must stay inside the workspace flows directory")
     if resolved.suffix != ".workflow":
         raise ValueError("flow_path must name a .workflow file")
     return await resolved.read_text(encoding="utf-8")

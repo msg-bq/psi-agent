@@ -24,6 +24,9 @@ package is retained for historical parity tests but is not part of the active wo
 
 The obsolete Node/TypeScript compiler prototype has been removed. The Python
 compiler abstraction does not select or implement a concrete output target.
+Runtime dependencies, including `antlr4-python3-runtime`, are declared in the
+repository root `pyproject.toml` and locked by the root `uv.lock`; this Skill
+has no independent npm install or per-Skill package lock.
 `graph_compiler.py` is one concrete backend: it imports the generic graph model
 from `psi_agent`, while `psi_agent.workflow_graph` does not import this workspace
 package.

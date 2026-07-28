@@ -51,7 +51,7 @@ async def _atomic_write(path: anyio.Path, content: str) -> None:
     await path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.parent / f"{path.name}.tmp"
     await tmp.write_text(content, encoding="utf-8")
-    await tmp.rename(path)
+    await tmp.replace(path)
 
 
 async def _find_task_flow(flows_dir: anyio.Path, flow_name: str) -> anyio.Path | None:

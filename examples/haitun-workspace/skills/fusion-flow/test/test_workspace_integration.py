@@ -87,3 +87,13 @@ async def test_flow_manage_creates_and_promotes_workflow_source(
     curated_text = curated.read_text(encoding="utf-8")
     assert "```fusionflow\n" + source.strip() + "\n```" in curated_text
     assert "source: flows/adhoc/demo/flow.workflow" in curated_text
+
+    patched = await flow_manage_tool.flow_manage(
+        action="patch",
+        flow_name="demo",
+        description="Updated demo flow",
+        flow_source=source.replace("demo {}", "demo { max_concurrency(demo) == 1; }"),
+    )
+
+    assert patched == "Curated flow patched: 'demo'"
+    assert "max_concurrency(demo) == 1" in curated.read_text(encoding="utf-8")
