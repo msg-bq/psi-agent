@@ -86,6 +86,7 @@ import { useChatStore } from '../stores/chat.js'
 import { useSessionStore } from '../stores/session.js'
 import { useUiStore } from '../stores/ui.js'
 import { sendMessage, stopMessage } from '../composables/useChat.js'
+import { resolveSessionWorkspace } from '../sessionList.js'
 import {
   filterWorkflowOptions,
   formatWorkflowCommand,
@@ -118,8 +119,12 @@ defineEmits(['select-ai', 'delete-ai'])
 
 const activeWorkspacePath = computed(() => {
   if (draftSession.value?.workspace) return draftSession.value.workspace
-  const selectedSession = sessions.value.find(item => item.id === selectedSessionId.value)
-  return selectedSession?.workspace || selectedWorkspacePath.value || gatewayCwd.value
+  if (selectedSessionId.value) {
+    const selectedSession = sessions.value.find(item => item.id === selectedSessionId.value)
+    if (!selectedSession) return ''
+    return resolveSessionWorkspace(selectedSession, gatewayCwd.value)
+  }
+  return selectedWorkspacePath.value || gatewayCwd.value
 })
 
 const workflowQuery = computed(() => getWorkflowCommandQuery(inputText.value))
@@ -230,8 +235,14 @@ watch(workflowOptions, () => {
 
 watch(
   [workflowQuery, activeWorkspacePath],
-  async ([query, workspacePath], [previousQuery, previousWorkspacePath]) => {
-    if (query === null || !workspacePath) return
+  async ([query, workspacePath], [previousQuery, previousWorkspacePath] = []) => {
+    if (query === null || !workspacePath) {
+      workflowRequestVersion++
+      loadingWorkflows.value = false
+      workflowLoadError.value = ''
+      workflows.value = []
+      return
+    }
     if (previousQuery !== null && previousWorkspacePath === workspacePath) return
 
     const requestVersion = ++workflowRequestVersion
@@ -249,6 +260,7 @@ watch(
       if (requestVersion === workflowRequestVersion) loadingWorkflows.value = false
     }
   },
+  { immediate: true },
 )
 
 watch(uploadResetToken, () => {

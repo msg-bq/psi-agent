@@ -58,7 +58,14 @@ async def test_exact_workflow_command_precedes_natural_language_routing():
     assert "Accept no suffix, inline parameters, or trailing" in section
     assert "argument syntax." in section
     assert "`flows/workflows/<slug>/<slug>.workflow`" in section
-    assert "`run_flow(flow_path=...)`" in section
+    inspect_index = section.index("Read that declaration before execution")
+    collect_index = section.index("Resolve every required input from the conversation")
+    call_index = section.index("call the existing `run_flow` runner")
+    assert inspect_index < collect_index < call_index
+    assert "end the turn without calling `run_flow`" in section
+    assert "default empty input object" in section
+    assert "exactly once, passing `flow_path` and the complete `inputs_json`" in section
+    assert "only when the declaration requires no inputs" in section
     assert "adds no operator or manifest protocol" in section
     assert "must not route through" in section
     assert "`flow_manage`" in section
@@ -100,3 +107,8 @@ def test_fusion_skill_defines_only_the_exact_frontend_command():
     assert "workflow_manage" not in text
     assert "JSON object]" not in text
     assert "Step may save a self-contained child declaration" in text
+    assert text.index("inspect `input_workflow(...)`") < text.index("invoke `run_flow` exactly once")
+    assert "end the turn without" in text
+    assert "default empty input object" in text
+    assert "Use an empty input object only when the declaration has no inputs." in text
+    assert "resolve against the invoking psi workspace root" in text

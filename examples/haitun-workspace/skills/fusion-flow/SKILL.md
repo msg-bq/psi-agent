@@ -91,11 +91,16 @@ For example:
 ```
 
 Treat the slug as a workflow name, never as a path. Do not accept a suffix or
-trailing text. If required inputs are missing, ask for them in normal
-conversation; do not invent command arguments or guess values.
+trailing text. Read the canonical declaration and inspect `input_workflow(...)`
+before execution. Resolve every declared input from the conversation; if any
+value is missing, ask for it in normal conversation and end the turn without
+calling `run_flow`. Do not invent command arguments, guess values, or call once
+with the default empty input object merely to discover missing inputs.
 
-Map the slug to `flows/workflows/<slug>/<slug>.workflow`, then invoke
-`run_flow(flow_path=...)` once. Every invocation is a fresh run.
+Map the slug to `flows/workflows/<slug>/<slug>.workflow`. Once all inputs are
+available, invoke `run_flow` exactly once with that `flow_path` and the complete
+`inputs_json`. Use an empty input object only when the declaration has no inputs.
+Every invocation is a fresh run.
 
 ### Fixed-path reuse
 
@@ -140,7 +145,9 @@ Resolve the workspace-relative G4 path, submit it to `run_flow`, and report the 
 
 Agent-backed Steps must never invoke `run_flow` or start another workflow. A
 Step may save a self-contained child declaration to the fixed reusable folder;
-the parent Session remains the only launcher.
+the parent Session remains the only launcher. Relative paths passed by a Step
+to `read`, `write`, or `edit` resolve against the invoking psi workspace root,
+independent of the launcher process working directory.
 
 ### One synchronous call
 

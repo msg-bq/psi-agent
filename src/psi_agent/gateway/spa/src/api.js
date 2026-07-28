@@ -33,7 +33,8 @@ export async function browseWorkspace(path, { kind = 'directory', q = '' } = {})
 export async function listWorkspaceWorkflows(path) {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
-  const suffix = params.size ? `?${params.toString()}` : ''
+  const query = params.toString()
+  const suffix = query ? `?${query}` : ''
   const data = await api('GET', `/workspace/workflows${suffix}`)
   return Array.isArray(data.workflows) ? data.workflows : []
 }

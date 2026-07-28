@@ -38,7 +38,8 @@ uv run psi-agent channel repl --session-socket /tmp/ch.sock
   runtime setup. One-off declarations go under `flows/<task-slug>/`. Save reusable
   declarations with the existing file-writing capability at
   `flows/workflows/<slug>/<slug>.workflow`. Reuse one with the exact command
-  `/workflow:<slug>`; every invocation is a fresh synchronous run.
+  `/workflow:<slug>`; the agent reads the declaration and collects all declared
+  inputs before the sole fresh, synchronous `run_flow` call.
 - **Serper search** needs psi-agent installed with the `mcp` extra and `uvx` on PATH.
 - Never put API keys in this workspace or in generated `.workflow` / `.env` files.
 

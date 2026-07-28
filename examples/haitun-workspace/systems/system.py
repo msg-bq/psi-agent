@@ -883,9 +883,15 @@ For this command:
    Relative path: skills/fusion-flow/SKILL.md
 2. Map the slug to the fixed workspace-relative path
    `flows/workflows/<slug>/<slug>.workflow`.
-3. Call the existing `run_flow(flow_path=...)` runner once.
-4. If required inputs are not already available from the conversation, ask for
-   them in normal dialogue. Do not extend the command syntax or guess values.
+3. Read that declaration before execution and inspect its `input_workflow(...)`
+   assertion to identify every required input Artifact.
+4. Resolve every required input from the conversation. If any value is missing,
+   ask for it in normal dialogue and end the turn without calling `run_flow`.
+   Do not extend the command syntax, guess values, or probe the runner with its
+   default empty input object.
+5. Once all required values are available, call the existing `run_flow` runner
+   exactly once, passing `flow_path` and the complete `inputs_json`. Use an empty
+   input object only when the declaration requires no inputs.
 
 The registry root is fixed at {workflow_registry_dir}. Save reusable
 declarations there with the existing file-writing capability. This command
@@ -951,8 +957,9 @@ Rules:
 Agent Steps reuse the invoking psi-agent Session's AI socket through the runtime context. Do not
 start an external engine CLI, create a second execution workspace, or invoke `run_flow` from a
 Step. A Step may save a generated declaration but only the parent Session may launch it. The
-workflow source contains instructions and graph declarations only; never write API keys into the
-workspace or generated `.workflow` files."""
+Step adapter resolves relative `read`/`write`/`edit` paths against this workspace root, independent
+of the Gateway or Session process working directory. The workflow source contains instructions and
+graph declarations only; never write API keys into the workspace or generated `.workflow` files."""
 
     async def build_system_prompt(self, model: str | None = None, tool_names: list[str] | None = None) -> str:
         ws = self._workspace_dir

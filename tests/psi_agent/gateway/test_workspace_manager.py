@@ -91,12 +91,27 @@ async def test_list_workflows_skips_corrupt_and_incomplete_entries(tmp_path) -> 
 
     invalid_name = await _write_workflow(workspace, "Invalid_Name")
     assert await invalid_name.exists()
-    reserved_name = await _write_workflow(workspace, "con")
-    assert await reserved_name.exists()
 
     result = await WorkspaceManager().list_workflows(str(workspace))
 
     assert [workflow["name"] for workflow in result] == ["valid-flow"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        "com1",
+        "com9",
+        "lpt1",
+        "lpt9",
+    ],
+)
+def test_workflow_name_rejects_windows_reserved_names(name: str) -> None:
+    assert not WorkspaceManager._is_valid_workflow_name(name)
 
 
 @pytest.mark.anyio

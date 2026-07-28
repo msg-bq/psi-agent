@@ -67,6 +67,12 @@ class WorkspaceManager:
         """Return the current working directory."""
         return _norm_path(Path.cwd())
 
+    @staticmethod
+    def _is_valid_workflow_name(name: str) -> bool:
+        """Return whether name is a portable workflow registry segment."""
+
+        return _WORKFLOW_NAME_RE.fullmatch(name) is not None and name not in _WINDOWS_RESERVED_WORKFLOW_NAMES
+
     async def list_roots(self) -> dict[str, Any]:
         roots: list[dict[str, str]] = []
         drives: list[dict[str, str]] = []
@@ -173,7 +179,7 @@ class WorkspaceManager:
                     continue
 
                 name = entry.name
-                if _WORKFLOW_NAME_RE.fullmatch(name) is None or name in _WINDOWS_RESERVED_WORKFLOW_NAMES:
+                if not self._is_valid_workflow_name(name):
                     logger.warning(f"Skipping workflow directory with invalid name: {name!r}")
                     continue
 

@@ -18,9 +18,12 @@ The frontend reuse command is exactly:
 ```
 
 It accepts no suffix or inline parameters. The command maps to the canonical
-path and invokes the existing `run_flow(flow_path=...)` runner. If a workflow
-needs inputs, collect them through normal conversation. An Agent Step may save
-a self-contained child declaration but must not launch another workflow.
+path. Read the declaration and collect every declared input through normal
+conversation before invoking `run_flow` exactly once; never use an initial call
+with the default empty input object as an input probe. An Agent Step may save a
+self-contained child declaration but must not launch another workflow. Its
+relative `read`/`write`/`edit` paths resolve against the psi workspace root, not
+the launcher process CWD.
 
 ## Modules
 

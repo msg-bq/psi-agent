@@ -102,8 +102,10 @@ All are optional and only affect the dynamic suffix / runtime line:
   fixed layout is `flows/workflows/<slug>/<slug>.workflow`; no management tool
   or manifest format is introduced.
 - Reuse a saved declaration with the exact command `/workflow:<slug>`. Do not
-  append inline parameters. If inputs are needed, collect them through normal
-  conversation.
+  append inline parameters. Before the sole `run_flow` call, read the saved
+  declaration and collect every declared input through normal conversation.
+  Never call once with the default empty input object merely to discover what
+  is missing.
 - Loading or saving never executes a workflow. Each `run_flow` call is a fresh,
   synchronous execution with no cache, resume token, or persisted run state.
 - Execution is non-recursive: an Agent Step cannot invoke `run_flow` or start
@@ -112,6 +114,9 @@ All are optional and only affect the dynamic suffix / runtime line:
 - The registry stores only the canonical `.workflow` source. It does not copy or
   rewrite instruction sidecars; `"./..."` references remain workspace-root-relative
   and must point to stable files.
+- Agent Step `read`/`write`/`edit` calls bind relative paths to the invoking
+  psi workspace root, not the launcher process CWD. This keeps instruction
+  sidecar reads and child declaration saves inside the selected workspace.
 
 ## Schedules (`schedules/`)
 
