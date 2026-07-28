@@ -58,28 +58,48 @@ jobs:
           pyinstaller-dist/psi-agent.exe --help
           $stdout = Join-Path $env:RUNNER_TEMP "psi-agent-session.out"
           $stderr = Join-Path $env:RUNNER_TEMP "psi-agent-session.err"
-          $process = Start-Process `
-            -FilePath "pyinstaller-dist/psi-agent.exe" `
-            -ArgumentList @(
-              "session",
-              "--workspace", "examples/haitun-workspace",
-              "--ai-socket", "http://127.0.0.1:65534",
-              "--channel-socket", "http://127.0.0.1:48765"
-            ) `
-            -RedirectStandardOutput $stdout `
-            -RedirectStandardError $stderr `
-            -PassThru
-          Start-Sleep -Seconds 10
-          if ($process.HasExited) {
-            Get-Content $stdout, $stderr -ErrorAction SilentlyContinue
-            throw "Packaged Session exited while loading the Haitun workspace"
+          $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $port = $listener.LocalEndpoint.Port
+          $listener.Stop()
+          $process = $null
+          try {
+            $process = Start-Process `
+              -FilePath "pyinstaller-dist/psi-agent.exe" `
+              -ArgumentList @(
+                "session",
+                "--workspace", "examples/haitun-workspace",
+                "--ai-socket", "http://127.0.0.1:65534",
+                "--channel-socket", "http://127.0.0.1:$port",
+                "--verbose"
+              ) `
+              -RedirectStandardOutput $stdout `
+              -RedirectStandardError $stderr `
+              -PassThru
+
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 90; $attempt++) {
+              if ($process.HasExited) { break }
+              $logs = Get-Content -Path $stdout, $stderr -ErrorAction SilentlyContinue
+              $runnerLoaded = $logs -match "Loaded tool: 'run_flow'"
+              $serverListening = $logs -match "Session server listening"
+              if ($runnerLoaded -and $serverListening) {
+                $ready = $true
+                break
+              }
+              Start-Sleep -Seconds 1
+            }
+
+            $logs = Get-Content -Path $stdout, $stderr -ErrorAction SilentlyContinue
+            $logs
+            if (-not $ready) {
+              throw "Packaged Session did not register run_flow and start its server"
+            }
           }
-          Stop-Process -Id $process.Id -Force
-          $process.WaitForExit()
-          $logs = Get-Content $stdout, $stderr -ErrorAction SilentlyContinue
-          $logs
-          if (-not ($logs -match "Session server listening")) {
-            throw "Packaged Session did not load the workspace and start its server"
+          finally {
+            if ($null -ne $process -and -not $process.HasExited) {
+              taskkill /PID $process.Id /T /F | Out-Null
+            }
           }
       - uses: actions/upload-artifact@v7
         with:
