@@ -26,7 +26,7 @@ def _load_module(name: str, path: Path) -> Any:
     return cast(Any, module)
 
 
-run_flow_tool = _load_module("fusion_flow_next_run_flow_tool", _RUNNER_PATH)
+run_flow_tool = _load_module("fusion_flow_run_flow_tool", _RUNNER_PATH)
 
 _ORDERED_RESOURCE_WORKFLOW = """
 const ordered: Workflow;

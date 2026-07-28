@@ -73,13 +73,13 @@ dispatcher 暴露具体实例。退出 dispatch 的 success、exception、timeou
 cancellation 路径都会在 shielded cleanup 中归还资源。当前 allocator 是进程内
 固定资源池，不提供跨进程锁或 shared/exclusive 租约模式。
 
-## 4. 与 FusionFlow Next Python execution 子包的边界
+## 4. 与 FusionFlow Python execution 子包的边界
 
 `StepNode.executor_id` 只是稳定身份，不包含 Agent 配置、ServiceHandle、argv 或
 可调用对象，因此通用执行器不能仅凭图决定调用哪个 `flow.*` 原语。调用方负责提供：
 
 ```python
-from fusion_flow_next.execution import flow
+from fusion_flow.execution import flow
 
 
 async def dispatch(step, inputs):
@@ -92,7 +92,7 @@ async def dispatch(step, inputs):
     raise LookupError(step.executor_id)
 ```
 
-dispatcher 可以调用 `fusion_flow_next.execution` 中的 `flow.session`、
+dispatcher 可以调用 `fusion_flow.execution` 中的 `flow.session`、
 `flow.call` 或 `flow.exec`；需要具体资源实例时使用三参数 contextual dispatcher，
 从 `DispatchContext.resource_lease` 读取 grant。计划执行器只负责并发、等待、
 资源 admission、输入收集和输出提交。核心执行器不依赖这个示例 Skill 子包，
