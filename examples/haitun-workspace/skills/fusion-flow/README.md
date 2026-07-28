@@ -4,6 +4,24 @@ FusionFlow is the workspace-local G4 parser/compiler, graph compiler, synchronou
 workflow runner, and authoring Skill. The `fusion_flow_next.execution` compatibility
 package is retained for historical parity tests but is not part of the active workspace path.
 
+## Workspace integration
+
+Reusable declarations use the fixed path
+`flows/workflows/<slug>/<slug>.workflow`. Saving, listing, and loading are
+upper-layer instructions implemented with existing file tools; this feature
+does not add a workflow-management operator or manifest protocol.
+
+The frontend reuse command is exactly:
+
+```text
+/workflow:<slug>
+```
+
+It accepts no suffix or inline parameters. The command maps to the canonical
+path and invokes the existing `run_flow(flow_path=...)` runner. If a workflow
+needs inputs, collect them through normal conversation. An Agent Step may save
+a self-contained child declaration but must not launch another workflow.
+
 ## Modules
 
 - `grammar/FusionFlow.g4`: the syntax grammar; ordinary preset/external-operator arity remains checker-owned.
@@ -120,6 +138,10 @@ compatibility aliases. Because the serialized config key changes to
 The workspace activation path now points at this directory. `skills/fusion-flow/`
 is the source of truth; the former Node/TypeScript Skill and `.flow.ts` runner
 are no longer shipped.
+
+`/workflow:<slug>` has explicit priority and resolves to
+`flows/workflows/<slug>/<slug>.workflow`. It is an upper-layer command, not a
+new operator.
 
 ## Regenerating the Python parser
 

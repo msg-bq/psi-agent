@@ -564,7 +564,11 @@ async def _build_flows_index(flows_dir: anyio.Path) -> str:
 
     if await flows_dir.exists():
         async for task_dir in flows_dir.iterdir():
-            if not await task_dir.is_dir() or task_dir.name.startswith(".") or task_dir.name in {"curated", "adhoc"}:
+            if (
+                not await task_dir.is_dir()
+                or task_dir.name.startswith(".")
+                or task_dir.name in {"curated", "adhoc", "workflows"}
+            ):
                 continue
             preferred = task_dir / f"{task_dir.name}.workflow"
             if await preferred.exists():
@@ -850,28 +854,49 @@ class System:
         self._previous_summary: str | None = None
 
     async def _build_fusion_section(self) -> str:
-        """Fusion Flow authoring guidance + flows index (merged from fusion-flow).
+        """Fusion Flow command routing, authoring guidance, and flows index.
 
-        Returns empty string if the fusion-flow runtime skill is not present.
+        Returns empty string if the Fusion Flow runtime skill is not present.
         """
         workspace_resolved = await self._workspace_dir.resolve()
-        skills_dir = workspace_resolved / "skills"
-        fusion_skill_dir = skills_dir / "fusion-flow"
-        fusion_skill_md = fusion_skill_dir / "SKILL.md"
+        fusion_skill_md = workspace_resolved / "skills" / "fusion-flow" / "SKILL.md"
         if not await fusion_skill_md.exists():
             return ""
 
         flows_dir = workspace_resolved / "flows"
+        workflow_registry_dir = flows_dir / "workflows"
         flows_index = await _build_flows_index(flows_dir)
 
         return f"""## Fusion Flow (workflow authoring)
 
-This workspace can author and run Fusion Flow workflows from natural language.
+This workspace can author, save, reuse, and run Fusion Flow workflows from natural language.
 
-### Reusable Flows
+### `/workflow:<slug>` — saved workflow command (highest priority)
+
+Any trimmed user message matching exactly `/workflow:<slug>` invokes one saved
+FusionFlow G4 declaration. Accept no suffix, inline parameters, or trailing
+argument syntax.
+
+For this command:
+1. Read the full instructions at:
+   {fusion_skill_md}
+   Relative path: skills/fusion-flow/SKILL.md
+2. Map the slug to the fixed workspace-relative path
+   `flows/workflows/<slug>/<slug>.workflow`.
+3. Call the existing `run_flow(flow_path=...)` runner once.
+4. If required inputs are not already available from the conversation, ask for
+   them in normal dialogue. Do not extend the command syntax or guess values.
+
+The registry root is fixed at {workflow_registry_dir}. Save reusable
+declarations there with the existing file-writing capability. This command
+contract adds no operator or manifest protocol and must not route through
+`flow_manage`. A generated child Step may write a self-contained declaration
+there but must not launch it.
+
+### Other reusable flows
 {flows_index}
 
-### When to activate
+### Natural-language activation
 When the user describes a workflow-shaped task - multi-agent collaboration, parallel review,
 fan-out/fan-in, pipelines, multi-step research or scoring, or running a `.workflow` file -
 activate the Fusion Flow skill.
@@ -919,13 +944,15 @@ Rules:
 2. Treat skills without `created_by: agent` as read-only.
 3. New learned procedures -> `skills/<skill-name>/SKILL.md` via `skill_manage(action="create")`.
 4. Reusable workflow templates -> `flows/curated/<flow-name>/FLOW.md` via `flow_manage`.
-5. One-off task executions -> `flows/<task-slug>/`.
+5. Saved command workflows -> `flows/workflows/<slug>/<slug>.workflow` via existing file tools.
+6. One-off task executions -> `flows/<task-slug>/`.
 
 ### Agent execution
 Agent Steps reuse the invoking psi-agent Session's AI socket through the runtime context. Do not
-start an external engine CLI or create a second execution workspace. The workflow source contains
-instructions and graph declarations only; never write API keys into the workspace or generated
-`.workflow` files."""
+start an external engine CLI, create a second execution workspace, or invoke `run_flow` from a
+Step. A Step may save a generated declaration but only the parent Session may launch it. The
+workflow source contains instructions and graph declarations only; never write API keys into the
+workspace or generated `.workflow` files."""
 
     async def build_system_prompt(self, model: str | None = None, tool_names: list[str] | None = None) -> str:
         ws = self._workspace_dir
