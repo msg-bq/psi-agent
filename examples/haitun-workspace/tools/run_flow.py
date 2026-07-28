@@ -37,18 +37,18 @@ _SKILL_DIR = _WORKSPACE_DIR / "skills" / "fusion-flow"
 if str(_SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(_SKILL_DIR))
 
-from fusion_flow_next.job_store import (  # noqa: E402
+from fusion_flow.job_store import (  # noqa: E402
     HumanRequestSpec,
     HumanWorkflowRun,
     JobStore,
     RunLease,
 )
-from fusion_flow_next.workflow_runner import (  # noqa: E402
+from fusion_flow.workflow_runner import (  # noqa: E402
     CompletionContext,
     ProgramInvocation,
     compile_workflow,
 )
-from fusion_flow_next.workflow_runner import execute_workflow as _execute_workflow  # noqa: E402
+from fusion_flow.workflow_runner import execute_workflow as _execute_workflow  # noqa: E402
 
 _STEP_SYSTEM_PROMPT = (
     "You execute exactly one assigned FusionFlow Agent step. "

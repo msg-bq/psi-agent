@@ -9,9 +9,9 @@ from dataclasses import replace
 from typing import Any
 
 import anyio
-import fusion_flow_next.job_store as job_store_module
+import fusion_flow.job_store as job_store_module
 import pytest
-from fusion_flow_next.job_store import (
+from fusion_flow.job_store import (
     HumanRequestSpec,
     HumanWorkflowRun,
     InvalidRunStateError,
@@ -231,7 +231,7 @@ import sys
 
 import anyio
 
-from fusion_flow_next.job_store import JobStore
+from fusion_flow.job_store import JobStore
 
 
 async def main() -> None:

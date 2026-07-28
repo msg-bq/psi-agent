@@ -41,9 +41,9 @@ Do **not** activate this skill for `.prose` files — those belong to OpenProse.
 | Layer | Responsibility |
 | --- | --- |
 | `grammar/FusionFlow.g4` + parser | G4 source to Core IR |
-| `fusion_flow_next.workflow_runner` | Core IR to graph, plan, and checked dispatch |
+| `fusion_flow.workflow_runner` | Core IR to graph, plan, and checked dispatch |
 | `psi_agent.workflow_execution` | dependencies, concurrency, timeouts, resources, and validated checkpoints |
-| `fusion_flow_next.job_store` | private, versioned Human wait/checkpoint state |
+| `fusion_flow.job_store` | private, versioned Human wait/checkpoint state |
 | workspace `run_flow` / `run_flow_resume` tools | file/JSON boundary and ephemeral Session-backed Agent/Human-preparer Steps |
 | workspace `clarify` tool | existing user-facing choice or free-text question formatter |
 
@@ -311,7 +311,7 @@ workflow code_review {
 ### G4 source of truth
 
 Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole authority for surface syntax, declarations, assertions, formulas, terms, and preset operator signatures. This skill additionally defines which grammar-valid shapes the executable graph backend accepts.
-Runner-specific typed catalog extensions use the grammar's generic operator-call syntax without changing its preset catalog. In particular, `depends_on(Step, Step) -> Bool` is registered by `fusion_flow_next/workflow_runner.py` and is executable there, but is not one of the grammar's 21 canonical preset operators.
+Runner-specific typed catalog extensions use the grammar's generic operator-call syntax without changing its preset catalog. In particular, `depends_on(Step, Step) -> Bool` is registered by `fusion_flow/workflow_runner.py` and is executable there, but is not one of the grammar's 21 canonical preset operators.
 
 ### Executable graph backend guardrails
 

@@ -99,7 +99,7 @@ Human run 使用严格的 state-v2 JSON schema 保存上述 workflow/plan 身份
 OS 自动释放的 advisory file lock 加进程内 reservation guard 串行化同一个 run 的
 恢复。锁文件存在本身不代表持有租约；进程异常退出时内核会释放实际 advisory lock。
 
-## 4. 与 FusionFlow Next Python execution 子包的边界
+## 4. 与 FusionFlow Python execution 子包的边界
 
 `StepNode.executor_id` 只是稳定身份，不包含 Agent 配置、Human channel、argv 或
 可调用对象，因此通用执行器不能仅凭图决定实际能力。调用方负责提供 dispatcher：
@@ -119,7 +119,7 @@ async def dispatch(step, inputs, context):
 `DispatchContext.resource_lease` 读取 grant。计划执行器只负责并发、等待、资源
 admission、输入收集、输出提交与 checkpoint；核心执行器不依赖示例 Skill，也不会
 在 graph package 中复制 executor catalog。官方 G4 runner 的 Agent/Program/Human
-adapter 与隔离保留的 `fusion_flow_next.execution` 兼容层没有运行时耦合。
+adapter 与隔离保留的 `fusion_flow.execution` 兼容层没有运行时耦合。
 
 ## 5. 初版明确拒绝
 

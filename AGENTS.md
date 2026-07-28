@@ -175,9 +175,9 @@ src/
 - **Session 层**: `src/psi_agent/session/AGENTS.md` — workspace 启动、agent loop、tool 加载调用、schedule 机制、history 持久化
 - **Channel 层**: `src/psi_agent/channel/AGENTS.md` — ChannelCore 公共部件、REPL/CLI/Telegram/Feishu 约定
 - **Gateway 层**: `src/psi_agent/gateway/AGENTS.md` — 生命周期管理、REST API、Web Console SPA、CI 打包
-- **Workflow Graph**: `docs/architecture/workflow/2026-07-23-workflow-graph-design.zh.md` — 允许有环的声明式 Step–Artifact 图及待讨论语义；具体 Core IR 后端位于 `examples/haitun-workspace/skills/fusion-flow/fusion_flow_next/graph_compiler.py`
+- **Workflow Graph**: `docs/architecture/workflow/2026-07-23-workflow-graph-design.zh.md` — 允许有环的声明式 Step–Artifact 图及待讨论语义；具体 Core IR 后端位于 `examples/haitun-workspace/skills/fusion-flow/fusion_flow/graph_compiler.py`
 - **Workflow Execution**: `docs/architecture/workflow/2026-07-25-workflow-execution-plan-design.zh.md` — one-shot 无环子集的 Fiber/Await/Invoke 计划、全量异步启动、dispatcher 与 validated checkpoint 边界
-- **FusionFlow Compatibility Execution**: `examples/haitun-workspace/skills/fusion-flow/fusion_flow_next/execution/` — 示例 Skill 内隔离保存的旧 TypeScript `flow.*` Python 兼容层；不属于 `psi_agent` wheel，也不是 G4 Core IR / WorkflowGraph runner
+- **FusionFlow Compatibility Execution**: `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/` — 示例 Skill 内隔离保存的旧 TypeScript `flow.*` Python 兼容层；不属于 `psi_agent` wheel，也不是 G4 Core IR / WorkflowGraph runner
 
 ## 核心通信协议
 
@@ -257,7 +257,7 @@ SSE 流中的特殊字段：
 
 16. **消费 async generator 必须用 `aclosing()`**：`async for` 在提前退出或被 cancel 时不调用 generator 的 `aclose()`，导致 generator 内 `async with` 持有的资源（aiohttp 连接、文件句柄等）被遗弃给 GC。正确做法：`async with aclosing(gen) as g: async for chunk in g: ...`。对标 `ai/server.py` 的 `finally` + shielded `aclose()` 模式。参见 `agent.py`、`channel_adapter.py`、`schedule_registry.py`。
 
-17. **Windows batch 参数边界**：`fusion_flow_next.execution.flow.exec()` 仅在目标显式以 `.cmd`/`.bat` 结尾时使用系统 shell，并对命令与参数整体加引号、延迟还原字面量 `%`；含双引号、`!` 或换行的参数直接拒绝。`!` 在被调 batch 开启 delayed expansion 后会被静默吃掉，默认拒绝比悄悄改参安全。Windows 非 batch 与其他平台始终保持 argv/no-shell 路径。batch 进程使用独立进程组，并尝试用 Job Object、失败时用 `taskkill /T` 清理进程树；Job Object 在进程启动后挂接，存在很小的启动窗口，不能承诺捕获所有后代。
+17. **Windows batch 参数边界**：`fusion_flow.execution.flow.exec()` 仅在目标显式以 `.cmd`/`.bat` 结尾时使用系统 shell，并对命令与参数整体加引号、延迟还原字面量 `%`；含双引号、`!` 或换行的参数直接拒绝。`!` 在被调 batch 开启 delayed expansion 后会被静默吃掉，默认拒绝比悄悄改参安全。Windows 非 batch 与其他平台始终保持 argv/no-shell 路径。batch 进程使用独立进程组，并尝试用 Job Object、失败时用 `taskkill /T` 清理进程树；Job Object 在进程启动后挂接，存在很小的启动窗口，不能承诺捕获所有后代。
 
 18. **`WorkflowEdge` 是封闭 union**：`WorkflowGraph` 只接受 `ConsumesEdge`、`ProducesEdge`、`ForeachEdge` 的精确类型，不接受子类。子类会破坏 dataclass 基于精确类型的相等性去重，也能覆盖序列化使用的 `kind`。新增边类型时应显式更新 union、校验和序列化。
 
@@ -300,7 +300,7 @@ async def handler(request):
 - **ruff**: `select = ["E", "F", "I", "W", "UP", "ASYNC", "SIM", "C4", "B", "RUF", "N", "T20", "PLC"]`
 - **ty**: 全局 `ty check .`
 - **嵌套 Python 包**: `fusion-flow` 保持在示例 skill 内，通过 `tool.ty.environment.extra-paths` 纳入全局模块解析，不单独增加打包脚手架
-- **ANTLR 生成文件**: `fusion-flow/fusion_flow_next/generated/` 仅提交 ANTLR 4.13.2 生成的运行时 Python lexer/parser；`.interp`、`.tokens` 和未使用的 visitor 不提交。仅对这个目录关闭 Ruff、ty 和 Git whitespace 检查；手写代码仍保持零抑制。CI 固定 tool JAR 的 SHA-256 并重生成对比，运行时 import 测试负责验证可用性
+- **ANTLR 生成文件**: `fusion-flow/fusion_flow/generated/` 仅提交 ANTLR 4.13.2 生成的运行时 Python lexer/parser；`.interp`、`.tokens` 和未使用的 visitor 不提交。仅对这个目录关闭 Ruff、ty 和 Git whitespace 检查；手写代码仍保持零抑制。CI 固定 tool JAR 的 SHA-256 并重生成对比，运行时 import 测试负责验证可用性
 - **per-file-ignores**: **零条**。所有代码通过自身符合规则，不靠抑制
 - **核心代码（`src/` + `tests/`）仅 7 处 ty:ignore**（无法避免）：
   - `tests/integration/conftest.py:112` — pytest async generator fixture 的返回类型局限（`yield` 导致函数被推断为 AsyncGenerator，与标注的 MockAIServer 冲突）

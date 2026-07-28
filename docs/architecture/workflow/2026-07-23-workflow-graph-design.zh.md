@@ -4,7 +4,7 @@
 > 日期：2026-07-23
 > 目标 PR：独立于 FusionFlow Python 运行时 PR
 > 图模型：`src/psi_agent/workflow_graph/`
-> Core IR 后端：`examples/haitun-workspace/skills/fusion-flow/fusion_flow_next/graph_compiler.py`
+> Core IR 后端：`examples/haitun-workspace/skills/fusion-flow/fusion_flow/graph_compiler.py`
 
 ## 1. 结论
 
@@ -51,7 +51,7 @@ ExecutionTrace
 分层约束：
 
 - `psi_agent.workflow_graph` 只定义通用图模型，不导入 example skill；
-- `fusion_flow_next.graph_compiler` 继承 PR12 的 `CoreIRCompiler`，并单向导入图模型；
+- `fusion_flow.graph_compiler` 继承 PR12 的 `CoreIRCompiler`，并单向导入图模型；
 - 未来 `workflow_runtime` 可以同时依赖二者；
 - Core IR 是语义事实的上游，Graph 是执行依赖的派生视图；
 - 未编译进图的 Core IR 不能被假装已经进入 Graph。
@@ -82,7 +82,7 @@ tests/psi_agent/workflow_graph/
 └── test_public_api.py
 
 examples/haitun-workspace/skills/fusion-flow/
-├── fusion_flow_next/graph_compiler.py  # CoreIRCompiler 的 WorkflowGraph 后端
+├── fusion_flow/graph_compiler.py  # CoreIRCompiler 的 WorkflowGraph 后端
 └── test/test_graph_compiler.py
 ```
 
@@ -269,7 +269,7 @@ Artifact A -> Step S1 -> Artifact B -> Step S2 -> Artifact A
 
 ### 7.1 复用 PR12 编译器
 
-`fusion_flow_next.graph_compiler.WorkflowGraphCompiler` 继承
+`fusion_flow.graph_compiler.WorkflowGraphCompiler` 继承
 `CoreIRCompiler`，输入是真实的 `WorkflowFile`、`Workflow`、`Assertion`、
 `CompoundTerm`、`Constant` 和 `ListTerm`。它不解析 BNF 文本，也不接受
 duck-typed DTO。
@@ -463,7 +463,7 @@ failure、结果聚合与提交由未来 runtime 负责。
 - dispatcher 通过原始 Core IR/catalog 判断 `executor_id` 属于 Human、Agent 还是
   Program；
 - Agent 与 Program handler 由官方 G4 workspace adapter 直接注入，不依赖旧
-  `fusion_flow_next.execution`；
+  `fusion_flow.execution`；
 - Human handler 已在 workspace adapter 中实现为：专用 Agent 整理说明并按需读取
   引用资源，持久保存 `ExecutionCheckpoint` 与 request token，释放 Session turn，
   通过既有 `clarify` 获取下一条用户消息后恢复并提交 produces Artifact；

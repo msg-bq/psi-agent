@@ -5,7 +5,7 @@ runner, and authoring Skill. Program-backed Steps use an injected Program runner
 contract; the workspace entry point implements it with AnyIO subprocess
 execution. Human-backed Steps use a dedicated instruction-preparation Agent,
 the existing Haitun `clarify` flow, and a private checkpoint that crosses
-conversation turns. The `fusion_flow_next.execution` compatibility package is
+conversation turns. The `fusion_flow.execution` compatibility package is
 retained for historical parity tests but is not part of the active workspace
 path.
 
@@ -13,17 +13,17 @@ path.
 
 - `grammar/FusionFlow.g4`: the syntax grammar; ordinary preset/external-operator arity remains checker-owned.
 - `test/test_grammar.py`: generated-parser, preset-signature, and authoring-Skill example contract checks.
-- `fusion_flow_next/generated/`: committed ANTLR 4.13.2 Python lexer and parser generated from the grammar.
-- `fusion_flow_next/contracts.py`: diagnostics and parse/check phase results.
-- `fusion_flow_next/core_ir.py`: immutable Workflow Core IR shared by compiler phases.
-- `fusion_flow_next/parser.py`: parser facade and Workflow Core IR output boundary.
-- `fusion_flow_next/checker.py`: static semantics boundary.
-- `fusion_flow_next/compiler.py`: target-neutral Core IR traversal and backend hook boundary.
-- `fusion_flow_next/graph_compiler.py`: concrete `CoreIRCompiler` backend that builds `psi_agent.workflow_graph` models.
-- `fusion_flow_next/workflow_runner.py`: fail-closed compile/plan/execute entry point with Agent, Human, Program, and checkpoint injection boundaries.
-- `fusion_flow_next/job_store.py`: strict v2 JSON state plus non-blocking, OS-released advisory leases and an in-process guard for G4 runs waiting on Human input.
-- `fusion_flow_next/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
-- `fusion_flow_next/execution/`: inactive Python parity port of legacy `flow.*` primitives; `run_flow` does not import or dispatch through it.
+- `fusion_flow/generated/`: committed ANTLR 4.13.2 Python lexer and parser generated from the grammar.
+- `fusion_flow/contracts.py`: diagnostics and parse/check phase results.
+- `fusion_flow/core_ir.py`: immutable Workflow Core IR shared by compiler phases.
+- `fusion_flow/parser.py`: parser facade and Workflow Core IR output boundary.
+- `fusion_flow/checker.py`: static semantics boundary.
+- `fusion_flow/compiler.py`: target-neutral Core IR traversal and backend hook boundary.
+- `fusion_flow/graph_compiler.py`: concrete `CoreIRCompiler` backend that builds `psi_agent.workflow_graph` models.
+- `fusion_flow/workflow_runner.py`: fail-closed compile/plan/execute entry point with Agent, Human, Program, and checkpoint injection boundaries.
+- `fusion_flow/job_store.py`: strict v2 JSON state plus non-blocking, OS-released advisory leases and an in-process guard for G4 runs waiting on Human input.
+- `fusion_flow/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
+- `fusion_flow/execution/`: inactive Python parity port of legacy `flow.*` primitives; `run_flow` does not import or dispatch through it.
 - `test/test_graph_compiler.py`: real Core IR to WorkflowGraph compiler contract checks.
 - `test/test_workflow_runner.py`: compile, plan, dependency, resource, and dispatch checks.
 - `test/execution/`: parity regression tests for the inactive compatibility package.
@@ -43,7 +43,7 @@ The language contract now covers file-level identity declarations, assertions, `
 
 For a compact, readable BNF and consistency with KEDispatcher, preset operators remain syntax sugar over the same flexible call rule instead of receiving separate arity-constrained grammar productions. After syntax parsing, the checker/catalog validates their arity and types. Because that information is intentionally not encoded structurally in the BNF, every preset operator in `FusionFlow.g4` documents its parameter types, return type, and explicit arity for human and agent readers; the grammar contract test enforces this documentation invariant.
 
-The generated Python lexer and parser are committed under `fusion_flow_next/generated/` and wired into the handwritten Python Core IR visitor. Syntax failures return one-based, half-open source spans without partial Core IR. Repeated equivalent constant declarations reuse one identity, conflicting declarations fail, and every named or quoted constant must be declared with at least one concept before use. Numeric and Boolean literals use the KEDispatcher builtin symbols and concepts `ComplexNumber` and `Bool`, while quoted identifiers remain distinct from those literals. Standalone calls require a catalog output concept of `Bool` and become an ordinary `Assertion` against `True`; explicit `== True` remains equivalent. Formula equality becomes an `Assertion`, `!=` intentionally remains `NOT` over an `Assertion`, and ordered comparisons become the corresponding KEDispatcher `comparison_*_op` application asserted equal to `True`. `WorkflowFile` retains global declarations and multiple workflow blocks, while `IfTerm` retains conditional terms without approximation. Shorthand eligibility uses the catalog return concept; operator registration and arity, other catalog type compatibility, workflow legality, and backend support remain static-checker responsibilities.
+The generated Python lexer and parser are committed under `fusion_flow/generated/` and wired into the handwritten Python Core IR visitor. Syntax failures return one-based, half-open source spans without partial Core IR. Repeated equivalent constant declarations reuse one identity, conflicting declarations fail, and every named or quoted constant must be declared with at least one concept before use. Numeric and Boolean literals use the KEDispatcher builtin symbols and concepts `ComplexNumber` and `Bool`, while quoted identifiers remain distinct from those literals. Standalone calls require a catalog output concept of `Bool` and become an ordinary `Assertion` against `True`; explicit `== True` remains equivalent. Formula equality becomes an `Assertion`, `!=` intentionally remains `NOT` over an `Assertion`, and ordered comparisons become the corresponding KEDispatcher `comparison_*_op` application asserted equal to `True`. `WorkflowFile` retains global declarations and multiple workflow blocks, while `IfTerm` retains conditional terms without approximation. Shorthand eligibility uses the catalog return concept; operator registration and arity, other catalog type compatibility, workflow legality, and backend support remain static-checker responsibilities.
 
 The Core IR contains catalog-owned `Concept` and `Operator` references, typed constants, recursive compound and conditional terms, ordered list terms, equality assertions, and `NOT`/`AND`/`OR` formulas. `WorkflowFile` stores declarations and ordered workflow blocks; each `Workflow` stores one syntax-level block name with its assertions. The workflow does not redeclare concepts or operators.
 
@@ -187,7 +187,7 @@ boundaries.
 
 This remains a workspace-local package rather than a wheel dependency. The
 execution subpackage is a compatibility boundary, not the G4 runtime. Run all
-tests from this directory so `fusion_flow_next` is on the runtime import path:
+tests from this directory so `fusion_flow` is on the runtime import path:
 
 ```powershell
 uv run python -m pytest -q
@@ -211,7 +211,7 @@ pinned executable boundary and bounded, whole-process-tree AnyIO subprocess
 lifecycle described above. Agent Steps continue through the injected contextual
 completion boundary. Human Steps continue through contextual
 preparation/request callbacks plus the generic checkpoint API; they do not
-depend on `fusion_flow_next.execution`.
+depend on `fusion_flow.execution`.
 
 `AgentConfig.system_prompt` is the only Python field for an Agent's stable
 system prompt. `AgentInvocation.prompt` remains the per-call prompt. The removed
@@ -228,20 +228,20 @@ are no longer shipped.
 Run ANTLR 4.13.2 from this directory:
 
 ```powershell
-java -jar antlr-4.13.2-complete.jar -Dlanguage=Python3 -no-listener -Xexact-output-dir -o fusion_flow_next/generated grammar/FusionFlow.g4
+java -jar antlr-4.13.2-complete.jar -Dlanguage=Python3 -no-listener -Xexact-output-dir -o fusion_flow/generated grammar/FusionFlow.g4
 ```
 
 Commit only `FusionFlowLexer.py` and `FusionFlowParser.py`; the generated `.interp` and `.tokens` metadata is not needed at runtime. CI pins the tool JAR by SHA-256, regenerates both Python files, and rejects drift. Grammar tests verify the committed runtime file set and importability. Ruff, ty, and Git whitespace exclusions apply only to the generated directory.
 
 ## Suggested work split
 
-1. **Core IR contract** is defined in `fusion_flow_next/core_ir.py`; keep it limited to the reviewed workflow subset.
+1. **Core IR contract** is defined in `fusion_flow/core_ir.py`; keep it limited to the reviewed workflow subset.
 2. **Language contract** owns `grammar/FusionFlow.g4`; ordinary operator registration, arity, and types stay checker/catalog-owned.
-3. **Parser** owns `fusion_flow_next/generated/` and `fusion_flow_next/parser.py`: report syntax errors and produce lossless Core IR for later stages.
+3. **Parser** owns `fusion_flow/generated/` and `fusion_flow/parser.py`: report syntax errors and produce lossless Core IR for later stages.
 4. **Static checker** owns the Python checker: validate workflow legality and backend-independent constraints.
-5. **Compiler** owns `fusion_flow_next/compiler.py`: lower checked Workflow Core IR through backend-specific hooks without selecting a target in the shared layer.
-6. **Workflow Graph backend** owns `fusion_flow_next/graph_compiler.py`: compile real Core IR through the shared hooks into the generic `psi_agent.workflow_graph` model while retaining residual assertions.
-7. **Planning warnings** owns `fusion_flow_next/planning.py`: after Haitun lists planned steps and before it authors the DSL, check their declared syntax mappings and warn about missing or unavailable names. Each item is already at `Step` granularity; this phase does not introduce a higher-level requirement model and cannot detect steps that Haitun failed to list.
+5. **Compiler** owns `fusion_flow/compiler.py`: lower checked Workflow Core IR through backend-specific hooks without selecting a target in the shared layer.
+6. **Workflow Graph backend** owns `fusion_flow/graph_compiler.py`: compile real Core IR through the shared hooks into the generic `psi_agent.workflow_graph` model while retaining residual assertions.
+7. **Planning warnings** owns `fusion_flow/planning.py`: after Haitun lists planned steps and before it authors the DSL, check their declared syntax mappings and warn about missing or unavailable names. Each item is already at `Step` granularity; this phase does not introduce a higher-level requirement model and cannot detect steps that Haitun failed to list.
 8. **Haitun integration** keeps the prompt, `run_flow`, and `flow_manage` entry points aligned with the G4 runtime.
 9. **Compatibility** preserves the external `flow` Skill identity and natural-language UX while failing closed on legacy `.flow.ts` input.
 

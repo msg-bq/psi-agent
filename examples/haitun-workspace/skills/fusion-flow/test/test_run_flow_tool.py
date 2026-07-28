@@ -30,8 +30,8 @@ def _load_module(name: str, path: Path) -> Any:
     return cast(Any, module)
 
 
-run_flow_tool = _load_module("fusion_flow_next_run_flow_tool", _RUNNER_PATH)
-clarify_tool = _load_module("fusion_flow_next_clarify_tool", _CLARIFY_PATH)
+run_flow_tool = _load_module("fusion_flow_run_flow_tool", _RUNNER_PATH)
+clarify_tool = _load_module("fusion_flow_clarify_tool", _CLARIFY_PATH)
 
 
 class _FakeSendStream:
