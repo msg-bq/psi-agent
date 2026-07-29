@@ -81,11 +81,13 @@ def test_saved_workflow_has_public_distribution_assets() -> None:
         assert (_WORKSPACE_DIR / "skills" / skill_name / "SKILL.md").is_file()
 
 
-def test_performance_guidance_has_safe_windows_runner_guardrails() -> None:
+def test_performance_guidance_has_deterministic_program_guardrails() -> None:
     instruction = (_WORKFLOW_DIR / "instructions" / "prove-performance.md").read_text(encoding="utf-8")
 
-    assert "PowerShell" in instruction
-    assert r".venv\Scripts\python.exe" in instruction
+    assert "program.py" in instruction
+    assert "当前 Python 解释器" in instruction
+    assert "slot_n/<folder>" in instruction
+    assert "不得覆盖已有结果" in instruction
     assert "UTF-8 无 BOM" in instruction
     assert "不得安装依赖" in instruction
     assert "不得读取或回显 `LLM_PROOF_API_KEY`" in instruction
@@ -117,11 +119,23 @@ def test_program_main_dispatches_from_materialized_instruction_inputs(
         calls.append("merge")
         return {"handler": "merge"}
 
+    def performance(inputs: dict[str, object], workspace: Path) -> dict[str, object]:
+        del inputs, workspace
+        calls.append("performance")
+        return {"handler": "performance"}
+
     main.__globals__["prepare"] = prepare
     main.__globals__["merge"] = merge
+    main.__globals__["performance"] = performance
     cases = (
         ({"result_directory_name": "results"}, "prepare"),
         ({"tmp_candidates_directory_initial": "results/tmp/candidates"}, "merge"),
+        (
+            {
+                "tmp_candidates_directory_after_recommendations": ("results/tmp/candidates"),
+            },
+            "performance",
+        ),
     )
     for inputs, expected in cases:
         stdout = io.StringIO()
@@ -142,7 +156,7 @@ def test_program_main_dispatches_from_materialized_instruction_inputs(
         assert main() == 0
         assert json.loads(stdout.getvalue()) == {"handler": expected}
 
-    assert calls == ["prepare", "merge"]
+    assert calls == ["prepare", "merge", "performance"]
 
 
 def test_prepare_program_initializes_all_declared_artifacts(
@@ -262,3 +276,145 @@ def test_merge_program_rejects_conflicting_slot_directory(tmp_path: Path) -> Non
 
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
         merge(inputs, tmp_path)
+
+
+def _write_candidate(
+    workspace: Path,
+    relative_path: str,
+    *,
+    candidate_id: str,
+    name: str,
+    formula: str,
+) -> Path:
+    candidate = workspace / "results" / "tmp" / "candidates" / relative_path
+    candidate.mkdir(parents=True)
+    (candidate / "CANDIDATE_PAYLOAD.json").write_text(
+        json.dumps(
+            {
+                "candidate_id": candidate_id,
+                "candidate_name": name,
+                "main_photocatalyst": formula,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return candidate
+
+
+def test_performance_program_proves_and_moves_by_directory_identity(
+    tmp_path: Path,
+) -> None:
+    performance = _load_program()["performance"]
+    retained = _write_candidate(
+        tmp_path,
+        "slot_1/actual-retained-folder",
+        candidate_id="duplicate-id",
+        name="Retained catalyst",
+        formula="RetainedFormula",
+    )
+    rejected = _write_candidate(
+        tmp_path,
+        "slot_2/actual-rejected-folder",
+        candidate_id="duplicate-id",
+        name="Rejected catalyst",
+        formula="RejectedFormula",
+    )
+    proof_inputs: list[dict[str, object]] = []
+
+    def run_proof(input_json: Path, output: Path, audit: Path) -> None:
+        payload = json.loads(input_json.read_text(encoding="utf-8"))
+        proof_inputs.append(payload)
+        record = payload["retained_records"][0]
+        rejected_candidate = record["catalyst_name"] == "Rejected catalyst"
+        output.write_text(
+            f"# Proof\n\n### 1. {record['catalyst_name']}\n\nEvidence.\n",
+            encoding="utf-8",
+        )
+        audit.write_text(
+            json.dumps(
+                {
+                    "total": 1,
+                    "no_catalytic_performance": {
+                        "no_catalytic_performance_count": (1 if rejected_candidate else 0),
+                        "no_catalytic_performance_indices": ([1] if rejected_candidate else []),
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    outputs = performance(
+        {
+            "tmp_candidates_directory_after_recommendations": ("results/tmp/candidates"),
+            "candidate_catalyst_pool_initial": "results/pools/candidates",
+            "fail_candidates_directory_initial": "results/fail/candidates",
+        },
+        tmp_path,
+        run_proof=run_proof,
+    )
+
+    retained_target = tmp_path / "results" / "pools" / "candidates" / "slot_1" / "actual-retained-folder"
+    rejected_target = tmp_path / "results" / "fail" / "candidates" / "slot_2" / "actual-rejected-folder"
+    assert not retained.exists()
+    assert not rejected.exists()
+    for target in (retained_target, rejected_target):
+        assert (target / "CATALYTIC_PERFORMANCE_PROOF.md").is_file()
+        assert (target / "CATALYTIC_PERFORMANCE_PROOF.md.audit.json").is_file()
+    assert proof_inputs == [
+        {
+            "retained_records": [
+                {
+                    "catalyst_name": "Retained catalyst",
+                    "recommended_formula": "RetainedFormula",
+                }
+            ]
+        },
+        {
+            "retained_records": [
+                {
+                    "catalyst_name": "Rejected catalyst",
+                    "recommended_formula": "RejectedFormula",
+                }
+            ]
+        },
+    ]
+    assert outputs == {
+        "candidate_catalyst_pool_after_performance_proof": ("results/pools/candidates"),
+        "fail_candidates_directory_after_performance_proof": ("results/fail/candidates"),
+        "performance_proven_catalysts": ["results/pools/candidates/slot_1/actual-retained-folder"],
+        "performance_rejected_catalysts": ["results/fail/candidates/slot_2/actual-rejected-folder"],
+        "tmp_candidates_directory": "results/tmp/candidates",
+    }
+
+
+def test_performance_program_refuses_existing_destination_before_api_call(
+    tmp_path: Path,
+) -> None:
+    performance = _load_program()["performance"]
+    _write_candidate(
+        tmp_path,
+        "slot_1/candidate",
+        candidate_id="candidate",
+        name="Candidate",
+        formula="Formula",
+    )
+    (tmp_path / "results" / "pools" / "candidates" / "slot_1" / "candidate").mkdir(parents=True)
+    calls = 0
+
+    def run_proof(input_json: Path, output: Path, audit: Path) -> None:
+        del input_json, output, audit
+        nonlocal calls
+        calls += 1
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        performance(
+            {
+                "tmp_candidates_directory_after_recommendations": ("results/tmp/candidates"),
+                "candidate_catalyst_pool_initial": "results/pools/candidates",
+                "fail_candidates_directory_initial": "results/fail/candidates",
+            },
+            tmp_path,
+            run_proof=run_proof,
+        )
+
+    assert calls == 0

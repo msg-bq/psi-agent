@@ -25,5 +25,10 @@ copying values; it is not loaded automatically by `/workflow:coscientist-ows`.
 - Network access, `LLM_PROOF_API_KEY`, and an explicit `LLM_PROOF_BASE_URL` for
   the catalytic-performance proof step. `LLM_PROOF_MODEL` is optional.
 
+The catalytic-performance Step uses the bundled deterministic Program adapter:
+it invokes the Stage08 runner once per candidate with the same Python
+interpreter as psi-agent, writes proof/audit files beside that candidate, and
+moves the actual `slot_n/<folder>` directory without trusting `candidate_id`.
+
 API keys, model files, runtime histories, caches, and generated results are not
 included in the CI artifact.

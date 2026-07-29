@@ -111,12 +111,12 @@ const recommender_2_agent:Agent,Executor;
 const recommender_3_agent:Agent,Executor;
 const recommender_4_agent:Agent,Executor;
 const crystal_generation_evaluation_agent:Agent,Executor;
-const performance_prover_agent:Agent,Executor;
 const synthesis_route_designer_agent:Agent,Executor;
 const synthesis_safety_feasibility_judge_agent:Agent,Executor;
 const main_coordinator_agent:Agent,Executor;
 const prepare_workflow_program:Program,Executor;
 const merge_recommendation_outputs_program:Program,Executor;
+const performance_proof_program:Program,Executor;
 
 workflow coscientist_ows {
     -- DATA FLOW
@@ -363,7 +363,7 @@ workflow coscientist_ows {
     step_executor(recommend_3_step) == recommender_3_agent;
     step_executor(recommend_4_step) == recommender_4_agent;
     step_executor(merge_recommendation_outputs_step) == merge_recommendation_outputs_program;
-    step_executor(performance_proof_step) == performance_prover_agent;
+    step_executor(performance_proof_step) == performance_proof_program;
     step_executor(mattergen_step) == crystal_generation_evaluation_agent;
     step_executor(mattersim_step) == crystal_generation_evaluation_agent;
     step_executor(synthesis_route_design_step) == synthesis_route_designer_agent;
@@ -377,6 +377,9 @@ workflow coscientist_ows {
     ) == "./skills/coscientist-ows-entry/scripts/program.py";
     program_path(
         merge_recommendation_outputs_program
+    ) == "./skills/coscientist-ows-entry/scripts/program.py";
+    program_path(
+        performance_proof_program
     ) == "./skills/coscientist-ows-entry/scripts/program.py";
 
     -- STEP CONFIGURATION

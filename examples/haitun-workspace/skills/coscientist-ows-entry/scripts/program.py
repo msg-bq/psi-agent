@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -157,6 +159,149 @@ def merge(inputs: dict[str, object], workspace: Path) -> dict[str, object]:
     }
 
 
+def _run_proof(input_json: Path, output: Path, audit: Path) -> None:
+    runner = (
+        Path(__file__).resolve().parents[3]
+        / "skills"
+        / "stage08-catalytic-performance-prover"
+        / "LLM_proof"
+        / "run_llm_proof.py"
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(runner),
+            "--input-json",
+            str(input_json),
+            "--output",
+            str(output),
+            "--audit-json",
+            str(audit),
+            "--concurrency",
+            "1",
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if completed.returncode:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(
+            f"catalytic performance proof failed with exit code {completed.returncode}: {detail[-4000:]}"
+        )
+
+
+def performance(
+    inputs: dict[str, object],
+    workspace: Path,
+    *,
+    run_proof: Callable[[Path, Path, Path], None] = _run_proof,
+) -> dict[str, object]:
+    pending_root = _workspace_path(
+        workspace,
+        inputs.get("tmp_candidates_directory_after_recommendations"),
+        label="tmp_candidates_directory_after_recommendations",
+    )
+    pool_root = _workspace_path(
+        workspace,
+        inputs.get("candidate_catalyst_pool_initial"),
+        label="candidate_catalyst_pool_initial",
+    )
+    fail_root = _workspace_path(
+        workspace,
+        inputs.get("fail_candidates_directory_initial"),
+        label="fail_candidates_directory_initial",
+    )
+    if not pending_root.is_dir():
+        raise FileNotFoundError(f"candidate directory does not exist: {pending_root}")
+    pool_root.mkdir(parents=True, exist_ok=True)
+    fail_root.mkdir(parents=True, exist_ok=True)
+
+    candidates: list[tuple[Path, Path, str, str]] = []
+    for payload_path in sorted(pending_root.glob("slot_*/*/CANDIDATE_PAYLOAD.json")):
+        candidate = payload_path.parent
+        relative = candidate.relative_to(pending_root)
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"candidate payload must be an object: {payload_path}")
+        name = payload.get("candidate_name")
+        formula = payload.get("main_photocatalyst")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"candidate_name must be non-empty: {payload_path}")
+        if not isinstance(formula, str) or not formula.strip():
+            raise ValueError(f"main_photocatalyst must be non-empty: {payload_path}")
+        for root in (pool_root, fail_root):
+            target = root / relative
+            if target.exists():
+                raise FileExistsError(f"refusing to overwrite candidate: {target}")
+        candidates.append((candidate, relative, name.strip(), formula.strip()))
+
+    movements: list[tuple[Path, Path, bool]] = []
+    with tempfile.TemporaryDirectory(prefix=".coscientist-stage08-", dir=workspace) as temporary:
+        temporary_root = Path(temporary)
+        for index, (candidate, relative, name, formula) in enumerate(
+            candidates,
+            start=1,
+        ):
+            input_json = temporary_root / f"candidate-{index}.json"
+            input_json.write_text(
+                json.dumps(
+                    {
+                        "retained_records": [
+                            {
+                                "catalyst_name": name,
+                                "recommended_formula": formula,
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            proof = candidate / "CATALYTIC_PERFORMANCE_PROOF.md"
+            audit = candidate / "CATALYTIC_PERFORMANCE_PROOF.md.audit.json"
+            run_proof(input_json, proof, audit)
+            proof_text = proof.read_text(encoding="utf-8")
+            audit_payload = json.loads(audit.read_text(encoding="utf-8"))
+            if proof_text.count("\n### ") != 1 or not isinstance(audit_payload, dict):
+                raise ValueError(f"invalid proof output for candidate: {candidate}")
+            judgement = audit_payload.get("no_catalytic_performance")
+            total = audit_payload.get("total")
+            if not isinstance(judgement, dict) or total != 1:
+                raise ValueError(f"invalid proof audit for candidate: {candidate}")
+            count = judgement.get("no_catalytic_performance_count")
+            indices = judgement.get("no_catalytic_performance_indices")
+            if (count, indices) not in ((0, []), (1, [1])):
+                raise ValueError(f"invalid proof judgement for candidate: {candidate}")
+            rejected = count == 1
+            movements.append((candidate, (fail_root if rejected else pool_root) / relative, rejected))
+
+    proven: list[str] = []
+    rejected: list[str] = []
+    for source, target, is_rejected in movements:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(target))
+        (rejected if is_rejected else proven).append(_relative(workspace, target))
+    return {
+        "tmp_candidates_directory": _relative(workspace, pending_root),
+        "candidate_catalyst_pool_after_performance_proof": _relative(
+            workspace,
+            pool_root,
+        ),
+        "fail_candidates_directory_after_performance_proof": _relative(
+            workspace,
+            fail_root,
+        ),
+        "performance_proven_catalysts": proven,
+        "performance_rejected_catalysts": rejected,
+    }
+
+
 def main() -> int:
     payload = json.load(sys.stdin)
     if not isinstance(payload, dict):
@@ -168,12 +313,18 @@ def main() -> int:
     if not isinstance(instruction, str) or not instruction.strip():
         raise ValueError("Program instruction must be non-empty text")
     workspace = Path(__file__).resolve().parents[3]
-    is_prepare = "result_directory_name" in inputs
-    is_merge = "tmp_candidates_directory_initial" in inputs
-    if is_prepare == is_merge:
+    operations = [
+        handler
+        for sentinel, handler in (
+            ("result_directory_name", prepare),
+            ("tmp_candidates_directory_initial", merge),
+            ("tmp_candidates_directory_after_recommendations", performance),
+        )
+        if sentinel in inputs
+    ]
+    if len(operations) != 1:
         raise ValueError("Program inputs do not identify exactly one supported operation")
-    handler = prepare if is_prepare else merge
-    outputs = handler(cast(dict[str, object], inputs), workspace)
+    outputs = operations[0](cast(dict[str, object], inputs), workspace)
     json.dump(outputs, sys.stdout, ensure_ascii=False, sort_keys=True)
     sys.stdout.write("\n")
     return 0
