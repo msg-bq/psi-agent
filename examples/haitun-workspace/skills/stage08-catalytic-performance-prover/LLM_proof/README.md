@@ -14,19 +14,32 @@ is appended to the model request.
 
 ## Environment
 
+POSIX:
+
 ```bash
 export LLM_PROOF_API_KEY="..."
+export LLM_PROOF_BASE_URL="https://your-provider.example/v1"
 ```
 
-Run the command from the repository's active Python environment, or another
-environment with the project dependencies installed.
+Windows PowerShell:
+
+```powershell
+$env:LLM_PROOF_API_KEY = "..."
+$env:LLM_PROOF_BASE_URL = "https://your-provider.example/v1"
+```
+
+Use the repository's existing active Python environment. On Windows, replace
+the leading `python` in the commands below with
+`& .\.venv\Scripts\python.exe`; do not use Bash or the `py` launcher.
+Do not install dependencies during workflow execution.
+Do not read, print, or log `LLM_PROOF_API_KEY`; provide it only through the
+current shell environment.
 
 The default model is `gpt-5.5`. Set `LLM_PROOF_MODEL` or pass `--model` only
 when a different model is needed.
 
-The default base URL is `https://api.chatanywhere.tech/v1`. Set
-`LLM_PROOF_BASE_URL` or pass `--base-url` only when a different endpoint is
-needed.
+There is no default base URL. Set `LLM_PROOF_BASE_URL` or pass `--base-url`
+explicitly for every provider.
 
 ## Dry Run
 

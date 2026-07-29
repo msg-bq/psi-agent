@@ -36,6 +36,20 @@ def test_proof_runner_does_not_send_openai_key_to_default_provider(
         )
 
 
+def test_proof_runner_requires_explicit_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    monkeypatch.setenv("LLM_PROOF_API_KEY", "test-key")
+    monkeypatch.delenv("LLM_PROOF_BASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="LLM_PROOF_BASE_URL"):
+        runner.api_settings(
+            argparse.Namespace(api_key=None, model=None, base_url=None),
+            require_api_key=True,
+        )
+
+
 class _FakeResponse:
     status = 200
 

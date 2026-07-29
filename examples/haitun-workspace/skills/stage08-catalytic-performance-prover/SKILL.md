@@ -28,15 +28,29 @@ on a script default.
 
 ## Command
 
-Use the repository's active Python environment (or another environment with the
-project dependencies installed), provide the API key only through the current
-shell environment or `--api-key`, and run:
+Use the repository's existing active Python environment. Do not install dependencies
+during workflow execution. Do not read, print, or log `LLM_PROOF_API_KEY`;
+provide it only through the current shell environment.
+
+On POSIX:
 
 ```bash
 export LLM_PROOF_API_KEY="..."
+export LLM_PROOF_BASE_URL="https://your-provider.example/v1"
 python skills/stage08-catalytic-performance-prover/LLM_proof/run_llm_proof.py \
   --input-json <output_root>/08-round-parallel-synthesis-advisor/rounds/<round_id>/ROUND_PARALLEL_SYNTHESIS_INDEX.json \
   --output <output_root>/10-catalytic-performance-prover/rounds/<round_id>/CATALYTIC_PERFORMANCE_PROOF.md \
+  --concurrency 20
+```
+
+On Windows, use PowerShell rather than Bash or the `py` launcher:
+
+```powershell
+$env:LLM_PROOF_API_KEY = "..."
+$env:LLM_PROOF_BASE_URL = "https://your-provider.example/v1"
+& .\.venv\Scripts\python.exe skills/stage08-catalytic-performance-prover/LLM_proof/run_llm_proof.py `
+  --input-json <output_root>/08-round-parallel-synthesis-advisor/rounds/<round_id>/ROUND_PARALLEL_SYNTHESIS_INDEX.json `
+  --output <output_root>/10-catalytic-performance-prover/rounds/<round_id>/CATALYTIC_PERFORMANCE_PROOF.md `
   --concurrency 20
 ```
 
@@ -44,8 +58,8 @@ If the user provides an output path, pass it with `--output`.
 
 ## Script Behavior
 
-The script uses `gpt-5.5` by default and the fixed default base URL
-`https://api.chatanywhere.tech/v1`.
+The script uses `gpt-5.5` by default. It has no default API endpoint:
+`LLM_PROOF_BASE_URL` or `--base-url` is required.
 
 The script sends one API request per catalyst. Each request contains only the
 single catalyst name/formula inserted into the script's prompt template.

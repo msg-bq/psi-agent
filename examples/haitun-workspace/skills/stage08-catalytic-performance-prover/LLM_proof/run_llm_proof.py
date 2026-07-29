@@ -17,7 +17,6 @@ import aiohttp
 
 DEFAULT_OUTPUT = "ows630-proof-llm.md"
 DEFAULT_MODEL = "gpt-5.5"
-DEFAULT_BASE_URL = "https://api.chatanywhere.tech/v1"
 RETRYABLE_ERROR_NAMES = {
     "APIConnectionError",
     "APIError",
@@ -281,7 +280,9 @@ def api_settings(args: argparse.Namespace, require_api_key: bool) -> tuple[str |
     if not api_key and require_api_key:
         raise RuntimeError("Missing API key. Set LLM_PROOF_API_KEY or pass --api-key.")
     model = args.model or os.environ.get("LLM_PROOF_MODEL") or DEFAULT_MODEL
-    base_url = args.base_url or os.environ.get("LLM_PROOF_BASE_URL") or DEFAULT_BASE_URL
+    base_url = args.base_url or os.environ.get("LLM_PROOF_BASE_URL")
+    if not base_url:
+        raise RuntimeError("Missing base URL. Set LLM_PROOF_BASE_URL or pass --base-url.")
     return api_key, model, base_url
 
 
@@ -516,7 +517,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audit-json", default=None, help="Optional audit JSON path. Defaults to <output>.audit.json.")
     parser.add_argument("--checkpoint", default=None, help="Optional JSONL checkpoint path for completed calls.")
     parser.add_argument("--api-key", default=None, help="API key. Prefer LLM_PROOF_API_KEY.")
-    parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL.")
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="OpenAI-compatible base URL. Required unless LLM_PROOF_BASE_URL is set.",
+    )
     parser.add_argument("--model", default=None, help=f"Model name. Defaults to {DEFAULT_MODEL}.")
     parser.add_argument("--concurrency", type=int, default=20, help="Maximum concurrent API calls.")
     parser.add_argument("--request-retries", type=int, default=4, help="Retry count for retryable API request errors.")

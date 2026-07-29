@@ -81,6 +81,25 @@ def test_saved_workflow_has_public_distribution_assets() -> None:
         assert (_WORKSPACE_DIR / "skills" / skill_name / "SKILL.md").is_file()
 
 
+def test_performance_guidance_has_safe_windows_runner_guardrails() -> None:
+    instruction = (_WORKFLOW_DIR / "instructions" / "prove-performance.md").read_text(encoding="utf-8")
+
+    assert "PowerShell" in instruction
+    assert r".venv\Scripts\python.exe" in instruction
+    assert "UTF-8 无 BOM" in instruction
+    assert "不得安装依赖" in instruction
+    assert "不得读取或回显 `LLM_PROOF_API_KEY`" in instruction
+    for path in (
+        _WORKSPACE_DIR / "skills" / "stage08-catalytic-performance-prover" / "SKILL.md",
+        _WORKSPACE_DIR / "skills" / "stage08-catalytic-performance-prover" / "LLM_proof" / "README.md",
+    ):
+        guidance = path.read_text(encoding="utf-8")
+        assert "PowerShell" in guidance
+        assert r".venv\Scripts\python.exe" in guidance
+        assert "Do not install dependencies" in guidance
+        assert "Do not read, print, or log `LLM_PROOF_API_KEY`" in guidance
+
+
 def test_program_main_dispatches_from_materialized_instruction_inputs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

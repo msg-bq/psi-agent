@@ -22,8 +22,8 @@ copying values; it is not loaded automatically by `/workflow:coscientist-ows`.
 - `data/laboratory-limitations/laboratory_limitations_for_agent.json`.
 - The complete `data/chem-skills/` directory used by route-design agents.
 - A working MatterGen/MatterSim installation, model files, and CUDA GPU.
-- Network access and `LLM_PROOF_API_KEY` for the catalytic-performance proof
-  step. Optional overrides are `LLM_PROOF_BASE_URL` and `LLM_PROOF_MODEL`.
+- Network access, `LLM_PROOF_API_KEY`, and an explicit `LLM_PROOF_BASE_URL` for
+  the catalytic-performance proof step. `LLM_PROOF_MODEL` is optional.
 
 API keys, model files, runtime histories, caches, and generated results are not
 included in the CI artifact.
