@@ -1206,7 +1206,15 @@ async def _complete_agent_step(
         "with no surrounding prose or Markdown."
     )
     response = await _complete_step_agent(agent, conversation, message)
-    return _parse_mapping(response, label=f"response for step {context.step_id!r}")
+    try:
+        return _parse_mapping(
+            response,
+            label=f"response for step {context.step_id!r}",
+        )
+    except ValueError:
+        if len(context.output_ids) != 1:
+            raise
+        return {context.output_ids[0]: response}
 
 
 async def _prepare_human_step(

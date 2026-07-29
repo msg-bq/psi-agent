@@ -90,6 +90,12 @@ TypeScript 对同一份省略字段的配置按调用位置解析：普通 `sess
 `AgentConfig.prompt` 不保留兼容入口，避免把两层 prompt 再次混淆。配置 payload
 字段随之改名，旧运行缓存可能因 hash 变化而重新执行。
 
+**为什么单输出 Agent Step 接受非 JSON 最终文本？**
+Agent 仍会被要求返回以 output ID 为 key 的 JSON object，但复杂调研等任务可能最终
+返回完整 Markdown。只有 Step 恰好声明一个 output 时，workspace adapter 才把该
+原始文本直接绑定到唯一 Artifact；多 output Step 仍严格要求 JSON object，避免猜测
+字段与静默错配。
+
 **为什么不能创建 `run_id="last"`？**
 `resume_from_run_id="last"` 与 TypeScript 的 `--resume=last` 一样是“选择字典序最新目录”的哨兵。为避免一个真实 run 永远无法按同名恢复，Python 明确保留这个名称并在创建目录前拒绝。
 

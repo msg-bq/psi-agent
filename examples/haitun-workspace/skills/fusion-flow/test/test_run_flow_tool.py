@@ -255,6 +255,56 @@ def test_run_flow_exposes_start_and_human_resume_tools() -> None:
 
 
 @pytest.mark.anyio
+async def test_agent_step_accepts_plain_text_only_for_single_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def create_step_agent(
+        ai_socket: str,
+        tool_registry: ToolRegistry,
+    ) -> tuple[object, object]:
+        del ai_socket, tool_registry
+        return object(), object()
+
+    async def complete_step_agent(
+        agent: object,
+        conversation: object,
+        message: str,
+    ) -> str:
+        del agent, conversation, message
+        return "# Research report"
+
+    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(
+        run_flow_tool,
+        "_complete_step_agent",
+        complete_step_agent,
+    )
+    context = SimpleNamespace(
+        step_id="research",
+        executor_id="researcher",
+        output_ids=("report",),
+        dispatch=SimpleNamespace(resource_lease=SimpleNamespace(grants=())),
+    )
+
+    result = await run_flow_tool._complete_agent_step(
+        "research",
+        context,
+        ai_socket="test",
+        tool_registry=ToolRegistry(),
+    )
+
+    assert result == {"report": "# Research report"}
+    context.output_ids = ("report", "sources")
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        await run_flow_tool._complete_agent_step(
+            "research",
+            context,
+            ai_socket="test",
+            tool_registry=ToolRegistry(),
+        )
+
+
+@pytest.mark.anyio
 async def test_program_runner_executes_exact_argv_and_json_stdin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
