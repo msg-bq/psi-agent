@@ -432,3 +432,18 @@ uv build                         # 构建
 - [x] Session history 持久化（已完成）
 - [x] Context compaction — 超 token 阈值时 AI 层发信号，Session 调用 system.py compact_history 压缩
 - [ ] Channel 广播/多客户端队列
+
+## Generic Event Daemon
+
+`src/psi_agent/eventd/` 是与 AI / Session / Channel 生命周期解耦的通用事件组件。
+`psi-agent eventd` 只负责五字段 CloudEvent、URL-only JSON Hook、SQLite Inbox /
+Delivery 和 `claim/renew/ack/nack` 租约 API；`psi-agent event-consumer` 把事件转换为
+既有 Session `/events` 信封。**刻意为之**：Event Daemon 不导入 Provider SDK，也不
+解释专有 WebSocket、验签、详情补全或业务字段。Provider Adapter 作为独立客户端
+提交 CloudEvent，避免平台 ad-hoc 泄漏进通用核心。
+
+Event Daemon 不加入 `psi-agent run` 的共享 TaskGroup，否则任一组件失败会把可靠
+接收一起关闭。SQLite 位于 `resolve_appdata_root()/eventd/`，只有 Daemon 写库。
+Session 侧统一使用 `source=eventd`，并原样保留 CloudEvent `type` 作为业务事件名；
+不得从 CloudEvent `source` 猜 Provider 或自动补事件名前缀。完整协议见
+`docs/eventd.md`。

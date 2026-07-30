@@ -19,10 +19,11 @@ SCHEMA_VERSION = 1
 SOURCE_FEISHU = "feishu"
 SOURCE_TELEGRAM = "telegram"
 SOURCE_GATEWAY = "gateway"
+SOURCE_EVENTD = "eventd"
 SOURCE_TEST = "test"
 
 # Soft allow-list for ``source`` (not the business event catalog).
-KNOWN_SOURCES = frozenset({SOURCE_FEISHU, SOURCE_TELEGRAM, SOURCE_GATEWAY, SOURCE_TEST})
+KNOWN_SOURCES = frozenset({SOURCE_FEISHU, SOURCE_TELEGRAM, SOURCE_GATEWAY, SOURCE_EVENTD, SOURCE_TEST})
 
 # Convenience aliases for tests / docs (not an admission gate).
 EVENT_FEISHU_CHAT_MEMBER_ADDED = "feishu.chat.member_added"

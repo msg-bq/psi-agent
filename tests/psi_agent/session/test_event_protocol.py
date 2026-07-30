@@ -52,6 +52,19 @@ def test_parse_unknown_event_accepted_without_session_catalog() -> None:
     assert env.event == "feishu.custom.from_channel_events"
 
 
+def test_parse_generic_eventd_source() -> None:
+    env = parse_event_envelope(
+        {
+            "schema_version": 1,
+            "source": "eventd",
+            "event": "order.paid",
+            "payload": {"order_id": "1001"},
+        }
+    )
+    assert env.source == "eventd"
+    assert env.event == "order.paid"
+
+
 def test_parse_payload_must_be_object() -> None:
     with pytest.raises(EventProtocolError, match="payload must be a JSON object"):
         parse_event_envelope(
@@ -232,6 +245,203 @@ async def test_dispatch_fire_tool(tmp_path: Path) -> None:
     async with agent._lock:
         fired2 = await registry.dispatch(env, agent)
     assert fired2 == []
+
+
+@pytest.mark.anyio
+async def test_dispatch_reports_tool_failure_and_retries_only_failed_trigger(tmp_path: Path) -> None:
+    trig_dir = tmp_path / "triggers" / "broken"
+    await anyio.Path(trig_dir).mkdir(parents=True)
+    await anyio.Path(trig_dir / "TRIGGER.md").write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            name: broken
+            event: {EVENT_FEISHU_CHAT_MEMBER_ADDED}
+            fire: tool
+            tool: missing_tool
+            tool_args:
+              text: hi
+            visibility: silent
+            ---
+            """
+        ),
+        encoding="utf-8",
+    )
+    registry = await TriggerRegistry.load(tmp_path / "triggers")
+    agent = SessionAgent(
+        ai_client=AiClient("http://nonexistent/v1"),
+        tool_registry=ToolRegistry(),
+        trigger_registry=registry,
+        workspace_path=tmp_path,
+    )
+    env = parse_event_envelope(
+        {
+            "source": "feishu",
+            "event": EVENT_FEISHU_CHAT_MEMBER_ADDED,
+            "payload": {},
+            "idempotency_key": "retry-me",
+        }
+    )
+    async with agent._lock:
+        first = await registry.dispatch_outcome(env, agent)
+        second = await registry.dispatch_outcome(env, agent)
+    assert first.fired == []
+    assert "broken" in first.failed
+    assert second.fired == []
+    assert "broken" in second.failed
+    assert not first.duplicate
+
+
+@pytest.mark.anyio
+async def test_unmatched_idempotent_event_is_not_remembered(tmp_path: Path) -> None:
+    registry = await TriggerRegistry.load(tmp_path / "triggers")
+    agent = SessionAgent(
+        ai_client=AiClient("http://nonexistent/v1"),
+        tool_registry=ToolRegistry(),
+        trigger_registry=registry,
+        workspace_path=tmp_path,
+    )
+    envelope = parse_event_envelope(
+        {
+            "source": "eventd",
+            "event": "order.unhandled",
+            "payload": {},
+            "idempotency_key": "unmatched-event",
+        }
+    )
+    first = await registry.dispatch_outcome(envelope, agent)
+    second = await registry.dispatch_outcome(envelope, agent)
+    assert not first.duplicate
+    assert not second.duplicate
+    assert first.fired == second.fired == []
+
+
+@pytest.mark.anyio
+async def test_trigger_idempotency_survives_session_restart(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def ping(text: str = "") -> str:
+        calls.append(text)
+        return "ok"
+
+    tools = ToolRegistry()
+    tools._files["ping.py"] = FileEntry(
+        file_hash="durable",
+        tools={"ping": ToolFunction.from_callable(ping)},
+        funcs={"ping": ping},
+        fresh=True,
+    )
+    trig_dir = tmp_path / "triggers" / "durable"
+    await anyio.Path(trig_dir).mkdir(parents=True)
+    await anyio.Path(trig_dir / "TRIGGER.md").write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            name: durable
+            event: {EVENT_FEISHU_CHAT_MEMBER_ADDED}
+            fire: tool
+            tool: ping
+            tool_args:
+              text: once
+            visibility: silent
+            ---
+            """
+        ),
+        encoding="utf-8",
+    )
+    ledger = tmp_path / "appdata" / "event_idempotency" / "session.jsonl"
+    env = parse_event_envelope(
+        {
+            "source": "feishu",
+            "event": EVENT_FEISHU_CHAT_MEMBER_ADDED,
+            "payload": {},
+            "idempotency_key": "durable-event",
+        }
+    )
+    first_registry = await TriggerRegistry.load(tmp_path / "triggers", idempotency_path=ledger)
+    first_agent = SessionAgent(
+        ai_client=AiClient("http://nonexistent/v1"),
+        tool_registry=tools,
+        trigger_registry=first_registry,
+        workspace_path=tmp_path,
+    )
+    first = await first_registry.dispatch_outcome(env, first_agent)
+    assert first.fired == ["durable"]
+
+    restarted_registry = await TriggerRegistry.load(tmp_path / "triggers", idempotency_path=ledger)
+    restarted_agent = SessionAgent(
+        ai_client=AiClient("http://nonexistent/v1"),
+        tool_registry=tools,
+        trigger_registry=restarted_registry,
+        workspace_path=tmp_path,
+    )
+    second = await restarted_registry.dispatch_outcome(env, restarted_agent)
+    assert second.duplicate
+    assert calls == ["once"]
+
+
+@pytest.mark.anyio
+async def test_run_once_cleanup_retry_does_not_repeat_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+    cleanup_calls = 0
+
+    async def ping() -> str:
+        nonlocal calls
+        calls += 1
+        return "ok"
+
+    async def cleanup(_trigger: object, _registry: object) -> None:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        if cleanup_calls == 1:
+            raise OSError("locked")
+
+    tools = ToolRegistry()
+    tools._files["ping.py"] = FileEntry(
+        file_hash="run-once",
+        tools={"ping": ToolFunction.from_callable(ping)},
+        funcs={"ping": ping},
+        fresh=True,
+    )
+    trig_dir = tmp_path / "triggers" / "once"
+    await anyio.Path(trig_dir).mkdir(parents=True)
+    await anyio.Path(trig_dir / "TRIGGER.md").write_text(
+        textwrap.dedent(
+            f"""\
+            ---
+            name: once
+            event: {EVENT_FEISHU_CHAT_MEMBER_ADDED}
+            fire: tool
+            tool: ping
+            run_once: true
+            visibility: silent
+            ---
+            """
+        ),
+        encoding="utf-8",
+    )
+    registry = await TriggerRegistry.load(tmp_path / "triggers")
+    agent = SessionAgent(
+        ai_client=AiClient("http://nonexistent/v1"),
+        tool_registry=tools,
+        trigger_registry=registry,
+        workspace_path=tmp_path,
+    )
+    envelope = parse_event_envelope(
+        {
+            "source": "feishu",
+            "event": EVENT_FEISHU_CHAT_MEMBER_ADDED,
+            "payload": {},
+            "idempotency_key": "once-event",
+        }
+    )
+    monkeypatch.setattr(TriggerRegistry, "_consume_run_once", cleanup)
+    first = await registry.dispatch_outcome(envelope, agent)
+    second = await registry.dispatch_outcome(envelope, agent)
+    assert "once" in first.failed
+    assert second.failed == {}
+    assert calls == 1
+    assert cleanup_calls == 2
 
 
 @pytest.mark.anyio

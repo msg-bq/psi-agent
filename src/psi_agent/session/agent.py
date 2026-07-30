@@ -11,6 +11,7 @@ import anyio
 from aiohttp import web
 from loguru import logger
 
+from psi_agent._appdata import resolve_appdata_root
 from psi_agent.session.ai_client import AiClient
 from psi_agent.session.channel_adapter import ChannelAdapter
 from psi_agent.session.conversation import Conversation
@@ -132,12 +133,13 @@ class SessionAgent:
         an enumerated whitelist) fires ``TASK.md`` files created later on.
         """
         agent_root = agent_path if agent_path is not None else workspace_path
+        resolved_appdata = appdata_root.strip() or await resolve_appdata_root()
 
         ai_client = AiClient(ai_socket)
         conversation = await Conversation.from_workspace(
             workspace_path,
             session_id,
-            appdata_root=appdata_root,
+            appdata_root=resolved_appdata,
         )
         tool_registry = await ToolRegistry.load(agent_root / "tools", conversation.session_id)
         schedule_registry = await ScheduleRegistry.load(
@@ -145,7 +147,10 @@ class SessionAgent:
             active_names=active_schedules,
             deactive_names=deactive_schedules,
         )
-        trigger_registry = await TriggerRegistry.load(agent_root / "triggers")
+        trigger_registry = await TriggerRegistry.load(
+            agent_root / "triggers",
+            idempotency_path=(Path(resolved_appdata) / "event_idempotency" / f"{conversation.session_id}.jsonl"),
+        )
         system_prompt = await SystemPrompt.from_workspace(agent_root, conversation.session_id)
 
         return cls(
@@ -241,15 +246,20 @@ class SessionAgent:
 
         async with self._lock:
             matched = self._trigger_registry.match(envelope)
-            fired = await self._trigger_registry.dispatch(envelope, self)
+            outcome = await self._trigger_registry.dispatch_outcome(envelope, self)
 
-        logger.info(f"POST /events ok event={envelope.event!r} matched={len(matched)} fired={fired!r}")
+        logger.info(
+            f"POST /events ok event={envelope.event!r} matched={len(matched)} "
+            f"fired={outcome.fired!r} failed={list(outcome.failed)!r} duplicate={outcome.duplicate}"
+        )
         return web.json_response(
             {
-                "ok": True,
+                "ok": not outcome.failed,
                 "event": envelope.event,
                 "matched": len(matched),
-                "fired": fired,
+                "fired": outcome.fired,
+                "failed": outcome.failed,
+                "duplicate": outcome.duplicate,
             }
         )
 
