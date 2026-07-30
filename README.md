@@ -161,6 +161,7 @@ psi-agent
 ├── session                    # Session + workspace 管理
 ├── eventd                     # 通用事件接收、SQLite 持久化与租约队列
 ├── event-consumer             # claim 事件并同步投递到 Session /events
+├── event-adapter-feishu-approval # 飞书审批 WebSocket → 通用 CloudEvent
 └── channel
     ├── repl                   # 交互式 REPL
     ├── cli                    # 单次消息
@@ -170,6 +171,8 @@ psi-agent
 
 通用可靠事件接入见 [`docs/eventd.md`](docs/eventd.md)。`eventd` 必须作为独立
 OS 进程运行，不加入与 AI、Session、Channel 同生共死的 `psi-agent run`。
+飞书审批长连接适配见
+[`docs/eventd-feishu.md`](docs/eventd-feishu.md)，应使用独立飞书 App。
 
 ## 传输协议
 

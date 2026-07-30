@@ -12,6 +12,7 @@ from psi_agent.channel.cli import ChannelCli
 from psi_agent.channel.feishu import ChannelFeishu
 from psi_agent.channel.repl import ChannelRepl
 from psi_agent.channel.telegram import ChannelTelegram
+from psi_agent.event_adapters.feishu import FeishuApprovalAdapter
 from psi_agent.eventd import EventConsumer, EventDaemon
 from psi_agent.gateway import Gateway
 from psi_agent.router import Router
@@ -34,6 +35,7 @@ Command = (
     | Router
     | Annotated[EventDaemon, conf.subcommand(name="eventd")]
     | Annotated[EventConsumer, conf.subcommand(name="event-consumer")]
+    | Annotated[FeishuApprovalAdapter, conf.subcommand(name="event-adapter-feishu-approval")]
 )
 
 

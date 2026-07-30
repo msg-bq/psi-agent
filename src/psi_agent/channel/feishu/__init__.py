@@ -60,6 +60,9 @@ class ChannelFeishu:
     respond_to_comments: bool = True
     """Doc comments: reply when the bot is @-mentioned in a comment. False disables comment subscription."""
 
+    respond_to_approvals: bool = True
+    """Handle approval events in Channel. Disable when the durable Feishu approval adapter owns them."""
+
     verbose: bool = False
     """Enable DEBUG-level logging."""
 
@@ -86,6 +89,7 @@ class ChannelFeishu:
             require_mention=self.require_mention,
             respond_to_mention_all=self.respond_to_mention_all,
             respond_to_comments=self.respond_to_comments,
+            respond_to_approvals=self.respond_to_approvals,
             gateway_url=self.gateway_url,
             appdata=self.appdata,
             agent_root=agent_root,

@@ -1,0 +1,48 @@
+daemon:
+  listen: "http://127.0.0.1:8765"
+  dataPath: ""
+  apiTokenRef: "env://PSI_EVENTD_TOKEN"
+
+subscriptions:
+  # Consumed only by the Feishu approval adapter's normalization worker.
+  - id: "feishu-approval-normalizer"
+    filter:
+      sourcePrefix: "feishu://tenant-a/cli_adapter/approval/raw"
+      types:
+        - "feishu.approval.instance.received"
+    leaseSeconds: 60
+    maxAttempts: 10
+
+  # Consumed by the generic event-consumer and delivered to Session.
+  - id: "finance-agent"
+    filter:
+      sourcePrefix: "feishu://tenant-a/cli_adapter/approval"
+      types:
+        - "approval.status.changed"
+    leaseSeconds: 60
+    maxAttempts: 10
+
+feishuApprovalAdapter:
+  eventdEndpoint: "http://127.0.0.1:8765"
+  rawSubscriptionId: "feishu-approval-normalizer"
+  eventdTokenRef: "env://PSI_EVENTD_TOKEN"
+  tenantId: "tenant-a"
+  appId: "cli_adapter"
+  appSecretRef: "env://PSI_FEISHU_APPROVAL_APP_SECRET"
+  approvalCodes:
+    - "EXPENSE_001"
+  callbackTimeoutSeconds: 2.5
+  renewEverySeconds: 20
+  leaseSeconds: 60
+  waitSeconds: 20
+
+consumer:
+  daemonEndpoint: "http://127.0.0.1:8765"
+  subscriptionId: "finance-agent"
+  sessionSocket: "http://127.0.0.1:8766"
+  renewEverySeconds: 20
+  leaseSeconds: 60
+  waitSeconds: 20
+  apiTokenRef: "env://PSI_EVENTD_TOKEN"
+  routing:
+    session_id: "finance-agent"

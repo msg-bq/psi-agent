@@ -190,6 +190,7 @@ psi-agent
 ├── session                    # Session + workspace management
 ├── eventd                     # Generic ingress, SQLite persistence, and lease queue
 ├── event-consumer             # Claim events and synchronously dispatch to Session /events
+├── event-adapter-feishu-approval # Feishu approval WebSocket → generic CloudEvents
 └── channel
     ├── repl                   # Interactive REPL
     ├── cli                    # One-shot message
@@ -200,6 +201,8 @@ psi-agent
 See [`docs/eventd.md`](docs/eventd.md) for generic durable event ingress. Run
 `eventd` as an independent OS process, not inside the `psi-agent run` task group
 that shares the AI, Session, and Channel lifetime.
+See [`docs/eventd-feishu.md`](docs/eventd-feishu.md) for the provider-specific
+approval adapter, which should use a dedicated Feishu app.
 
 ## Transports
 

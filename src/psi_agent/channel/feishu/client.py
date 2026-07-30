@@ -763,6 +763,7 @@ async def run_feishu(
     require_mention: bool = True,
     respond_to_mention_all: bool = False,
     respond_to_comments: bool = True,
+    respond_to_approvals: bool = True,
     gateway_url: str | None = None,
     appdata: str = "",
     agent_root: str = "",
@@ -843,7 +844,8 @@ async def run_feishu(
             logger.info(f"Feishu bot started (session={session_socket} interval={interval})")
             # Inject the approval processor AFTER start_background — it rebuilds the
             # dispatcher, so an earlier registration would be discarded.
-            _register_approval_processor(channel, _on_approval)
+            if respond_to_approvals:
+                _register_approval_processor(channel, _on_approval)
             await _ensure_bot_identity(channel)
             # Agent-package channel_events/feishu → unified POST /events
             if agent_root.strip():
