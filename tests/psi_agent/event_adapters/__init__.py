@@ -1,0 +1,1 @@
+"""Provider event adapter tests."""

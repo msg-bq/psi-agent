@@ -59,6 +59,7 @@ def test_channel_feishu_defaults():
     assert cf.require_mention is True
     assert cf.respond_to_mention_all is False
     assert cf.respond_to_comments is True
+    assert cf.respond_to_approvals is True
     assert cf.verbose is False
 
 
@@ -832,6 +833,34 @@ async def test_run_feishu_registers_approval_processor(monkeypatch):
         tg.cancel_scope.cancel()
 
     assert calls == [channel]
+
+
+@pytest.mark.anyio
+async def test_run_feishu_can_leave_approval_events_to_durable_adapter(monkeypatch):
+    channel = MagicMock()
+    channel.on = MagicMock()
+    channel.start_background = AsyncMock()
+    channel.stop_background = AsyncMock()
+    channel.bot_identity = SimpleNamespace(open_id="ou_bot", name="Haitun")
+    calls: list = []
+    monkeypatch.setattr(client, "FeishuChannel", lambda **kw: channel)
+    monkeypatch.setattr(client, "BlockingPortal", lambda: _FakePortal())
+    monkeypatch.setattr(client, "_register_approval_processor", lambda ch, cb: calls.append(ch) or True)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(
+            partial(
+                run_feishu,
+                session_socket="/tmp/x.sock",
+                app_id="a",
+                app_secret="s",
+                respond_to_approvals=False,
+            )
+        )
+        await anyio.sleep(0.1)
+        tg.cancel_scope.cancel()
+
+    assert calls == []
 
 
 @pytest.mark.anyio

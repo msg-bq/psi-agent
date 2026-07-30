@@ -10,6 +10,9 @@ provider-specific enrichment are intentionally outside this component. Such
 adapters submit normalized events through the same HTTP contract as any other
 caller.
 
+The standalone Feishu approval adapter is documented in
+[`eventd-feishu.md`](eventd-feishu.md).
+
 ## Processes
 
 Run the daemon as an independent OS service:

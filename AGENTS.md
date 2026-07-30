@@ -447,3 +447,13 @@ Event Daemon 不加入 `psi-agent run` 的共享 TaskGroup，否则任一组件�
 Session 侧统一使用 `source=eventd`，并原样保留 CloudEvent `type` 作为业务事件名；
 不得从 CloudEvent `source` 猜 Provider 或自动补事件名前缀。完整协议见
 `docs/eventd.md`。
+
+**为什么飞书审批 Adapter 不直接写 Event Daemon 数据库？**
+飞书长连接、`approval_instance` 私有 processor、审批定义订阅与详情补全都属于
+Provider 特化，位于 `psi_agent.event_adapters.feishu`。回调先通过 `/v1/events`
+提交 raw CloudEvent，收到代表 SQLite 已提交的 `202` 后才返回；后台 normalizer
+再用通用 `claim/renew/ack/nack` 消费 raw subscription、查询详情并发布业务
+CloudEvent。Adapter 禁止 import `EventStore` / `EventService`，Event Daemon 也禁止
+import `lark_channel`。飞书多长连接是集群分发而非广播，因此普通 Channel 与可靠
+审批 Adapter 不得用同一个 App 同时建连接；`respond_to_approvals=False` 只关闭旧
+handler，不能改变平台分发语义。详见 `docs/eventd-feishu.md`。
