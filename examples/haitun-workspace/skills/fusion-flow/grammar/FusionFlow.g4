@@ -239,7 +239,8 @@ agentOwnerOperator
 /*
  * Constants are numbers, relative paths, restricted quoted IDs, or lowercase
  * identifiers. JSON-style quoted text is a separate atomic term and the Core
- * IR parser accepts it only where the catalog requires Instruction.
+ * IR parser accepts it only where the catalog requires Instruction or
+ * StepName. This lets step_name(step) use a readable string directly.
  */
 constantName
     : NUMBER

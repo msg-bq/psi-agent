@@ -270,8 +270,10 @@ class _CoreIRVisitor:
             return self._boolean_constant(boolean_literal.getText())
         string_literal = context.STRING_LITERAL()
         if string_literal is not None:
-            if expected_concept is None or expected_concept.name != "Instruction":
-                raise ValueError("FusionFlow free-form quoted text is only valid where Instruction is required.")
+            if expected_concept is None or expected_concept.name not in {"Instruction", "StepName"}:
+                raise ValueError(
+                    "FusionFlow free-form quoted text is only valid where Instruction or StepName is required."
+                )
             return self._resolve_constant(string_literal.getText(), expected_concept)
         return self._resolve_constant(context.constantName().getText(), expected_concept)
 

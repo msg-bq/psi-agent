@@ -38,7 +38,6 @@ def _dispatch_workflow(
     return f"""
 const dispatch: Workflow;
 const dispatch_step: Step;
-const dispatch_name: StepName;
 {executor_declaration}
 const request: Artifact;
 const result: Artifact;
@@ -47,7 +46,7 @@ workflow dispatch {{
     input_workflow(dispatch) == [request];
     output_workflow(dispatch) == [result];
     {executor_configuration}
-    step_name(dispatch_step) == dispatch_name;
+    step_name(dispatch_step) == "Dispatch";
     step_instruction(dispatch_step) == "{instruction}";
     step_executor(dispatch_step) == worker;
     consumes(dispatch_step) == [request];
@@ -62,9 +61,6 @@ const select_demo: Workflow;
 const primary_step: Step;
 const fallback_step: Step;
 const final_step: Step;
-const primary_name: StepName;
-const fallback_name: StepName;
-const final_name: StepName;
 const worker: Agent;
 const request: Artifact;
 const primary_result: Artifact;
@@ -76,13 +72,13 @@ workflow select_demo {{
     input_workflow(select_demo) == [request];
     output_workflow(select_demo) == [selected_result, final_result];
 
-    step_name(primary_step) == primary_name;
+    step_name(primary_step) == "Primary";
     step_instruction(primary_step) == "produce_primary";
     step_executor(primary_step) == worker;
     consumes(primary_step) == [request];
     produces(primary_step) == [primary_result];
 
-    step_name(fallback_step) == fallback_name;
+    step_name(fallback_step) == "Fallback";
     step_instruction(fallback_step) == "produce_fallback";
     step_executor(fallback_step) == worker;
     consumes(fallback_step) == [request];
@@ -90,7 +86,7 @@ workflow select_demo {{
 
     selected_result == if({condition}, primary_result, fallback_result);
 
-    step_name(final_step) == final_name;
+    step_name(final_step) == "Final";
     step_instruction(final_step) == "consume_selected";
     step_executor(final_step) == worker;
     consumes(final_step) == [selected_result];
@@ -700,7 +696,7 @@ def test_unconsumed_assertions_report_operator_counts() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"unconsumed assertions: custom_policy=1",
+        match=r"workflow check failed: workflow contains unsupported assertions: custom_policy=1",
     ):
         run_workflow.compile_workflow(source, context=context)
 

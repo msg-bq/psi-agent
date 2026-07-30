@@ -22,6 +22,7 @@ from psi_agent.workflow_execution import (
 )
 from psi_agent.workflow_graph import ProducesEdge, StepNode, WorkflowGraph
 
+from .checker import check_workflow
 from .core_ir import Assertion, CompoundTerm, Concept, Constant, Operator
 from .graph_compiler import WorkflowGraphCompilation, WorkflowGraphCompiler
 from .parser import ParseContext, parse_workflow
@@ -246,6 +247,11 @@ def compile_workflow(
             for diagnostic in parsed.diagnostics
         )
         raise ValueError(f"workflow parse failed: {details}")
+
+    checked = check_workflow(parsed.core_ir)
+    check_errors = [diagnostic.message for diagnostic in checked.diagnostics if diagnostic.severity == "error"]
+    if check_errors:
+        raise ValueError(f"workflow check failed: {'; '.join(check_errors)}")
 
     compiled = WorkflowGraphCompiler().compile(parsed.core_ir)
     if not isinstance(compiled, tuple):

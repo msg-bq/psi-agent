@@ -121,6 +121,30 @@ def test_bool_call_shorthand_lowers_to_explicit_true_assertion() -> None:
     assert shorthand == explicit
 
 
+def test_free_form_string_is_valid_for_step_name() -> None:
+    context = _context()
+    context.concepts["StepName"] = Concept(name="StepName")
+    context.operators["step_name"] = Operator(
+        name="step_name",
+        input_concepts=(context.concepts["Step"],),
+        output_concept=context.concepts["StepName"],
+    )
+    result = parse_workflow(
+        """
+        const work: Step;
+        workflow names { step_name(work) == "Security Review"; }
+        """,
+        context=context,
+    )
+
+    assert result.diagnostics == ()
+    assert result.core_ir is not None
+    assertion = result.core_ir.workflows[0].assertions[0]
+    assert isinstance(assertion.rhs, Constant)
+    assert assertion.rhs.symbol == "Security Review"
+    assert [concept.name for concept in assertion.rhs.belong_concepts] == ["StepName"]
+
+
 def test_non_bool_call_cannot_use_predicate_shorthand() -> None:
     with pytest.raises(
         ValueError,
@@ -532,7 +556,7 @@ def test_reversed_parenthesized_inline_instruction_infers_instruction_type() -> 
 
 
 def test_inline_text_is_rejected_outside_instruction_position() -> None:
-    with pytest.raises(ValueError, match="only valid where Instruction is required"):
+    with pytest.raises(ValueError, match="only valid where Instruction or StepName is required"):
         parse_workflow(
             'workflow invalid { custom("free form text") == true; }',
             context=_context(),
