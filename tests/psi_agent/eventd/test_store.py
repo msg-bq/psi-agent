@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -72,7 +73,7 @@ async def test_expired_lease_rejects_control_and_stale_token_cannot_ack_new_leas
     await store.upsert_subscription(Subscription(id="orders", max_attempts=3))
     await store.ingest(_event(), ["orders"])
     first = (await store.claim(subscription_id="orders", instance_id="one", limit=1, lease_seconds=60))[0]
-    with sqlite3.connect(db_path) as db:
+    with closing(sqlite3.connect(db_path)) as db, db:
         db.execute("UPDATE delivery SET lease_until=0 WHERE delivery_id=?", (first["deliveryId"],))
     assert not await store.renew(first["deliveryId"], first["leaseToken"], 60)
     assert not await store.ack(first["deliveryId"], first["leaseToken"])
@@ -91,3 +92,51 @@ async def test_ready_requires_initialized_writable_schema(tmp_path: Path) -> Non
     assert not await store.ready()
     await store.initialize()
     assert await store.ready()
+
+
+@pytest.mark.anyio
+async def test_zero_lease_override_uses_subscription_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("psi_agent.eventd.store._now_ms", lambda: 1_000)
+    store = EventStore(str(tmp_path / "events.sqlite3"))
+    await store.initialize()
+    await store.upsert_subscription(Subscription(id="orders", lease_seconds=45))
+    await store.ingest(_event(), ["orders"])
+
+    delivery = (await store.claim(subscription_id="orders", instance_id="consumer-1", limit=1, lease_seconds=0))[0]
+
+    assert delivery["leaseUntil"] == 46_000
+
+
+@pytest.mark.anyio
+async def test_short_lived_connections_are_explicitly_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class TrackingConnection(sqlite3.Connection):
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            super().close()
+
+    store = EventStore(str(tmp_path / "events.sqlite3"))
+    opened: list[TrackingConnection] = []
+
+    def connect() -> sqlite3.Connection:
+        db = sqlite3.connect(
+            store.path,
+            timeout=5,
+            isolation_level=None,
+            factory=TrackingConnection,
+        )
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA journal_mode = WAL")
+        db.execute("PRAGMA synchronous = FULL")
+        db.execute("PRAGMA foreign_keys = ON")
+        db.execute("PRAGMA busy_timeout = 5000")
+        opened.append(db)
+        return db
+
+    monkeypatch.setattr(store, "_connect", connect)
+    await store.initialize()
+    await store.ready()
+
+    assert opened
+    assert all(db.closed for db in opened)

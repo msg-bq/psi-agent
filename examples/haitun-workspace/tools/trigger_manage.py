@@ -8,6 +8,7 @@ files and fires on ``POST /events``.
 from __future__ import annotations
 
 import json
+import keyword
 import re
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -86,16 +87,30 @@ def _parse_filter(filter_json: str) -> tuple[dict[str, object] | None, str | Non
     return parsed, None
 
 
-def _validate_fire_tool(*, fire: str, tool: str, tool_args: dict[str, object]) -> str | None:
+def _validate_fire_tool(
+    *,
+    fire: str,
+    tool: str,
+    tool_args: dict[str, object],
+    event_context_arg: str,
+) -> str | None:
     mode = fire.strip().casefold() or "prompt"
     if mode not in {"prompt", "tool"}:
         return f"Invalid fire {fire!r}: use 'prompt' or 'tool'."
+    context_arg = event_context_arg.strip()
     if mode != "tool":
+        if context_arg:
+            return "event_context_arg requires fire='tool'."
         return None
     if not tool.strip():
         return "fire='tool' requires tool= (e.g. feishu_message_send)."
-    if not tool_args:
-        return "fire='tool' requires non-empty tool_args JSON object."
+    if context_arg:
+        if not context_arg.isidentifier() or keyword.iskeyword(context_arg):
+            return "event_context_arg must be a valid Python parameter name."
+        if context_arg in tool_args:
+            return "event_context_arg must not conflict with a static tool_args key."
+    if not tool_args and not context_arg:
+        return "fire='tool' requires static tool_args or event_context_arg."
     return None
 
 
@@ -134,6 +149,7 @@ def _format_trigger_document(
     fire: str = "prompt",
     tool: str = "",
     tool_args: dict[str, object] | None = None,
+    event_context_arg: str = "",
     raw_event: str = "",
     raw_filter: dict[str, object] | None = None,
 ) -> str:
@@ -159,6 +175,8 @@ def _format_trigger_document(
     if fire_mode == "tool":
         header["tool"] = tool.strip()
         header["tool_args"] = tool_args or {}
+        if event_context_arg.strip():
+            header["event_context_arg"] = event_context_arg.strip()
     dumped = yaml.safe_dump(header, allow_unicode=True, sort_keys=False, default_flow_style=False)
     body = content.strip()
     return f"---\n{dumped}---\n\n" + (f"{body}\n" if body else "")
@@ -199,6 +217,7 @@ async def trigger_manage(
     fire: str = "tool",
     tool: str = "",
     tool_args: str = "",
+    event_context_arg: str = "",
     run_once: bool = False,
     raw_event: str = "",
     raw_filter: str = "",
@@ -221,7 +240,9 @@ async def trigger_manage(
     **Fire modes** (same as schedules):
 
     - ``fire=tool`` (default for Feishu IM reminders): Session calls
-      ``tool(**tool_args)`` directly — no LLM at fire time.
+      ``tool(**tool_args)`` directly — no LLM at fire time. Set
+      ``event_context_arg`` to a declared ``str`` parameter name when the tool
+      must receive deterministic JSON for the current event.
     - ``fire=prompt``: Session injects TRIGGER body for an LLM turn.
 
     Args:
@@ -236,6 +257,7 @@ async def trigger_manage(
         fire: prompt | tool
         tool: Tool name when fire=tool
         tool_args: JSON kwargs when fire=tool
+        event_context_arg: Optional tool parameter receiving dynamic event JSON
         run_once: Delete TRIGGER after first successful fire
         raw_event: Platform-native type (optional; auto-filled when known)
         raw_filter: JSON object for raw_payload exact-match (optional)
@@ -308,7 +330,12 @@ async def trigger_manage(
         if aerr or parsed_args is None:
             return f"[Error] {aerr}"
         fire_mode = fire.strip().casefold() or "tool"
-        if ferr := _validate_fire_tool(fire=fire_mode, tool=tool, tool_args=parsed_args):
+        if ferr := _validate_fire_tool(
+            fire=fire_mode,
+            tool=tool,
+            tool_args=parsed_args,
+            event_context_arg=event_context_arg,
+        ):
             return f"[Error] {ferr}"
         if err := _validate_trigger_name(trigger_name):
             return f"[Error] {err}"
@@ -340,6 +367,7 @@ async def trigger_manage(
                 fire=fire_mode,
                 tool=tool,
                 tool_args=parsed_args,
+                event_context_arg=event_context_arg,
                 raw_event=resolved_raw,
                 raw_filter=raw_filt or None,
             ),

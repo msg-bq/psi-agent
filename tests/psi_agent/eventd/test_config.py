@@ -5,7 +5,33 @@ from pathlib import Path
 import anyio
 import pytest
 
-from psi_agent.eventd.config import load_consumer_config, load_daemon_config
+from psi_agent.eventd.config import (
+    load_consumer_config,
+    load_daemon_config,
+    mapping,
+    non_negative_int,
+    positive_int,
+    read_yaml,
+    secret_from_env_ref,
+    string_list,
+)
+
+
+@pytest.mark.anyio
+async def test_public_adapter_config_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADAPTER_SECRET_FOR_TEST", "secret")
+    path = tmp_path / "adapter.yml"
+    await anyio.Path(path).write_text("adapter:\n  types: [one, two]\n", encoding="utf-8")
+
+    raw = await read_yaml(str(path))
+    adapter = mapping(raw.get("adapter"), "adapter")
+
+    assert string_list(adapter.get("types"), "adapter.types") == ("one", "two")
+    assert positive_int(None, 30, "leaseSeconds") == 30
+    assert non_negative_int(0, 60, "leaseSeconds") == 0
+    assert secret_from_env_ref("env://ADAPTER_SECRET_FOR_TEST", "adapter.secret", required=True) == "secret"
+    with pytest.raises(ValueError, match="env://"):
+        secret_from_env_ref("literal", "adapter.secret")
 
 
 @pytest.mark.anyio
@@ -88,6 +114,57 @@ async def test_consumer_renewal_must_precede_lease_expiry() -> None:
             renew_every_seconds=60,
             lease_seconds=60,
             wait_seconds=20,
+            api_token="",
+        )
+
+
+@pytest.mark.anyio
+async def test_consumer_can_use_subscription_lease_default() -> None:
+    config = await load_consumer_config(
+        path="",
+        daemon_endpoint="http://127.0.0.1:8765",
+        subscription_id="orders",
+        session_socket="http://127.0.0.1:9000",
+        instance_id="",
+        renew_every_seconds=20,
+        lease_seconds=0,
+        wait_seconds=20,
+        api_token="",
+    )
+
+    assert config.lease_seconds == 0
+
+
+@pytest.mark.anyio
+async def test_consumer_wait_seconds_matches_http_contract(tmp_path: Path) -> None:
+    path = tmp_path / "eventd.yml"
+    await anyio.Path(path).write_text(
+        "consumer:\n  waitSeconds: 0\n",
+        encoding="utf-8",
+    )
+    config = await load_consumer_config(
+        path=str(path),
+        daemon_endpoint="http://127.0.0.1:8765",
+        subscription_id="orders",
+        session_socket="http://127.0.0.1:9000",
+        instance_id="",
+        renew_every_seconds=20,
+        lease_seconds=0,
+        wait_seconds=20,
+        api_token="",
+    )
+    assert config.wait_seconds == 0
+
+    with pytest.raises(ValueError, match="between 0 and 30"):
+        await load_consumer_config(
+            path="",
+            daemon_endpoint="http://127.0.0.1:8765",
+            subscription_id="orders",
+            session_socket="http://127.0.0.1:9000",
+            instance_id="",
+            renew_every_seconds=20,
+            lease_seconds=0,
+            wait_seconds=31,
             api_token="",
         )
 

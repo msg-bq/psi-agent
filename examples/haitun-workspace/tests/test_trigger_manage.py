@@ -87,10 +87,48 @@ def test_format_trigger_roundtrip_yaml() -> None:
         fire="tool",
         tool="feishu_message_send",
         tool_args={"receive_id": "oc_1", "text": "hi"},
+        event_context_arg="event_json",
         raw_event="im.chat.member.user.added_v1",
     )
     header, body = tm._parse_header(doc)
     assert header["event"] == "feishu.chat.member_added"
     assert header["raw_event"] == "im.chat.member.user.added_v1"
+    assert header["event_context_arg"] == "event_json"
     assert yaml.safe_load(json.dumps(header["filter"])) == {"chat_id": "oc_1"}
     assert "note" in body
+
+
+@pytest.mark.anyio
+async def test_create_tool_trigger_with_only_dynamic_event_context(workspace: Path) -> None:
+    out = await tm.trigger_manage(
+        action="create",
+        trigger_name="dynamic-event",
+        event="approval.status.changed",
+        source="eventd",
+        fire="tool",
+        tool="process_approval",
+        event_context_arg="event_json",
+    )
+
+    assert out.startswith("Created trigger")
+    raw = (workspace / "triggers" / "dynamic-event" / "TRIGGER.md").read_text(encoding="utf-8")
+    header, _ = tm._parse_header(raw)
+    assert header["tool_args"] == {}
+    assert header["event_context_arg"] == "event_json"
+
+
+@pytest.mark.anyio
+async def test_create_rejects_event_context_arg_conflict(workspace: Path) -> None:
+    out = await tm.trigger_manage(
+        action="create",
+        trigger_name="conflict",
+        event="approval.status.changed",
+        source="eventd",
+        fire="tool",
+        tool="process_approval",
+        tool_args='{"event_json":"static"}',
+        event_context_arg="event_json",
+    )
+
+    assert out.startswith("[Error]")
+    assert "conflict" in out

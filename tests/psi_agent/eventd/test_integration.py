@@ -85,7 +85,16 @@ async def test_consumer_claims_dispatches_and_acks(tmp_path: Path) -> None:
 
     assert received[0]["source"] == "eventd"
     assert received[0]["event"] == "order.paid"
-    assert received[0]["idempotency_key"] == "shop://orders|event-1"
+    assert (
+        received[0]["idempotency_key"]
+        == CloudEvent(
+            "1.0",
+            "event-1",
+            "shop://orders",
+            "order.paid",
+            {"order_id": "1001", "status": "paid"},
+        ).identity_key()
+    )
     assert received[0]["routing"]["delivery_id"].startswith("delivery_")
     assert received[0]["routing"]["event_id"] == "event-1"
 

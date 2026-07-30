@@ -26,7 +26,7 @@ consumer:
   subscriptionId: "order-agent"
   sessionSocket: "http://127.0.0.1:8766"
   renewEverySeconds: 20
-  leaseSeconds: 60
+  leaseSeconds: 0
   waitSeconds: 20
   apiTokenRef: "env://PSI_EVENTD_TOKEN"
   routing:

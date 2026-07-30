@@ -14,15 +14,17 @@ from psi_agent._appdata import resolve_appdata_root
 from psi_agent.eventd.schema import Hook, Subscription
 
 
-def _mapping(value: object, name: str) -> dict[str, Any]:
+def mapping(value: object, name: str) -> dict[str, Any]:
+    """Return a defensive mapping copy for adapter and daemon config parsers."""
     if value is None:
         return {}
     if not isinstance(value, dict):
         raise ValueError(f"{name} must be a mapping")
-    return cast(dict[str, Any], value)
+    return cast(dict[str, Any], value).copy()
 
 
-def _string_list(value: object, name: str) -> tuple[str, ...]:
+def string_list(value: object, name: str) -> tuple[str, ...]:
+    """Parse an optional list of non-empty strings."""
     if value is None:
         return ()
     if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
@@ -30,15 +32,24 @@ def _string_list(value: object, name: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in cast(list[str], value))
 
 
-def _positive_int(value: object, default: int, name: str) -> int:
-    if value is None:
-        return default
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+def positive_int(value: object, default: int, name: str) -> int:
+    """Parse an optional positive integer with a caller-provided default."""
+    candidate = default if value is None else value
+    if not isinstance(candidate, int) or isinstance(candidate, bool) or candidate <= 0:
         raise ValueError(f"{name} must be a positive integer")
-    return value
+    return candidate
 
 
-def _secret_from_env_ref(value: object, name: str, *, required: bool = False) -> str:
+def non_negative_int(value: object, default: int, name: str) -> int:
+    """Parse an optional non-negative integer with a caller-provided default."""
+    candidate = default if value is None else value
+    if not isinstance(candidate, int) or isinstance(candidate, bool) or candidate < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return candidate
+
+
+def secret_from_env_ref(value: object, name: str, *, required: bool = False) -> str:
+    """Resolve an ``env://NAME`` secret without accepting literal config secrets."""
     reference = str(value or "").strip()
     if not reference:
         if required:
@@ -74,9 +85,10 @@ class ConsumerConfig:
     routing: dict[str, Any] = field(default_factory=dict)
 
 
-async def _read_yaml(path: str) -> dict[str, Any]:
+async def read_yaml(path: str) -> dict[str, Any]:
+    """Read one YAML document and require an object at its root."""
     content = await anyio.Path(path).read_text(encoding="utf-8")
-    return _mapping(yaml.safe_load(content), "config")
+    return mapping(yaml.safe_load(content), "config")
 
 
 async def load_daemon_config(
@@ -87,8 +99,8 @@ async def load_daemon_config(
     appdata: str,
     api_token: str,
 ) -> DaemonConfig:
-    raw = await _read_yaml(path) if path.strip() else {}
-    daemon = _mapping(raw.get("daemon"), "daemon")
+    raw = await read_yaml(path) if path.strip() else {}
+    daemon = mapping(raw.get("daemon"), "daemon")
     appdata_root = await resolve_appdata_root(appdata)
     configured_path = str(daemon.get("dataPath") or data_path).strip()
     if not configured_path:
@@ -100,7 +112,7 @@ async def load_daemon_config(
         raise ValueError("daemon.apiToken cannot contain a secret; use apiTokenRef: env://NAME")
     token = (
         os.environ.get("PSI_EVENTD_TOKEN", "").strip()
-        or _secret_from_env_ref(daemon.get("apiTokenRef"), "daemon.apiTokenRef")
+        or secret_from_env_ref(daemon.get("apiTokenRef"), "daemon.apiTokenRef")
         or api_token.strip()
     )
     parsed_listen = urlsplit(configured_listen)
@@ -115,21 +127,21 @@ async def load_daemon_config(
     if not isinstance(subscription_rows, list):
         raise ValueError("subscriptions must be a list")
     for index, item in enumerate(subscription_rows):
-        row = _mapping(item, f"subscriptions[{index}]")
+        row = mapping(item, f"subscriptions[{index}]")
         subscription_id = str(row.get("id") or "").strip()
         if not subscription_id:
             raise ValueError(f"subscriptions[{index}].id cannot be empty")
         if subscription_id in subscription_ids:
             raise ValueError(f"duplicate subscription id: {subscription_id!r}")
         subscription_ids.add(subscription_id)
-        filt = _mapping(row.get("filter"), f"subscriptions[{index}].filter")
+        filt = mapping(row.get("filter"), f"subscriptions[{index}].filter")
         subscriptions.append(
             Subscription(
                 id=subscription_id,
                 source_prefix=str(filt.get("sourcePrefix") or "").strip(),
-                types=_string_list(filt.get("types"), f"subscriptions[{index}].filter.types"),
-                lease_seconds=_positive_int(row.get("leaseSeconds"), 60, "leaseSeconds"),
-                max_attempts=_positive_int(row.get("maxAttempts"), 10, "maxAttempts"),
+                types=string_list(filt.get("types"), f"subscriptions[{index}].filter.types"),
+                lease_seconds=positive_int(row.get("leaseSeconds"), 60, "leaseSeconds"),
+                max_attempts=positive_int(row.get("maxAttempts"), 10, "maxAttempts"),
             )
         )
     if not subscriptions:
@@ -141,7 +153,7 @@ async def load_daemon_config(
     if not isinstance(hook_rows, list):
         raise ValueError("hooks must be a list")
     for index, item in enumerate(hook_rows):
-        row = _mapping(item, f"hooks[{index}]")
+        row = mapping(item, f"hooks[{index}]")
         hook_id = str(row.get("id") or "").strip()
         if not hook_id or "/" in hook_id:
             raise ValueError(f"hooks[{index}].id must be non-empty and cannot contain '/'")
@@ -150,7 +162,7 @@ async def load_daemon_config(
         hook_ids.add(hook_id)
         if row.get("token"):
             raise ValueError(f"hooks[{index}].token cannot contain a secret; use tokenRef: env://NAME")
-        id_from = _mapping(row.get("idFrom"), f"hooks[{index}].idFrom")
+        id_from = mapping(row.get("idFrom"), f"hooks[{index}].idFrom")
         id_header = str(id_from.get("header") or "").strip()
         id_pointer = str(id_from.get("pointer") or "").strip()
         if id_header and id_pointer:
@@ -164,7 +176,7 @@ async def load_daemon_config(
         hooks.append(
             Hook(
                 id=hook_id,
-                token=_secret_from_env_ref(row.get("tokenRef"), f"hooks[{index}].tokenRef", required=True),
+                token=secret_from_env_ref(row.get("tokenRef"), f"hooks[{index}].tokenRef", required=True),
                 source=source,
                 type=event_type,
                 id_header=id_header,
@@ -186,25 +198,28 @@ async def load_consumer_config(
     wait_seconds: int,
     api_token: str,
 ) -> ConsumerConfig:
-    raw = await _read_yaml(path) if path.strip() else {}
-    consumer = _mapping(raw.get("consumer"), "consumer")
+    raw = await read_yaml(path) if path.strip() else {}
+    consumer = mapping(raw.get("consumer"), "consumer")
     endpoint = str(consumer.get("daemonEndpoint") or daemon_endpoint).strip()
     subscription = str(consumer.get("subscriptionId") or subscription_id).strip()
     session = str(consumer.get("sessionSocket") or session_socket).strip()
     if not endpoint or not subscription or not session:
         raise ValueError("consumer requires daemonEndpoint, subscriptionId, and sessionSocket")
-    routing = _mapping(consumer.get("routing"), "consumer.routing")
+    routing = mapping(consumer.get("routing"), "consumer.routing")
     if consumer.get("apiToken"):
         raise ValueError("consumer.apiToken cannot contain a secret; use apiTokenRef: env://NAME")
     token = (
         os.environ.get("PSI_EVENTD_TOKEN", "").strip()
-        or _secret_from_env_ref(consumer.get("apiTokenRef"), "consumer.apiTokenRef")
+        or secret_from_env_ref(consumer.get("apiTokenRef"), "consumer.apiTokenRef")
         or api_token.strip()
     )
-    configured_renew = _positive_int(consumer.get("renewEverySeconds"), renew_every_seconds, "renewEverySeconds")
-    configured_lease = _positive_int(consumer.get("leaseSeconds"), lease_seconds, "leaseSeconds")
-    if configured_renew >= configured_lease:
+    configured_renew = positive_int(consumer.get("renewEverySeconds"), renew_every_seconds, "renewEverySeconds")
+    configured_lease = non_negative_int(consumer.get("leaseSeconds"), lease_seconds, "leaseSeconds")
+    if configured_lease and configured_renew >= configured_lease:
         raise ValueError("consumer.renewEverySeconds must be less than consumer.leaseSeconds")
+    configured_wait = non_negative_int(consumer.get("waitSeconds"), wait_seconds, "waitSeconds")
+    if configured_wait > 30:
+        raise ValueError("consumer.waitSeconds must be between 0 and 30")
     return ConsumerConfig(
         endpoint,
         subscription,
@@ -212,7 +227,7 @@ async def load_consumer_config(
         str(consumer.get("instanceId") or instance_id).strip(),
         configured_renew,
         configured_lease,
-        _positive_int(consumer.get("waitSeconds"), wait_seconds, "waitSeconds"),
+        configured_wait,
         token,
         routing,
     )

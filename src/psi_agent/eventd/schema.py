@@ -66,6 +66,15 @@ class CloudEvent:
     def content_hash(self) -> str:
         return hashlib.sha256(self.canonical_json().encode()).hexdigest()
 
+    def identity_key(self) -> str:
+        """Return a bounded, collision-resistant key for the ``(source, id)`` identity."""
+        identity = json.dumps(
+            [self.source, self.id],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return f"cloudevent/sha256:{hashlib.sha256(identity.encode()).hexdigest()}"
+
 
 @dataclass(frozen=True, slots=True)
 class Subscription:
@@ -121,7 +130,7 @@ class Hook:
 
 
 def cloud_event_to_session_envelope(event: CloudEvent, *, routing: dict[str, Any] | None = None) -> dict[str, object]:
-    """Translate a CloudEvent into the existing Session event shape."""
+    """Translate a CloudEvent into the Session shape without losing its data type."""
     payload = cast(dict[str, Any], event.data).copy() if isinstance(event.data, dict) else {"value": event.data}
     return {
         "schema_version": 1,
@@ -129,8 +138,9 @@ def cloud_event_to_session_envelope(event: CloudEvent, *, routing: dict[str, Any
         "event": event.type,
         "payload": payload,
         "occurred_at": "",
-        "idempotency_key": f"{event.source}|{event.id}",
+        "idempotency_key": event.identity_key(),
         "routing": dict(routing or {}),
         "raw_event": "",
         "raw_payload": {},
+        "cloud_event": event.to_dict(),
     }

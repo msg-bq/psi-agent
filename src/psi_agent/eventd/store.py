@@ -7,6 +7,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import closing
 from functools import partial
 from typing import Any
 
@@ -82,7 +83,7 @@ class EventStore:
         await self._run(self._initialize_sync)
 
     def _initialize_sync(self) -> None:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.executescript(_SCHEMA)
 
     async def ready(self) -> bool:
@@ -92,7 +93,7 @@ class EventStore:
             return False
 
     def _ready_sync(self) -> bool:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             tables = {
                 str(row["name"])
                 for row in db.execute(
@@ -111,7 +112,7 @@ class EventStore:
         await self._run(self._upsert_subscription_sync, subscription)
 
     def _upsert_subscription_sync(self, subscription: Subscription) -> None:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute(
                 """INSERT INTO subscription(
                        subscription_id, filter_json, lease_seconds, max_attempts, updated_at
@@ -258,7 +259,7 @@ class EventStore:
     def _renew_sync(self, delivery_id: str, lease_token: str, lease_seconds: int) -> dict[str, Any] | None:
         now = _now_ms()
         lease_until = now + lease_seconds * 1000
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             cursor = db.execute(
                 """UPDATE delivery SET lease_until=?
                    WHERE delivery_id=? AND state='LEASED' AND lease_token=? AND lease_until>?""",
@@ -273,7 +274,7 @@ class EventStore:
 
     def _ack_sync(self, delivery_id: str, lease_token: str) -> bool:
         now = _now_ms()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             cursor = db.execute(
                 """UPDATE delivery SET state='ACKED', acked_at=?, lease_until=0
                    WHERE delivery_id=? AND state='LEASED' AND lease_token=? AND lease_until>?""",
@@ -292,7 +293,7 @@ class EventStore:
 
     def _nack_sync(self, delivery_id: str, lease_token: str, error: str, retry_seconds: int) -> bool:
         now = _now_ms()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             cursor = db.execute(
                 """UPDATE delivery SET
                        state=CASE WHEN attempt_count >= (
@@ -310,7 +311,7 @@ class EventStore:
 
     def _stats_sync(self) -> dict[str, int]:
         now = _now_ms()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute("SELECT state, COUNT(*) AS count FROM delivery GROUP BY state").fetchall()
             accepted = db.execute("SELECT COUNT(*) AS count FROM inbox_event").fetchone()
             conflicts = db.execute("SELECT COALESCE(SUM(conflict_count), 0) AS count FROM inbox_event").fetchone()

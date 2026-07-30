@@ -442,8 +442,16 @@ Delivery 和 `claim/renew/ack/nack` 租约 API；`psi-agent event-consumer` 把�
 解释专有 WebSocket、验签、详情补全或业务字段。Provider Adapter 作为独立客户端
 提交 CloudEvent，避免平台 ad-hoc 泄漏进通用核心。
 
+Provider Adapter 必须复用 `eventd.client.EventdClient` 与
+`eventd.worker.LeaseWorker`，不得各自复制 HTTP、claim、renew、ACK/NACK、续租或
+退避循环。Worker 启动时先经订阅查询校验 ID；`publish(require_match=True)` 用
+`matchedSubscriptions` 阻止「已入 Inbox 但零 delivery」的静默错配。HTTP 4xx
+配置/合同错误快速失败，transport、429、5xx 与 delivery stale-lease 才重试。
+HTTP 合同由 `GET /openapi.json` 的 OpenAPI 3.1 文档描述。
+
 Event Daemon 不加入 `psi-agent run` 的共享 TaskGroup，否则任一组件失败会把可靠
 接收一起关闭。SQLite 位于 `resolve_appdata_root()/eventd/`，只有 Daemon 写库。
 Session 侧统一使用 `source=eventd`，并原样保留 CloudEvent `type` 作为业务事件名；
-不得从 CloudEvent `source` 猜 Provider 或自动补事件名前缀。完整协议见
-`docs/eventd.md`。
+不得从 CloudEvent `source` 猜 Provider 或自动补事件名前缀。Session envelope
+同时保留严格五字段 `cloud_event`；幂等键为 canonical `(source, id)` identity 的
+稳定 SHA-256，不得用可碰撞的分隔符拼接。完整协议见 `docs/eventd.md`。

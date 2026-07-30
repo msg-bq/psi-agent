@@ -53,7 +53,7 @@ class EventConsumer:
     subscription_id: str = "default"
     instance_id: str = ""
     renew_every_seconds: int = 20
-    lease_seconds: int = 60
+    lease_seconds: int = 0
     wait_seconds: int = 20
     api_token: str = ""
     verbose: bool = False

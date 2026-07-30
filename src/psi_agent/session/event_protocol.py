@@ -11,6 +11,7 @@ See ``session/AGENTS.md`` § Event / Trigger and
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -46,6 +47,33 @@ class EventEnvelope:
     # Optional platform-native type (e.g. Feishu ``im.chat.member.user.added_v1``).
     raw_event: str = ""
     raw_payload: dict[str, Any] = field(default_factory=dict)
+    # Optional strict five-field CloudEvent preserved by the EventD bridge.
+    cloud_event: dict[str, Any] = field(default_factory=dict)
+
+    def context_dict(self) -> dict[str, Any]:
+        """Return the complete, JSON-safe context exposed to Trigger handlers."""
+        return {
+            "schema_version": self.schema_version,
+            "source": self.source,
+            "event": self.event,
+            "payload": self.payload.copy(),
+            "occurred_at": self.occurred_at,
+            "idempotency_key": self.idempotency_key,
+            "routing": self.routing.copy(),
+            "raw_event": self.raw_event,
+            "raw_payload": self.raw_payload.copy(),
+            "cloud_event": self.cloud_event.copy(),
+        }
+
+    def context_json(self) -> str:
+        """Return deterministic JSON for prompt/tool Trigger delivery."""
+        return json.dumps(
+            self.context_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
 
 
 class EventProtocolError(ValueError):
@@ -115,6 +143,8 @@ def parse_event_envelope(raw: object) -> EventEnvelope:
     if not isinstance(raw_payload_raw, dict):
         raise EventProtocolError("raw_payload must be a JSON object when present")
 
+    cloud_event = _parse_optional_cloud_event(raw.get("cloud_event"))
+
     return EventEnvelope(
         schema_version=version,
         source=source,
@@ -125,9 +155,36 @@ def parse_event_envelope(raw: object) -> EventEnvelope:
         routing=cast(dict[str, Any], routing_raw).copy(),
         raw_event=raw_event.strip(),
         raw_payload=cast(dict[str, Any], raw_payload_raw).copy(),
+        cloud_event=cloud_event,
     )
 
 
 def filter_matches(payload: dict[str, Any], filt: dict[str, Any]) -> bool:
     """Exact subset match: every filter key must equal ``payload[key]``."""
     return all(payload.get(key) == expected for key, expected in filt.items())
+
+
+def _parse_optional_cloud_event(raw: object) -> dict[str, Any]:
+    """Validate the optional strict five-field CloudEvent without catalog coupling."""
+    if raw is None or raw == {}:
+        return {}
+    if not isinstance(raw, dict):
+        raise EventProtocolError("cloud_event must be a JSON object when present")
+
+    expected = {"specversion", "id", "source", "type", "data"}
+    actual = set(raw)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise EventProtocolError(f"cloud_event must contain exactly five fields; missing={missing}, extra={extra}")
+    if raw.get("specversion") != "1.0":
+        raise EventProtocolError("cloud_event.specversion must be '1.0'")
+    for name in ("id", "source", "type"):
+        value = raw.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise EventProtocolError(f"cloud_event.{name} must be a non-empty string")
+    try:
+        json.dumps(raw.get("data"), ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as e:
+        raise EventProtocolError(f"cloud_event.data must be finite JSON: {e}") from e
+    return cast(dict[str, Any], raw).copy()
