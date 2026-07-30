@@ -766,6 +766,7 @@ async def run_feishu(
     gateway_url: str | None = None,
     appdata: str = "",
     agent_root: str = "",
+    respond_to_approvals: bool = True,
 ) -> None:
     policy = PolicyConfig(
         require_mention=require_mention,
@@ -843,7 +844,10 @@ async def run_feishu(
             logger.info(f"Feishu bot started (session={session_socket} interval={interval})")
             # Inject the approval processor AFTER start_background — it rebuilds the
             # dispatcher, so an earlier registration would be discarded.
-            _register_approval_processor(channel, _on_approval)
+            if respond_to_approvals:
+                _register_approval_processor(channel, _on_approval)
+            else:
+                logger.info("Legacy Channel approval push disabled; Event Daemon may own approval ingress")
             await _ensure_bot_identity(channel)
             # Agent-package channel_events/feishu → unified POST /events
             if agent_root.strip():

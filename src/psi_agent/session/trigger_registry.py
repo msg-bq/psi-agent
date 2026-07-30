@@ -63,6 +63,15 @@ class TriggerEntry:
     fresh: bool = False
 
 
+@dataclass(slots=True)
+class TriggerDispatchOutcome:
+    """Machine-readable result used by durable event consumers."""
+
+    fired: list[str] = field(default_factory=list)
+    failed: dict[str, str] = field(default_factory=dict)
+    duplicate: bool = False
+
+
 class TriggerRegistry:
     """Owns trigger configs under ``agent/triggers/`` (no cron runners)."""
 
@@ -71,20 +80,44 @@ class TriggerRegistry:
         *,
         files: dict[str, TriggerEntry] | None = None,
         work_dir: Path | None = None,
+        idempotency_path: Path | None = None,
+        seen_keys: list[str] | None = None,
     ) -> None:
         self._files: dict[str, TriggerEntry] = dict(files or {})
         self._work_dir = work_dir
         # idempotency_key → True; OrderedDict for FIFO eviction
-        self._seen_keys: OrderedDict[str, bool] = OrderedDict()
+        self._seen_keys: OrderedDict[str, bool] = OrderedDict((key, True) for key in (seen_keys or []))
+        self._idempotency_path = idempotency_path
 
     @property
     def triggers(self) -> list[Trigger]:
         return [e.trigger for e in self._files.values()]
 
     @classmethod
-    async def load(cls, triggers_dir: Path) -> TriggerRegistry:
+    async def load(cls, triggers_dir: Path, *, idempotency_path: Path | None = None) -> TriggerRegistry:
         files = await cls._load_from_dir(triggers_dir)
-        return cls(files=files, work_dir=triggers_dir)
+        seen_keys: list[str] = []
+        if idempotency_path is not None:
+            try:
+                content = await anyio.Path(idempotency_path).read_text(encoding="utf-8")
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logger.warning(f"Failed to load trigger idempotency ledger {idempotency_path}: {e}")
+            else:
+                for line in content.splitlines()[-_IDEMPOTENCY_MAX:]:
+                    try:
+                        value = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(value, str) and value:
+                        seen_keys.append(value)
+        return cls(
+            files=files,
+            work_dir=triggers_dir,
+            idempotency_path=idempotency_path,
+            seen_keys=seen_keys,
+        )
 
     async def refresh(self) -> dict[str, str]:
         try:
@@ -156,32 +189,68 @@ class TriggerRegistry:
             self._seen_keys.popitem(last=False)
         return True
 
+    async def _remember_idempotency_durable(self, key: str) -> bool:
+        if not self.remember_idempotency(key):
+            return False
+        if self._idempotency_path is None:
+            return True
+        path = anyio.Path(self._idempotency_path)
+        await path.parent.mkdir(parents=True, exist_ok=True)
+        async with await anyio.open_file(path, "a", encoding="utf-8") as handle:
+            await handle.write(json.dumps(key, ensure_ascii=False) + "\n")
+            await handle.flush()
+        return True
+
     async def dispatch(self, envelope: EventEnvelope, agent: SessionAgent) -> list[str]:
         """Match and fire all hits under *agent*'s lock (caller may already hold it).
 
         Returns names of triggers that fired.
         """
+        return (await self.dispatch_outcome(envelope, agent)).fired
+
+    async def dispatch_outcome(self, envelope: EventEnvelope, agent: SessionAgent) -> TriggerDispatchOutcome:
+        """Dispatch with explicit failures and duplicate recognition.
+
+        Successful triggers are remembered independently. A retry after a partial
+        failure therefore re-runs only failed triggers instead of repeating effects
+        that already completed in the same Session process.
+        """
         await self.refresh()
-        if envelope.idempotency_key and not self.remember_idempotency(envelope.idempotency_key):
-            logger.info(f"Duplicate event idempotency_key={envelope.idempotency_key!r}; skipping")
-            return []
+        event_key = envelope.idempotency_key
+        if event_key and event_key in self._seen_keys:
+            logger.info(f"Duplicate event idempotency_key={event_key!r}; skipping")
+            return TriggerDispatchOutcome(duplicate=True)
 
         hits = self.match(envelope)
-        fired: list[str] = []
+        outcome = TriggerDispatchOutcome()
         for trigger in hits:
+            trigger_key = f"{event_key}\x1f{trigger.name}" if event_key else ""
+            if trigger_key and trigger_key in self._seen_keys:
+                try:
+                    if trigger.run_once:
+                        await TriggerRegistry._consume_run_once(trigger, self)
+                    outcome.fired.append(trigger.name)
+                except Exception as e:
+                    outcome.failed[trigger.name] = str(e)
+                continue
             response_kind = KIND_TRIGGER_DISPLAY if trigger.visibility == "display" else KIND_TRIGGER_SILENT
             try:
                 if trigger.fire == FIRE_TOOL:
                     await TriggerRegistry._fire_tool(trigger, agent, response_kind, envelope)
                 else:
                     await TriggerRegistry._fire_prompt(trigger, agent, response_kind, envelope)
-                fired.append(trigger.name)
+                outcome.fired.append(trigger.name)
+                if trigger_key:
+                    await self._remember_idempotency_durable(trigger_key)
                 logger.info(f"Trigger {trigger.name!r} fired (event={envelope.event!r}, fire={trigger.fire!r})")
                 if trigger.run_once:
                     await TriggerRegistry._consume_run_once(trigger, self)
             except Exception as e:
                 logger.error(f"Trigger {trigger.name!r} failed: {e!r}")
-        return fired
+                outcome.failed[trigger.name] = str(e)
+        if event_key and not outcome.failed:
+            await self._remember_idempotency_durable(event_key)
+        return outcome
 
     @staticmethod
     async def _fire_prompt(
@@ -216,6 +285,7 @@ class TriggerRegistry:
         logger.info(f"Trigger tool fire: {trigger.name!r} → {tool_name!r}({args!r}) event={envelope.event!r}")
 
         chunks: list[AgentChunk] = []
+        execution_error = ""
         async with agent._conversation:
             agent._conversation.add(
                 with_kind(
@@ -236,6 +306,7 @@ class TriggerRegistry:
             func = agent._tool_registry.get(tool_name) if tool_name else None
             if func is None:
                 result = f"Error: Tool {tool_name!r} not found"
+                execution_error = result
                 logger.error(f"Trigger {trigger.name!r}: {result}")
             else:
                 try:
@@ -244,6 +315,7 @@ class TriggerRegistry:
                     logger.info(f"Trigger tool result ({tool_name!r}): {result[:1000]!r}")
                 except Exception as e:
                     result = f"Error executing tool {tool_name!r}: {e}"
+                    execution_error = result
                     logger.error(f"Trigger {trigger.name!r} tool error: {e!r}")
 
             chunks.append(AgentChunk(reasoning=f"[Tool Call: {tool_name}({json.dumps(args, ensure_ascii=False)})]"))
@@ -268,14 +340,15 @@ class TriggerRegistry:
 
         if trigger.visibility == "display" and chunks:
             agent.set_pending_schedule_chunks(chunks)
+        if execution_error:
+            raise RuntimeError(execution_error)
         return chunks
 
     @staticmethod
     async def _consume_run_once(trigger: Trigger, registry: TriggerRegistry) -> None:
         path_str = trigger.task_path
         if not path_str:
-            logger.warning(f"run_once trigger {trigger.name!r} has no task_path; cannot delete")
-            return
+            raise RuntimeError(f"run_once trigger {trigger.name!r} has no task_path; cannot delete")
         path = anyio.Path(path_str)
         with anyio.CancelScope(shield=True):
             try:
@@ -287,8 +360,8 @@ class TriggerRegistry:
                     logger.info(f"run_once trigger {trigger.name!r} removed {path_str!r}")
             except Exception as e:
                 logger.error(f"run_once cleanup failed for trigger {trigger.name!r}: {e!r}")
-            finally:
-                registry._files.pop(path_str, None)
+                raise
+            registry._files.pop(path_str, None)
 
     @staticmethod
     async def _load_from_dir(

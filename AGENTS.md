@@ -436,3 +436,16 @@ uv build                         # 构建
 - [x] Session history 持久化（已完成）
 - [x] Context compaction — 超 token 阈值时 AI 层发信号，Session 调用 system.py compact_history 压缩
 - [ ] Channel 广播/多客户端队列
+
+## Event Daemon（可靠定事输入）
+
+`src/psi_agent/eventd/` 是与 AI / Session / Channel 生命周期解耦的独立组件。
+`psi-agent eventd` 持有飞书 WebSocket、SQLite raw/inbox/delivery 和租约 API；
+`psi-agent event-consumer` 可随 Haitun 启停，经 `claim/renew/ack/nack` 把五字段
+CloudEvent 转成既有 Session `/events` 信封。**刻意为之**：`eventd` 不加入
+`psi-agent run` 的共享 TaskGroup，否则任一组件失败会再次把可靠监听一起关闭。
+
+SQLite 位于 `resolve_appdata_root()/eventd/`，只有 eventd 写库。飞书回调使用
+`BlockingPortal.call` 等待 raw_delivery 事务提交后才返回 SDK；详情 enrichment 在
+提交后异步执行。Agent 包 `channel_events` 的 `kind: durable` 只声明事件目录，不在
+Channel 内启动 producer。完整部署与边界见 `docs/eventd.md`。

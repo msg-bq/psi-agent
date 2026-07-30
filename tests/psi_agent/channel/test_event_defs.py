@@ -40,6 +40,16 @@ async def test_load_feishu_demo_tick_synthetic() -> None:
 
 
 @pytest.mark.anyio
+async def test_load_feishu_approval_durable_declaration() -> None:
+    defs = await load_channel_event_defs(HAITUN, "feishu")
+    hit = next(d for d in defs if d.name == "feishu.approval.status.changed")
+    assert hit.kind == "durable"
+    assert hit.cloudevent_type == "approval.status.changed"
+    assert hit.map_fn is None
+    assert hit.produce_fn is None
+
+
+@pytest.mark.anyio
 async def test_load_rejects_synchronous_synthetic_producer(tmp_path: Path) -> None:
     slug = tmp_path / "channel_events" / "feishu" / "sync"
     await anyio.Path(str(slug)).mkdir(parents=True)

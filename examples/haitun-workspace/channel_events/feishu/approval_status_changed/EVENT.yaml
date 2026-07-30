@@ -1,0 +1,6 @@
+# Durable Event Daemon event; no Channel-side map.py or produce.py.
+name: feishu.approval.status.changed
+source: feishu
+kind: durable
+cloudevent_type: approval.status.changed
+description: "飞书审批状态变化 - eventd 持久化并经租约 Consumer 投递"

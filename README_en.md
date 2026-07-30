@@ -188,12 +188,18 @@ psi-agent
 ├── ai                        # Unified AI backend (50+ providers)
 ├── gateway                   # Lifecycle management + REST API + Web Console
 ├── session                    # Session + workspace management
+├── eventd                     # Independent ingress, SQLite persistence, and lease queue
+├── event-consumer             # Claim events and synchronously dispatch to Session /events
 └── channel
     ├── repl                   # Interactive REPL
     ├── cli                    # One-shot message
     ├── telegram               # Telegram bot
     └── feishu                 # Feishu bot
 ```
+
+See [`docs/eventd.md`](docs/eventd.md) for durable Feishu approval ingestion.
+Run `eventd` as an independent OS process, not inside the `psi-agent run` task
+group that shares the AI, Session, and Channel lifetime.
 
 ## Transports
 
@@ -235,6 +241,8 @@ Protocol errors between components take two forms:
 | `PSI_TELEGRAM_PROXY` | Telegram SOCKS5 proxy |
 | `PSI_FEISHU_APP_ID` | Feishu app ID |
 | `PSI_FEISHU_APP_SECRET` | Feishu app secret |
+| `PSI_EVENTD_TOKEN` | Event Daemon local consumer API bearer token |
+| `PSI_APPDATA` | AppData root for Event Daemon SQLite and Session history |
 
 CLI args take precedence over environment variables. AI params (provider, model, api_key, base_url) and channel auth params are optional and fall back to env vars when omitted. Socket path params (--session-socket, --channel-socket, --ai-socket) are required.
 
