@@ -582,13 +582,14 @@ Extend this skeleton only with syntax and preset operators documented in `gramma
 
 Before the initial `run_flow` call, inspect the source in order:
 
-- every identity is declared with a supported concept;
+- graph values may be untyped; when explicitly typed, their concepts include `Artifact`;
+- every other identity is declared with a supported concept;
 - assertions use `==`, while formulas use comparison operators;
 - each operator uses the documented arity and supported shape;
 - each Step has a supported Agent, Human, or Program executor, name, instruction, and explicit data/control dependencies;
 - no residual or unsupported operator is emitted.
 
-This manual source review is not a second tool or CLI invocation. Inside `run_flow`, `check_workflow` requires exactly one workflow, delegates graph semantics to `WorkflowGraphCompiler`, rejects unsupported residual assertions and non-Artifact graph values, requires every Step instruction and Program path, rejects ambiguous executor typing, and emits preflight warning logs for legacy untyped executors. Parsing, checking, and compilation all occur before dispatch.
+This manual source review is not a second tool or CLI invocation. Inside `run_flow`, `check_workflow` requires exactly one workflow, delegates graph semantics to `WorkflowGraphCompiler`, rejects unsupported residual assertions and graph values with explicit concepts that omit `Artifact`, requires every Step instruction and Program path, rejects ambiguous executor typing, and emits preflight warning logs for legacy untyped executors. Parsing, checking, and compilation all occur before dispatch.
 
 ### Running it (automatic, right after the self-check)
 

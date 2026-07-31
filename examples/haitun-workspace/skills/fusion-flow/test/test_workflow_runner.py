@@ -564,6 +564,16 @@ def test_untyped_executor_defaults_to_agent_for_compatibility() -> None:
     ]
 
 
+def test_compile_workflow_accepts_untyped_graph_values() -> None:
+    source = _dispatch_workflow("Agent", "do_work")
+    source = source.replace("const request: Artifact;\n", "").replace("const result: Artifact;\n", "")
+
+    compiled = run_workflow.compile_workflow(source)
+
+    assert {artifact.artifact_id for artifact in compiled.graph.artifacts} == {"request", "result"}
+    assert compiled.diagnostics == ()
+
+
 def test_compile_workflow_reuses_graph_compilation(monkeypatch: pytest.MonkeyPatch) -> None:
     original_compile = run_workflow.WorkflowGraphCompiler.compile
     compile_calls = 0

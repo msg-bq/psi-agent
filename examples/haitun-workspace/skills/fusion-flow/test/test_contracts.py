@@ -36,6 +36,38 @@ def test_checker_accepts_complete_workflow() -> None:
     assert result.diagnostics == ()
 
 
+@pytest.mark.parametrize(
+    "artifact_declarations",
+    (
+        pytest.param("", id="undeclared"),
+        pytest.param(
+            "const input: Artifact, List;\nconst output: Artifact, List;",
+            id="artifact-with-additional-concept",
+        ),
+    ),
+)
+def test_checker_accepts_untyped_or_artifact_compatible_graph_values(artifact_declarations: str) -> None:
+    result = _check(
+        artifact_declarations
+        + """
+        const work: Step;
+        const work_name: StepName;
+        const worker: Agent, Executor;
+        workflow example {
+          input_workflow(example) == [input];
+          consumes(work) == [input];
+          produces(work) == [output];
+          output_workflow(example) == [output];
+          step_executor(work) == worker;
+          step_name(work) == work_name;
+          step_instruction(work) == "Produce output from input.";
+        }
+        """
+    )
+
+    assert result.diagnostics == ()
+
+
 def test_checker_reports_missing_instruction() -> None:
     result = _check(
         """
@@ -77,7 +109,8 @@ def test_checker_rejects_non_artifact_dataflow_values() -> None:
     )
 
     assert any(
-        item.severity == "error" and item.message == "graph value 'wrong_input' must be declared as Artifact"
+        item.severity == "error"
+        and item.message == "graph value 'wrong_input' must be untyped or belong to Artifact, got ['Step']"
         for item in result.diagnostics
     )
 

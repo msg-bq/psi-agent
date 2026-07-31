@@ -117,8 +117,15 @@ def check_workflow(
         for artifact in compilation.graph.artifacts:
             declaration = constants.get(artifact.artifact_id)
             concepts = set() if declaration is None else {concept.name for concept in declaration.belong_concepts}
-            if "Artifact" not in concepts:
-                diagnostics.append(_diagnostic(f"graph value {artifact.artifact_id!r} must be declared as Artifact"))
+            # Graph relations establish the Artifact role. Untyped constants
+            # remain valid; reject only an explicit, incompatible declaration.
+            if concepts and "Artifact" not in concepts:
+                diagnostics.append(
+                    _diagnostic(
+                        f"graph value {artifact.artifact_id!r} must be untyped or belong to Artifact, "
+                        f"got {sorted(concepts)}"
+                    )
+                )
 
         for step in compilation.graph.steps:
             if step.instruction_id is None or not step.instruction_id.strip():
