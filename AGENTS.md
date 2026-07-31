@@ -456,4 +456,8 @@ Provider 特化，位于 `psi_agent.event_adapters.feishu`。回调先通过 `/v
 CloudEvent。Adapter 禁止 import `EventStore` / `EventService`，Event Daemon 也禁止
 import `lark_channel`。飞书多长连接是集群分发而非广播，因此普通 Channel 与可靠
 审批 Adapter 不得用同一个 App 同时建连接；`respond_to_approvals=False` 只关闭旧
-handler，不能改变平台分发语义。详见 `docs/eventd-feishu.md`。
+handler，不能改变平台分发语义。**刻意为之**：normalizer 等飞书 API ready 后才
+claim；已 claim 的 delivery 遇重连时持续 renew 并等待，不得 NACK 消耗 attempt。
+normalized ID 覆盖完整 canonical content；同一 transition 的详情若已变化，应产生
+新 ID，不能让旧 ID 配上新内容触发 Event Daemon 409 后死信。详见
+`docs/eventd-feishu.md`。

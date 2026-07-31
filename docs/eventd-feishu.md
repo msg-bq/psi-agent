@@ -89,13 +89,13 @@ The raw event is:
 ```
 
 When Feishu supplies no event ID, the adapter hashes the canonical raw payload.
-The normalized event uses a transition identity derived from tenant,
-approval code, instance code, status, and operation time:
+The normalized event ID is derived from the complete canonical normalized
+content, including its source and type:
 
 ```json
 {
   "specversion": "1.0",
-  "id": "sha256-transition-id",
+  "id": "sha256-content-id",
   "source": "feishu://tenant-a/cli_adapter/approval",
   "type": "approval.status.changed",
   "data": {
@@ -113,10 +113,16 @@ approval code, instance code, status, and operation time:
 }
 ```
 
-The same transition must produce the same normalized ID from live delivery and
-future reconciliation. Publishing an already stored identical normalized
-event is success; conflicting content remains an Event Daemon `409` and the
-raw delivery is retried until its configured attempt limit.
+Publishing an already stored identical normalized event is success. If a later
+detail fetch for the same transition contains changed form, task, timeline, or
+other fields, it produces a different ID instead of colliding with the earlier
+content and retrying until dead-letter. Future reconciliation must use the same
+canonical content identity.
+
+The normalizer does not claim raw deliveries until the Feishu API is ready.
+When a claimed delivery overlaps a WebSocket reconnect, it renews the existing
+lease while waiting for API readiness instead of NACKing and consuming an
+attempt without performing normalization.
 
 ## SDK compatibility boundary
 

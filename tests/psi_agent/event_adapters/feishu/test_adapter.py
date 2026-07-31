@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import anyio
 import pytest
 from aiohttp import web
 
@@ -40,7 +41,7 @@ async def _start(app: web.Application) -> tuple[web.AppRunner, str]:
     return runner, f"http://127.0.0.1:{port}"
 
 
-def test_normalized_event_has_live_reconciliation_stable_identity() -> None:
+def test_normalized_event_identity_covers_enriched_content() -> None:
     service = FeishuApprovalAdapterService(_settings())
     payload = {
         "approval_code": "expense",
@@ -63,12 +64,121 @@ def test_normalized_event_has_live_reconciliation_stable_identity() -> None:
 
     live = service._normalized_event(payload, detail)
     reconciled = service._normalized_event(payload, detail)
+    changed = service._normalized_event(
+        payload,
+        {
+            **detail,
+            "timeline": [{"type": "APPROVED", "create_time": "1001"}],
+        },
+    )
 
     assert live.id == reconciled.id
+    assert live.data == reconciled.data
+    assert changed.id != live.id
     assert live.source == "feishu://tenant-a/cli_adapter/approval"
     assert live.type == "approval.status.changed"
     assert live.data["applicant"] == "ou_user"
     assert live.data["attachments"][0]["name"] == "Invoice"
+
+
+@pytest.mark.anyio
+async def test_normalizer_waits_for_api_before_claiming() -> None:
+    claim_started = anyio.Event()
+
+    class FakeEventd:
+        async def claim(
+            self,
+            _subscription_id: str,
+            *,
+            instance_id: str,
+            lease_seconds: int,
+            wait_seconds: int,
+        ) -> list[dict[str, Any]]:
+            assert instance_id
+            assert lease_seconds
+            assert wait_seconds
+            claim_started.set()
+            await anyio.sleep_forever()
+            return []
+
+    class FakeApprovalApi:
+        pass
+
+    adapter = FeishuApprovalAdapterService(_settings())
+    adapter._eventd = cast(EventdClient, FakeEventd())
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(adapter._normalize_loop)
+        with anyio.move_on_after(0.05):
+            await claim_started.wait()
+        assert not claim_started.is_set()
+
+        adapter._set_api(cast(FeishuApprovalApi, FakeApprovalApi()))
+        with anyio.fail_after(1):
+            await claim_started.wait()
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.anyio
+async def test_claimed_delivery_waits_for_api_without_nack() -> None:
+    controls: list[str] = []
+    fetched = anyio.Event()
+
+    class FakeEventd:
+        async def publish(self, _event: CloudEvent, **_kwargs: object) -> int:
+            return 202
+
+        async def control(
+            self,
+            _delivery_id: str,
+            action: str,
+            _body: dict[str, object],
+        ) -> dict[str, Any]:
+            controls.append(action)
+            return {"ok": True}
+
+    class FakeApprovalApi:
+        async def fetch_detail(self, _instance_code: str) -> dict[str, Any]:
+            fetched.set()
+            return {"approval_name": "Expense", "user_id": "ou_user"}
+
+    settings = _settings()
+    adapter = FeishuApprovalAdapterService(settings)
+    adapter._eventd = cast(EventdClient, FakeEventd())
+    raw_event = CloudEvent(
+        "1.0",
+        "raw-waits",
+        f"{settings.source}/raw",
+        "feishu.approval.instance.received",
+        {
+            "header": {},
+            "event": {
+                "approval_code": "expense",
+                "instance_code": "instance-1",
+                "status": "APPROVED",
+            },
+        },
+    )
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(
+            adapter._process_delivery,
+            {
+                "deliveryId": "delivery-waits",
+                "leaseToken": "lease-waits",
+                "event": raw_event.to_dict(),
+            },
+        )
+        with anyio.move_on_after(0.05):
+            await fetched.wait()
+        assert not fetched.is_set()
+        assert controls == []
+
+        adapter._set_api(cast(FeishuApprovalApi, FakeApprovalApi()))
+        with anyio.fail_after(1):
+            await fetched.wait()
+
+    assert controls == ["ack"]
 
 
 @pytest.mark.anyio

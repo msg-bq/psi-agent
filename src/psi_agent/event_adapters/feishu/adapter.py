@@ -28,6 +28,7 @@ class FeishuApprovalAdapterService:
     settings: FeishuApprovalSettings
     _eventd: EventdClient | None = field(init=False, default=None)
     _api: FeishuApprovalApi | None = field(init=False, default=None)
+    _api_ready: anyio.Event = field(init=False, default_factory=anyio.Event)
 
     async def run(self) -> None:
         async with EventdClient(self.settings.eventd_endpoint, self.settings.eventd_token) as eventd:
@@ -103,15 +104,15 @@ class FeishuApprovalAdapterService:
                 await channel.start_background()
                 register_approval_processor(channel, on_event)
                 api = FeishuApprovalApi(channel)
-                self._api = api
                 await api.ensure_subscriptions(self.settings.approval_codes)
+                self._set_api(api)
                 logger.info(
                     f"Feishu approval adapter connected app={self.settings.app_id!r} "
                     f"approvals={len(self.settings.approval_codes)}"
                 )
                 await anyio.sleep_forever()
             finally:
-                self._api = None
+                self._set_api(None)
                 with anyio.CancelScope(shield=True):
                     try:
                         await channel.stop_background()
@@ -123,6 +124,7 @@ class FeishuApprovalAdapterService:
         failures = 0
         while True:
             try:
+                await self._wait_for_api()
                 deliveries = await self._require_eventd().claim(
                     self.settings.raw_subscription_id,
                     instance_id=instance_id,
@@ -183,9 +185,7 @@ class FeishuApprovalAdapterService:
         instance_code = str(payload.get("instance_code") or "").strip()
         if not instance_code:
             raise ValueError("Feishu approval event is missing instance_code")
-        api = self._api
-        if api is None:
-            raise RuntimeError("Feishu approval API is unavailable while WebSocket reconnects")
+        api = await self._wait_for_api()
         detail = await api.fetch_detail(instance_code)
         return self._normalized_event(cast(dict[str, Any], payload), detail)
 
@@ -203,8 +203,6 @@ class FeishuApprovalAdapterService:
             or detail.get("instance_operate_time")
             or ""
         )
-        identity = "|".join((self.settings.tenant_id, approval_code, instance_code, status, operate_time))
-        event_id = hashlib.sha256(identity.encode()).hexdigest()
         data = detail.copy()
         data.update(
             {
@@ -220,7 +218,34 @@ class FeishuApprovalAdapterService:
                 "timeline": detail.get("timeline") or [],
             }
         )
+        canonical = json.dumps(
+            {
+                "source": self.settings.source,
+                "type": _NORMALIZED_EVENT_TYPE,
+                "data": data,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        event_id = hashlib.sha256(canonical.encode()).hexdigest()
         return CloudEvent("1.0", event_id, self.settings.source, _NORMALIZED_EVENT_TYPE, data)
+
+    async def _wait_for_api(self) -> FeishuApprovalApi:
+        while self._api is None:
+            ready = self._api_ready
+            await ready.wait()
+        return self._api
+
+    def _set_api(self, api: FeishuApprovalApi | None) -> None:
+        self._api = api
+        if api is None:
+            ready = self._api_ready
+            self._api_ready = anyio.Event()
+            ready.set()
+        else:
+            self._api_ready.set()
 
     @staticmethod
     def _attachments(form: object) -> list[dict[str, Any]]:
