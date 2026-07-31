@@ -169,10 +169,7 @@ async def test_parallel_task_kernel_preserves_external_cancel_cleanup_failure() 
             pending.extend(error.exceptions)
         else:
             leaves.append(error)
-    assert any(
-        isinstance(error, ValueError) and "external cancellation" in str(error)
-        for error in leaves
-    )
+    assert any(isinstance(error, ValueError) and "external cancellation" in str(error) for error in leaves)
 
 
 @pytest.mark.anyio

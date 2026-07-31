@@ -482,9 +482,7 @@ async def _run_parallel_tasks[T](
     concurrency = task_count if max_concurrency is None else min(max_concurrency, task_count)
 
     # 事件依次为输入索引、状态和结果或异常。None 表示由本 helper 主动取消。
-    send_stream, receive_stream = anyio.create_memory_object_stream[
-        tuple[int, bool | None, object]
-    ](concurrency)
+    send_stream, receive_stream = anyio.create_memory_object_stream[tuple[int, bool | None, object]](concurrency)
 
     async def worker(
         index: int,
@@ -501,8 +499,7 @@ async def _run_parallel_tasks[T](
                 except BaseException as error:
                     status = (
                         None
-                        if cancel_scope.cancel_called
-                        and isinstance(error, anyio.get_cancelled_exc_class())
+                        if cancel_scope.cancel_called and isinstance(error, anyio.get_cancelled_exc_class())
                         else False
                     )
                     payload = error
