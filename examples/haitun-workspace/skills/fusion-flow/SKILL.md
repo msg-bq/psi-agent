@@ -419,7 +419,6 @@ Runner-specific typed catalog extensions use the grammar's generic operator-call
 ```fusionflow
 const enrich_batch: Workflow;
 const enrich_item: Step;
-const enrich_name: StepName;
 const worker: Agent, Executor;
 const items: Artifact;
 const item: Artifact;
@@ -436,7 +435,7 @@ workflow enrich_batch {
   step_executor(enrich_item) == worker;
 
   -- STEP CONFIGURATION
-  step_name(enrich_item) == enrich_name;
+  step_name(enrich_item) == "Enrich Item";
   step_instruction(enrich_item) == "Enrich the local item input and return the enriched_items value.";
   step_timeout(enrich_item) == 120;
   max_attempts(enrich_item) == 2;

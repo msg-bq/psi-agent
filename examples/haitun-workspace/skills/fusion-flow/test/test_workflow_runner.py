@@ -886,7 +886,6 @@ async def test_human_foreach_fails_before_any_human_dispatch() -> None:
     source = """
 const human_foreach: Workflow;
 const review_step: Step;
-const review_name: StepName;
 const reviewer: Human;
 const items: Artifact;
 const item: Artifact;
@@ -896,7 +895,7 @@ workflow human_foreach {
     input_workflow(human_foreach) == [items];
     output_workflow(human_foreach) == [results];
 
-    step_name(review_step) == review_name;
+    step_name(review_step) == "Review";
     step_instruction(review_step) == "Review this item.";
     step_executor(review_step) == reviewer;
     foreach_item(review_step, items) == item;

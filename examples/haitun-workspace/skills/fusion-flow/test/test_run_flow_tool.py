@@ -239,7 +239,6 @@ workflow ordered {
 _AGENT_FOREACH_WORKFLOW = """
 const agent_foreach: Workflow;
 const process_step: Step;
-const process_name: StepName;
 const worker: Agent;
 const items: Artifact;
 const item: Artifact;
@@ -250,7 +249,7 @@ workflow agent_foreach {
     output_workflow(agent_foreach) == [results];
     max_concurrency(agent_foreach) == 2;
 
-    step_name(process_step) == process_name;
+    step_name(process_step) == "Process";
     step_instruction(process_step) == "Process this item.";
     step_executor(process_step) == worker;
     foreach_item(process_step, items) == item;
@@ -262,7 +261,6 @@ workflow agent_foreach {
 _PROGRAM_FOREACH_WORKFLOW = """
 const program_foreach: Workflow;
 const process_step: Step;
-const process_name: StepName;
 const worker: Program;
 const items: Artifact;
 const item: Artifact;
@@ -274,7 +272,7 @@ workflow program_foreach {
     max_concurrency(program_foreach) == 2;
 
     program_path(worker) == "./worker.py";
-    step_name(process_step) == process_name;
+    step_name(process_step) == "Process";
     step_instruction(process_step) == "Process this item.";
     step_executor(process_step) == worker;
     foreach_item(process_step, items) == item;
