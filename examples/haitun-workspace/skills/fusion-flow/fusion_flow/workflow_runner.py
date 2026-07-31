@@ -10,7 +10,7 @@ from os import PathLike
 from os.path import isabs
 from typing import Literal, cast
 
-from .checker import check_workflow
+from .checker import check_workflow, collect_core_ir_diagnostics
 from .contracts import Diagnostic
 from .core_ir import Assertion, CompoundTerm, Concept, Constant, Operator
 from .graph_compiler import WorkflowGraphCompilation, WorkflowGraphCompiler
@@ -255,6 +255,12 @@ def compile_workflow(
     try:
         compiled = WorkflowGraphCompiler().compile(parsed.core_ir)
     except (TypeError, ValueError) as error:
+        # Core IR can expose compatibility warnings even when graph lowering
+        # fails. Surface those warnings before preserving the compiler error.
+        if diagnostic_callback is not None:
+            for diagnostic in collect_core_ir_diagnostics(parsed.core_ir):
+                if diagnostic.severity == "warning":
+                    diagnostic_callback(diagnostic)
         raise ValueError(f"workflow check failed: {error}") from error
     if not isinstance(compiled, tuple):
         raise TypeError("workflow graph compiler returned an unexpected result")

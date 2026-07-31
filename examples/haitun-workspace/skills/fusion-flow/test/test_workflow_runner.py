@@ -617,6 +617,29 @@ def test_strict_runner_reports_untyped_warning_before_rejection() -> None:
     ]
 
 
+def test_graph_error_reports_untyped_warning_before_rejection() -> None:
+    diagnostics: list[Any] = []
+    source = _dispatch_workflow(None, "do_work").replace(
+        '    step_name(dispatch_step) == "Dispatch";\n',
+        "",
+    )
+
+    with pytest.raises(ValueError, match="step 'dispatch_step' has no step_name"):
+        run_workflow.compile_workflow(
+            source,
+            strict_executors=True,
+            diagnostic_callback=diagnostics.append,
+        )
+
+    assert [(item.severity, item.message) for item in diagnostics] == [
+        (
+            "warning",
+            "executor 'worker' for step 'dispatch_step' has no explicit "
+            "Agent, Human, or Program type; legacy execution defaults it to Agent",
+        )
+    ]
+
+
 @pytest.mark.anyio
 async def test_human_instruction_is_prepared_by_agent_before_request() -> None:
     preparation_prompts: list[str] = []

@@ -28,6 +28,52 @@ def _functional_call(assertion: Assertion) -> tuple[CompoundTerm, Constant] | No
     return None
 
 
+def _untyped_executor_warning(*, executor_id: str, step_id: str) -> Diagnostic:
+    return _diagnostic(
+        f"executor {executor_id!r} for step {step_id!r} has no explicit "
+        "Agent, Human, or Program type; legacy execution defaults it to Agent",
+        warning=True,
+    )
+
+
+def collect_core_ir_diagnostics(core_ir: WorkflowFile) -> tuple[Diagnostic, ...]:
+    """Collect diagnostics that do not require a successfully lowered graph."""
+
+    diagnostics: list[Diagnostic] = []
+    workflow_names = [workflow.name for workflow in core_ir.workflows]
+    if len(workflow_names) != 1:
+        diagnostics.append(_diagnostic(f"workflow file must contain exactly one workflow, got {len(workflow_names)}"))
+    duplicates = sorted(name for name, count in Counter(workflow_names).items() if count > 1)
+    if duplicates:
+        diagnostics.append(_diagnostic(f"duplicate workflow names: {duplicates}"))
+
+    constants = {constant.symbol: constant for constant in core_ir.constants}
+    warned: set[tuple[str, str]] = set()
+    for workflow in core_ir.workflows:
+        for assertion in workflow.assertions:
+            pair = _functional_call(assertion)
+            if pair is None or pair[0].operator.name != "step_executor":
+                continue
+            call, executor_value = pair
+            if len(call.arguments) != 1 or not isinstance(call.arguments[0], Constant):
+                continue
+            step = call.arguments[0]
+            executor = constants.get(executor_value.symbol, executor_value)
+            if not step.symbol or not executor.symbol or executor.belong_concepts:
+                continue
+            warning_key = (step.symbol, executor.symbol)
+            if warning_key in warned:
+                continue
+            warned.add(warning_key)
+            diagnostics.append(
+                _untyped_executor_warning(
+                    executor_id=executor.symbol,
+                    step_id=step.symbol,
+                )
+            )
+    return tuple(diagnostics)
+
+
 def _program_paths(
     residual: tuple[Assertion, ...],
 ) -> tuple[dict[str, str], tuple[Assertion, ...], tuple[Diagnostic, ...]]:
@@ -74,13 +120,7 @@ def check_workflow(
     omit it and receive the same validation through an internal compilation.
     """
 
-    diagnostics: list[Diagnostic] = []
-    workflow_names = [workflow.name for workflow in core_ir.workflows]
-    if len(workflow_names) != 1:
-        diagnostics.append(_diagnostic(f"workflow file must contain exactly one workflow, got {len(workflow_names)}"))
-    duplicates = sorted(name for name, count in Counter(workflow_names).items() if count > 1)
-    if duplicates:
-        diagnostics.append(_diagnostic(f"duplicate workflow names: {duplicates}"))
+    diagnostics = list(collect_core_ir_diagnostics(core_ir))
 
     compiled: object = graph_compilations
     if compiled is None:
@@ -137,14 +177,13 @@ def check_workflow(
                 if executor is None
                 else {concept.name for concept in executor.belong_concepts if concept.name in _EXECUTOR_KINDS}
             )
-            if not kinds:
-                diagnostics.append(
-                    _diagnostic(
-                        f"executor {step.executor_id!r} for step {step.step_id!r} has no explicit "
-                        "Agent, Human, or Program type; legacy execution defaults it to Agent",
-                        warning=True,
-                    )
+            if executor is None or not executor.belong_concepts:
+                warning = _untyped_executor_warning(
+                    executor_id=step.executor_id,
+                    step_id=step.step_id,
                 )
+                if warning not in diagnostics:
+                    diagnostics.append(warning)
             elif len(kinds) != 1:
                 diagnostics.append(
                     _diagnostic(

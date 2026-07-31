@@ -19,7 +19,6 @@ def test_checker_accepts_complete_workflow() -> None:
         const input: Artifact;
         const output: Artifact;
         const work: Step;
-        const work_name: StepName;
         const worker: Agent, Executor;
         workflow example {
           input_workflow(example) == [input];
@@ -27,7 +26,7 @@ def test_checker_accepts_complete_workflow() -> None:
           produces(work) == [output];
           output_workflow(example) == [output];
           step_executor(work) == worker;
-          step_name(work) == work_name;
+          step_name(work) == "Work";
           step_instruction(work) == "Produce output from input.";
         }
         """
@@ -51,7 +50,6 @@ def test_checker_accepts_untyped_or_artifact_compatible_graph_values(artifact_de
         artifact_declarations
         + """
         const work: Step;
-        const work_name: StepName;
         const worker: Agent, Executor;
         workflow example {
           input_workflow(example) == [input];
@@ -59,7 +57,7 @@ def test_checker_accepts_untyped_or_artifact_compatible_graph_values(artifact_de
           produces(work) == [output];
           output_workflow(example) == [output];
           step_executor(work) == worker;
-          step_name(work) == work_name;
+          step_name(work) == "Work";
           step_instruction(work) == "Produce output from input.";
         }
         """
@@ -73,19 +71,65 @@ def test_checker_reports_missing_instruction() -> None:
         """
         const output: Artifact;
         const work: Step;
-        const work_name: StepName;
         const worker: Agent, Executor;
         workflow example {
           input_workflow(example) == [];
           produces(work) == [output];
           output_workflow(example) == [output];
           step_executor(work) == worker;
-          step_name(work) == work_name;
+          step_name(work) == "Work";
         }
         """
     )
 
     assert any(item.severity == "error" and "has no step_instruction" in item.message for item in result.diagnostics)
+
+
+def test_checker_preserves_untyped_warning_when_graph_compilation_fails() -> None:
+    result = _check(
+        """
+        const output: Artifact;
+        const work: Step;
+        workflow example {
+          input_workflow(example) == [];
+          produces(work) == [output];
+          output_workflow(example) == [output];
+          step_executor(work) == worker;
+          step_instruction(work) == "Produce output.";
+        }
+        """
+    )
+
+    assert [(item.severity, item.message) for item in result.diagnostics] == [
+        (
+            "warning",
+            "executor 'worker' for step 'work' has no explicit Agent, Human, or Program type; "
+            "legacy execution defaults it to Agent",
+        ),
+        ("error", "step 'work' has no step_name"),
+    ]
+
+
+def test_checker_does_not_report_fallback_for_explicitly_incompatible_executor() -> None:
+    result = _check(
+        """
+        const output: Artifact;
+        const work: Step;
+        const worker: Executor;
+        workflow example {
+          input_workflow(example) == [];
+          produces(work) == [output];
+          output_workflow(example) == [output];
+          step_name(work) == "Work";
+          step_executor(work) == worker;
+          step_instruction(work) == "Produce output.";
+        }
+        """
+    )
+
+    assert [(item.severity, item.message) for item in result.diagnostics] == [
+        ("error", "step_executor must belong to exactly one of Human, Agent, or Program")
+    ]
 
 
 def test_checker_rejects_non_artifact_dataflow_values() -> None:
@@ -94,7 +138,6 @@ def test_checker_rejects_non_artifact_dataflow_values() -> None:
         const wrong_input: Step;
         const output: Artifact;
         const work: Step;
-        const work_name: StepName;
         const worker: Agent, Executor;
         workflow example {
           input_workflow(example) == [wrong_input];
@@ -102,7 +145,7 @@ def test_checker_rejects_non_artifact_dataflow_values() -> None:
           produces(work) == [output];
           output_workflow(example) == [output];
           step_executor(work) == worker;
-          step_name(work) == work_name;
+          step_name(work) == "Work";
           step_instruction(work) == "Produce output.";
         }
         """
