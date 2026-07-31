@@ -7,7 +7,16 @@ from typing import cast
 import anyio
 import pytest
 from fusion_flow.execution import PipelineStep, RunContext, flow, run
-from fusion_flow.execution.flow import logger as flow_logger
+from fusion_flow.execution.flow import (
+    _aggregate_foreach_outputs,
+    _IndexedFailure,
+    _IndexedSuccess,
+    _retry_operation,
+    _run_indexed_parallel,
+)
+from fusion_flow.execution.flow import (
+    logger as flow_logger,
+)
 
 
 async def _execute(
@@ -29,6 +38,109 @@ async def _execute(
     )
     assert result.status == "ok"
     return contexts[0]
+
+
+@pytest.mark.anyio
+async def test_shared_execution_kernels_do_not_require_run_context() -> None:
+    attempts: list[int] = []
+
+    async def flaky(attempt: int) -> str:
+        attempts.append(attempt)
+        if attempt == 1:
+            raise RuntimeError("retry")
+        return "ok"
+
+    assert await _retry_operation(
+        flaky,
+        max_attempts=2,
+        initial_delay=0,
+    ) == ("ok", 2)
+
+    active = 0
+    maximum = 0
+    terminal_indexes: list[int] = []
+
+    async def visit(item: int, index: int) -> int:
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        try:
+            await anyio.sleep(0.01)
+            if item == 2:
+                raise ValueError("collected")
+            return item * 10
+        finally:
+            active -= 1
+
+    outcomes = await _run_indexed_parallel(
+        [1, 2, 3],
+        visit,
+        max_concurrency=2,
+        collect_error=lambda error: isinstance(error, ValueError),
+        on_outcome=lambda outcome: terminal_indexes.append(outcome.index),
+    )
+
+    assert maximum == 2
+    assert [outcome.index for outcome in outcomes] == [0, 1, 2]
+    assert isinstance(outcomes[0], _IndexedSuccess)
+    assert outcomes[0].value == 10
+    assert isinstance(outcomes[1], _IndexedFailure)
+    assert str(outcomes[1].error) == "collected"
+    assert isinstance(outcomes[2], _IndexedSuccess)
+    assert outcomes[2].value == 30
+    assert sorted(terminal_indexes) == [0, 1, 2]
+
+    started: list[int] = []
+
+    async def fatal(_: int, index: int) -> None:
+        started.append(index)
+        if index == 0:
+            raise RuntimeError("fatal")
+        await anyio.sleep_forever()
+
+    with pytest.raises(RuntimeError, match="fatal"):
+        await _run_indexed_parallel(
+            tuple(range(100)),
+            fatal,
+            max_concurrency=2,
+        )
+    assert set(started) <= {0, 1}
+
+    started.clear()
+
+    async def simultaneous_fatal(_: int, index: int) -> None:
+        started.append(index)
+        raise RuntimeError(f"fatal {index}")
+
+    with pytest.raises(RuntimeError, match=r"fatal [01]"):
+        await _run_indexed_parallel(
+            tuple(range(100)),
+            simultaneous_fatal,
+            max_concurrency=2,
+        )
+    assert set(started) <= {0, 1}
+
+
+def test_shared_foreach_aggregation_is_ordered_and_aligned() -> None:
+    assert _aggregate_foreach_outputs(
+        ("result",),
+        (
+            (0, 1, {"result": None}, None),
+            (1, 2, None, {"kind": "RuntimeError", "message": "failed"}),
+        ),
+        error_artifact_id="errors",
+    ) == {
+        "result": [None, None],
+        "errors": [
+            None,
+            {
+                "index": 1,
+                "kind": "RuntimeError",
+                "message": "failed",
+                "attempts": 2,
+            },
+        ],
+    }
 
 
 @pytest.mark.anyio
@@ -275,6 +387,36 @@ async def test_for_each_is_serial_and_parallel_for_each_is_concurrent(
         [0, 1],
         [0, 1, 2],
     ]
+
+
+@pytest.mark.anyio
+async def test_parallel_for_each_failure_cancels_and_joins_siblings(
+    tmp_path,
+) -> None:
+    sibling_started = anyio.Event()
+    sibling_cleaned = anyio.Event()
+
+    async def body(_: RunContext) -> None:
+        async def visit(_: str, index: int) -> None:
+            if index == 0:
+                await sibling_started.wait()
+                raise RuntimeError("failed")
+            sibling_started.set()
+            try:
+                await anyio.sleep_forever()
+            finally:
+                sibling_cleaned.set()
+
+        with pytest.raises(RuntimeError, match="failed"):
+            await flow.parallel_for_each(
+                ["failure", "sibling"],
+                visit,
+            )
+        assert sibling_cleaned.is_set()
+
+    context = await _execute(tmp_path, "parallel-for-each-failure", body)
+    trace = context.root_trace.children[0]
+    assert (trace.kind, trace.status) == ("forEach", "error")
 
 
 @pytest.mark.anyio

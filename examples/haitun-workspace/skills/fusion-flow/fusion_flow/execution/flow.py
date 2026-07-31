@@ -125,6 +125,241 @@ async def _await_maybe(value: object) -> object:
     return value
 
 
+def _validate_retry_parameters(
+    *,
+    max_attempts: int,
+    initial_delay: float,
+    backoff_factor: float,
+    max_delay: float,
+) -> None:
+    """Validate the policy shared by traced and graph-owned retry callers."""
+
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+        raise ValueError("max_attempts must be a positive integer")
+    for name, value in (
+        ("initial_delay", initial_delay),
+        ("backoff_factor", backoff_factor),
+        ("max_delay", max_delay),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+            raise ValueError(f"{name} must be a finite number")
+    if initial_delay < 0 or max_delay < 0:
+        raise ValueError("retry delays must be non-negative")
+    if backoff_factor <= 0:
+        raise ValueError("backoff_factor must be positive")
+
+
+async def _retry_operation[T](
+    operation: Callable[[int], Awaitable[T]],
+    *,
+    max_attempts: int = 3,
+    initial_delay: float = 0.2,
+    backoff_factor: float = 2.0,
+    max_delay: float = 8.0,
+    should_retry: Callable[[Exception, int], Awaitable[bool] | bool] | None = None,
+    on_retry: Callable[[Exception, int], Awaitable[object] | object] | None = None,
+) -> tuple[T, int]:
+    """Run one retryable operation without requiring a ``RunContext``.
+
+    The attempt number is passed to ``operation`` so callers can build a fresh
+    lease, timeout scope, or dispatch context for every try.  Cancellation is a
+    ``BaseException`` in AnyIO and therefore escapes without being retried.
+    """
+
+    _validate_retry_parameters(
+        max_attempts=max_attempts,
+        initial_delay=initial_delay,
+        backoff_factor=backoff_factor,
+        max_delay=max_delay,
+    )
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await operation(attempt), attempt
+        except Exception as error:
+            retryable = True
+            if should_retry is not None:
+                retryable = _ensure_bool(
+                    await _await_maybe(should_retry(error, attempt)),
+                    label="should_retry",
+                )
+            if attempt >= max_attempts or not retryable:
+                raise
+            if on_retry is not None:
+                await _await_maybe(on_retry(error, attempt))
+            delay = min(
+                initial_delay * backoff_factor ** (attempt - 1),
+                max_delay,
+            )
+            await anyio.sleep(delay)
+    raise AssertionError("retry operation completed without a result")
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexedSuccess[T]:
+    """One successful indexed parallel operation."""
+
+    index: int
+    value: T
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexedFailure:
+    """One collected indexed parallel failure."""
+
+    index: int
+    error: Exception
+
+
+type _IndexedOutcome[T] = _IndexedSuccess[T] | _IndexedFailure
+
+
+async def _run_indexed_parallel[T, R](
+    items: Sequence[T],
+    operation: Callable[[T, int], Awaitable[R]],
+    *,
+    max_concurrency: int | None = None,
+    collect_error: Callable[[Exception], bool] | None = None,
+    on_outcome: Callable[[_IndexedOutcome[R]], Awaitable[object] | object] | None = None,
+) -> tuple[_IndexedOutcome[R], ...]:
+    """Run an ordered, optionally bounded indexed map without a ``RunContext``.
+
+    Successful values and explicitly collected ordinary failures are returned
+    in source order.  ``on_outcome`` runs as each item becomes terminal, before
+    the aggregate is returned, which lets a graph interpreter checkpoint
+    individual iterations.  Errors rejected by ``collect_error`` are raised
+    after sibling cancellation; cancellation itself is never collected.
+    """
+
+    if max_concurrency is not None and (
+        isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int) or max_concurrency < 1
+    ):
+        raise ValueError("max_concurrency must be a positive integer or None")
+    snapshot = tuple(items)
+    if not snapshot:
+        return ()
+
+    worker_count = min(len(snapshot), max_concurrency or len(snapshot))
+    jobs_send, jobs_receive = anyio.create_memory_object_stream[tuple[int, T]](
+        worker_count,
+    )
+    outcomes_send, outcomes_receive = anyio.create_memory_object_stream[
+        tuple[_IndexedOutcome[R] | None, Exception | None]
+    ](len(snapshot))
+
+    async def worker(
+        receiver: Any,
+        sender: Any,
+    ) -> None:
+        """Run queued items until exhaustion or one fatal ordinary error."""
+
+        async with receiver, sender:
+            async for index, item in receiver:
+                try:
+                    value = await operation(item, index)
+                except Exception as error:
+                    if collect_error is None or not _ensure_bool(
+                        collect_error(error),
+                        label="collect_error",
+                    ):
+                        await sender.send((None, error))
+                        return
+                    outcome: _IndexedOutcome[R] = _IndexedFailure(index, error)
+                else:
+                    outcome = _IndexedSuccess(index, value)
+
+                try:
+                    if on_outcome is not None:
+                        await _await_maybe(on_outcome(outcome))
+                except Exception as error:
+                    await sender.send((None, error))
+                    return
+                await sender.send((outcome, None))
+
+    async def produce_jobs() -> None:
+        """Feed workers concurrently so a fatal outcome can stop expansion."""
+
+        async with jobs_send:
+            for index, item in enumerate(snapshot):
+                try:
+                    await jobs_send.send((index, item))
+                except anyio.BrokenResourceError:
+                    # Every worker receiver closed after reporting a fatal
+                    # outcome. The coordinator will raise that original error.
+                    return
+
+    ordered: dict[int, _IndexedOutcome[R]] = {}
+    fatal_error: Exception | None = None
+    async with outcomes_receive, anyio.create_task_group() as task_group:
+        for _ in range(worker_count):
+            task_group.start_soon(
+                worker,
+                jobs_receive.clone(),
+                outcomes_send.clone(),
+            )
+        await jobs_receive.aclose()
+        await outcomes_send.aclose()
+        task_group.start_soon(produce_jobs)
+
+        while len(ordered) < len(snapshot):
+            outcome, error = await outcomes_receive.receive()
+            if error is not None:
+                fatal_error = error
+                task_group.cancel_scope.cancel()
+                break
+            if outcome is None:
+                raise AssertionError("indexed worker emitted no outcome")
+            ordered[outcome.index] = outcome
+
+    if fatal_error is not None:
+        raise fatal_error
+    return tuple(ordered[index] for index in range(len(snapshot)))
+
+
+def _aggregate_foreach_outputs(
+    output_ids: Sequence[str],
+    records: Sequence[
+        tuple[
+            int,
+            int,
+            Mapping[str, object] | None,
+            Mapping[str, object] | None,
+        ]
+    ],
+    *,
+    error_artifact_id: str,
+) -> dict[str, object]:
+    """Build source-aligned output and error Lists from terminal item records."""
+
+    aggregated: dict[str, object] = {output_id: [] for output_id in output_ids}
+    errors: list[object] = []
+    for expected_index, (index, attempts, outputs, error) in enumerate(records):
+        if index != expected_index:
+            raise ValueError(
+                "foreach records must be complete and ordered by source index",
+            )
+        if outputs is None:
+            if error is None:
+                raise ValueError("failed foreach record must contain an error")
+            for output_id in output_ids:
+                cast(list[object], aggregated[output_id]).append(None)
+            errors.append(
+                {
+                    "index": index,
+                    "kind": error["kind"],
+                    "message": error["message"],
+                    "attempts": attempts,
+                }
+            )
+            continue
+        if error is not None:
+            raise ValueError("successful foreach record must not contain an error")
+        for output_id in output_ids:
+            cast(list[object], aggregated[output_id]).append(outputs[output_id])
+        errors.append(None)
+    aggregated[error_artifact_id] = errors
+    return aggregated
+
+
 def _preview(value: object) -> str:
     """生成长度受限的 trace 摘要。"""
 
@@ -880,25 +1115,22 @@ class Flow:
             "parallelForEach",
             metadata={"parallel": True, "item_count": len(items)},
         ):
-            tasks: list[Callable[[], Awaitable[object]]] = []
-            for index, item in enumerate(items):
 
-                async def visit(
-                    item: T = item,
-                    index: int = index,
-                ) -> object:
-                    """为一个并发元素记录 iteration trace 并调用回调。"""
+            async def visit(item: T, index: int) -> object:
+                """为一个并发元素记录 iteration trace 并调用回调。"""
 
-                    async with run._trace(
-                        "iteration",
-                        str(index),
-                        input_summary=_preview(item),
-                        metadata={"index": index},
-                    ):
-                        return await fn(item, index)
+                async with run._trace(
+                    "iteration",
+                    str(index),
+                    input_summary=_preview(item),
+                    metadata={"index": index},
+                ):
+                    return await fn(item, index)
 
-                tasks.append(visit)
-            await _run_parallel_tasks(tasks, join="all", required=len(tasks))
+            await _run_indexed_parallel(
+                items,
+                visit,
+            )
 
     # ============================================================
     # 第三批: 带 LLM 判断的高级控制流
@@ -1340,19 +1572,12 @@ class Flow:
         ``flow.session(...)`` 已创建出的单次 coroutine, 因为重试时无法再次调用它。
         """
 
-        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
-            raise ValueError("max_attempts must be a positive integer")
-        for name, value in (
-            ("initial_delay", initial_delay),
-            ("backoff_factor", backoff_factor),
-            ("max_delay", max_delay),
-        ):
-            if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
-                raise ValueError(f"{name} must be a finite number")
-        if initial_delay < 0 or max_delay < 0:
-            raise ValueError("retry delays must be non-negative")
-        if backoff_factor <= 0:
-            raise ValueError("backoff_factor must be positive")
+        _validate_retry_parameters(
+            max_attempts=max_attempts,
+            initial_delay=initial_delay,
+            backoff_factor=backoff_factor,
+            max_delay=max_delay,
+        )
         run = current_run_context()
         async with run._trace(
             "retry",
@@ -1364,36 +1589,37 @@ class Flow:
                 "error_trail": [],
             },
         ) as trace:
-            attempts = 0
-            while True:
-                attempts += 1
-                trace.metadata["attempts"] = attempts
+
+            async def traced_operation(attempt: int) -> T:
+                """Record one public Flow attempt before delegating its body."""
+
+                trace.metadata["attempts"] = attempt
                 try:
-                    value = await operation()
-                # AnyIO 取消异常继承 BaseException; 不能把取消误当成可重试失败。
+                    return await operation()
                 except Exception as error:
                     error_trail = cast("list[str]", trace.metadata["error_trail"])
-                    error_trail.append(f"attempt {attempts}: {error}")
-                    retryable = True
-                    if should_retry is not None:
-                        retryable = _ensure_bool(
-                            await _await_maybe(should_retry(error, attempts)),
-                            label="should_retry",
-                        )
-                    if attempts >= max_attempts or not retryable:
-                        raise
-                    logger.warning(
-                        f"FusionFlow retry attempt {attempts}/{max_attempts} failed: {error}",
-                    )
-                    delay = min(
-                        initial_delay * backoff_factor ** (attempts - 1),
-                        max_delay,
-                    )
-                    await anyio.sleep(delay)
-                else:
-                    trace.metadata["succeeded"] = True
-                    trace.output_summary = _preview(value)
-                    return value
+                    error_trail.append(f"attempt {attempt}: {error}")
+                    raise
+
+            def warn_retry(error: Exception, attempt: int) -> None:
+                """Keep the public compatibility warning at each actual retry."""
+
+                logger.warning(
+                    f"FusionFlow retry attempt {attempt}/{max_attempts} failed: {error}",
+                )
+
+            value, _ = await _retry_operation(
+                traced_operation,
+                max_attempts=max_attempts,
+                initial_delay=initial_delay,
+                backoff_factor=backoff_factor,
+                max_delay=max_delay,
+                should_retry=should_retry,
+                on_retry=warn_retry,
+            )
+            trace.metadata["succeeded"] = True
+            trace.output_summary = _preview(value)
+            return value
 
     async def evaluate_static(
         self,

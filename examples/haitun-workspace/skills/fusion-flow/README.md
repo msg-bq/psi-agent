@@ -3,14 +3,18 @@
 FusionFlow is the workspace-local G4 parser/compiler, graph compiler, workflow
 runner, and authoring Skill. Agent-backed Steps reuse
 `fusion_flow.execution.run()`, `flow.agent()`, and `flow.session()` through a
-workspace `SessionRunner`; the graph interpreter still owns dependency,
-resource, retry, foreach, and checkpoint semantics. Program-backed Steps use an
-injected Program runner contract; the workspace entry point implements it with
-a specialized Program Agent and structured AnyIO `compile_program` /
-`execute_program` tools. The Agent can prepare or install runtimes,
-dependencies, compilers, and other toolchain components for multiple
-languages, while the host fixes or registers the authoritative launch and
-captures its process result. Human-backed Steps use a dedicated
+workspace `SessionRunner`. Private `RunContext`-free helpers in
+`fusion_flow.execution.flow` provide retry sequencing, bounded indexed
+parallel traversal to both the public Flow API and the G4 interpreter, and keep
+G4's ordered aligned aggregation in the same mechanism layer. The graph
+interpreter retains graph readiness, Artifact/checkpoint/resume, global
+admission, resources, and timeout.
+Program-backed Steps use an injected Program runner contract; the workspace
+entry point implements it with a specialized Program Agent and structured
+AnyIO `compile_program` / `execute_program` tools. The Agent can prepare or
+install runtimes, dependencies, compilers, and other toolchain components for
+multiple languages, while the host fixes or registers the authoritative launch
+and captures its process result. Human-backed Steps use a dedicated
 instruction-preparation Agent, the existing Haitun `clarify` flow, and a
 private checkpoint that crosses conversation turns.
 
@@ -60,13 +64,13 @@ and script assets without resource requirements.
 - `fusion_flow/checker.py`: static semantics boundary.
 - `fusion_flow/compiler.py`: target-neutral Core IR traversal and backend hook boundary.
 - `fusion_flow/workflow_graph/`: immutable Step-Artifact graph model, validation, and deterministic serialization.
-- `fusion_flow/workflow_execution.py`: graph planning, dependency waits, concurrency, resources, timeouts, and checkpoints.
+- `fusion_flow/workflow_execution.py`: graph planning and interpretation, Artifact/checkpoint/resume state, global admission, resources, and timeouts; generic retry/indexed-foreach mechanisms come from the shared execution kernel.
 - `fusion_flow/graph_compiler.py`: concrete `CoreIRCompiler` backend that builds `fusion_flow.workflow_graph` models.
 - `fusion_flow/workflow_runner.py`: fail-closed compile/plan/execute entry point with Agent, Human, Program, and checkpoint injection boundaries.
 - `fusion_flow/artifact_store.py`: atomic, workflow-local Markdown persistence for every materialized G4 Artifact.
 - `fusion_flow/job_store.py`: strict v2 JSON state plus non-blocking, OS-released advisory leases and an in-process guard for G4 runs waiting on Human input.
 - `fusion_flow/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
-- `fusion_flow/execution/`: Python `flow.*` runtime and historical compatibility surface. The workspace adapter reuses its `run`/`agent`/`session` core for G4 Agent leaves; immediate control combinators are not G4 graph bytecode.
+- `fusion_flow/execution/`: Python `flow.*` runtime, historical compatibility surface, and private `RunContext`-free retry/bounded-indexed-parallel/aggregation kernel. Public Flow combinators and the G4 interpreter share those helpers, while the workspace adapter reuses `run`/`agent`/`session` for G4 Agent leaves; immediate control combinators are not G4 graph bytecode.
 - `test/test_graph_compiler.py`: real Core IR to WorkflowGraph compiler contract checks.
 - `test/test_workflow_runner.py`: compile, plan, dependency, resource, and dispatch checks.
 - `test/execution/`: parity and shared Agent-session runtime regression tests.
@@ -336,8 +340,9 @@ Feedback/input-plus-producer graphs and circular Artifact or explicit control
 awaits remain fail-closed execution-plan boundaries.
 
 This remains a workspace-local package rather than a wheel dependency. The
-execution subpackage is a compatibility boundary, not the G4 runtime. Run all
-tests from this directory so `fusion_flow` is on the runtime import path:
+execution subpackage is not the G4 graph interpreter, but it is an intentional
+shared runtime boundary for Agent sessions and generic execution kernels. Run
+all tests from this directory so `fusion_flow` is on the runtime import path:
 
 ```powershell
 uv run python -m pytest -q

@@ -861,6 +861,60 @@ async def test_foreach_does_not_collect_execution_invariant_errors() -> None:
         )
 
 
+@pytest.mark.anyio
+async def test_foreach_does_not_retry_or_collect_allocator_invariants() -> None:
+    graph = _foreach_graph(
+        foreach_concurrency=1,
+        max_attempts=3,
+    )
+
+    class FailingAllocator(ResourceAllocator):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.acquire_count = 0
+
+        async def _acquire(
+            self,
+            requirements: tuple[ResourceRequirement, ...],
+            *,
+            state: workflow_execution._AdmissionState | None = None,
+        ) -> workflow_execution.ResourceLease:
+            del requirements, state
+            self.acquire_count += 1
+            raise RuntimeError("allocator invariant")
+
+    allocator = FailingAllocator()
+    dispatch_count = 0
+
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        nonlocal dispatch_count
+        del step, inputs
+        dispatch_count += 1
+        return {"result": "unreachable"}
+
+    with pytest.RaisesGroup(
+        pytest.RaisesGroup(
+            pytest.RaisesExc(
+                ExecutionPlanError,
+                match="workflow resource admission failed",
+            ),
+        )
+    ):
+        await execute_plan(
+            generate_plan(graph),
+            graph,
+            inputs={"items": [1]},
+            dispatch=dispatch,
+            allocator=allocator,
+        )
+
+    assert allocator.acquire_count == 1
+    assert dispatch_count == 0
+
+
 def test_generate_plan_accepts_resource_requirements() -> None:
     graph = WorkflowGraph(
         "resources",

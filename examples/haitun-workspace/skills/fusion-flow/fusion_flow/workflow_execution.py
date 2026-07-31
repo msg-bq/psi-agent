@@ -15,6 +15,14 @@ from typing import cast
 import anyio
 from loguru import logger
 
+from .execution.flow import (
+    _aggregate_foreach_outputs,
+    _IndexedFailure,
+    _IndexedOutcome,
+    _IndexedSuccess,
+    _retry_operation,
+    _run_indexed_parallel,
+)
 from .workflow_graph import (
     ArtifactOperand,
     ComparisonCondition,
@@ -463,19 +471,29 @@ class ResourceAllocator:
 
         lease: ResourceLease | None = None
         try:
-            lease = await self._acquire(
-                requirements,
-                state=state,
-            )
+            try:
+                lease = await self._acquire(
+                    requirements,
+                    state=state,
+                )
+            except ExecutionPlanError:
+                raise
+            except Exception as error:
+                raise ExecutionPlanError("workflow resource admission failed") from error
             yield lease
         finally:
             if lease is not None:
                 # A no-resource step still owns a run admission counter.
                 with anyio.CancelScope(shield=True):
-                    await self._release(
-                        lease,
-                        state=state,
-                    )
+                    try:
+                        await self._release(
+                            lease,
+                            state=state,
+                        )
+                    except ExecutionPlanError:
+                        raise
+                    except Exception as error:
+                        raise ExecutionPlanError("workflow resource release failed") from error
 
     async def _acquire(
         self,
@@ -710,41 +728,6 @@ async def execute_plan(
         ]
         for step_id, artifact_ids in consumed.items()
     }
-
-    def aggregate_foreach_iterations(
-        step: StepNode,
-        iteration_records: Sequence[ForeachIterationCheckpoint],
-    ) -> dict[str, object]:
-        """Rebuild source-aligned outputs from terminal iteration records."""
-
-        aggregated: dict[str, object] = {artifact_id: [] for artifact_id in produced[step.step_id]}
-        errors: list[object] = []
-        for iteration in iteration_records:
-            if iteration.outputs is None:
-                for artifact_id in produced[step.step_id]:
-                    cast(list[object], aggregated[artifact_id]).append(None)
-                error = iteration.error
-                if error is None:
-                    raise AssertionError("failed foreach iteration has no error")
-                errors.append(
-                    {
-                        "index": iteration.iteration_index,
-                        "kind": error["kind"],
-                        "message": error["message"],
-                        "attempts": iteration.attempts,
-                    }
-                )
-                continue
-
-            for artifact_id in produced[step.step_id]:
-                cast(list[object], aggregated[artifact_id]).append(iteration.outputs[artifact_id])
-            errors.append(None)
-
-        error_artifact_id = step.foreach_error_artifact_id
-        if error_artifact_id is None:
-            raise ExecutionPlanError(f"foreach step {step.step_id!r} must declare foreach_errors")
-        aggregated[error_artifact_id] = errors
-        return aggregated
 
     invoked = [
         instruction.step_id
@@ -981,9 +964,19 @@ async def execute_plan(
             iteration_records = [
                 foreach_iterations[(step_id, iteration_index)] for iteration_index in range(len(source))
             ]
-            rebuilt_aggregates = aggregate_foreach_iterations(
-                steps[step_id],
-                iteration_records,
+            error_artifact_id = foreach_error_by_step[step_id]
+            rebuilt_aggregates = _aggregate_foreach_outputs(
+                produced[step_id],
+                tuple(
+                    (
+                        iteration.iteration_index,
+                        iteration.attempts,
+                        iteration.outputs,
+                        iteration.error,
+                    )
+                    for iteration in iteration_records
+                ),
+                error_artifact_id=error_artifact_id,
             )
             for artifact_id, rebuilt_value in rebuilt_aggregates.items():
                 if not _json_values_equal(
@@ -1045,63 +1038,69 @@ async def execute_plan(
                 raise ExecutionPlanError("dispatcher preflight did not select a dispatcher")
             return await dispatch(step, invocation_inputs)
 
-        last_error: Exception | None = None
-        for attempt in range(1, step.max_attempts + 1):
+        async def run_attempt(attempt: int) -> dict[str, object]:
+            """Adapt one graph Step attempt to the shared Flow retry kernel."""
+
             async with allocator._admit(
                 step.resources,
                 state=admission_state,
             ) as resource_lease:
-                try:
-                    logger.debug(f"Dispatching workflow step: {invocation_id} (attempt {attempt}/{step.max_attempts})")
-                    context = DispatchContext(
-                        resource_lease=resource_lease,
-                        invocation_id=invocation_id,
-                        iteration_index=iteration_index,
-                        attempt=attempt,
+                logger.debug(f"Dispatching workflow step: {invocation_id} (attempt {attempt}/{step.max_attempts})")
+                context = DispatchContext(
+                    resource_lease=resource_lease,
+                    invocation_id=invocation_id,
+                    iteration_index=iteration_index,
+                    attempt=attempt,
+                )
+                attempt_inputs = (
+                    _copy_json_mapping(
+                        step_inputs,
+                        context=f"inputs for {invocation_id} attempt {attempt}",
                     )
-                    attempt_inputs = (
-                        _copy_json_mapping(
-                            step_inputs,
-                            context=f"inputs for {invocation_id} attempt {attempt}",
-                        )
-                        if iteration_index is not None
-                        else step_inputs
+                    if iteration_index is not None
+                    else step_inputs
+                )
+                if step.timeout_seconds is None:
+                    outputs = await call_dispatcher(
+                        context,
+                        attempt_inputs,
                     )
-                    if step.timeout_seconds is None:
+                else:
+                    with anyio.fail_after(step.timeout_seconds):
                         outputs = await call_dispatcher(
                             context,
                             attempt_inputs,
                         )
-                    else:
-                        with anyio.fail_after(step.timeout_seconds):
-                            outputs = await call_dispatcher(
-                                context,
-                                attempt_inputs,
-                            )
-                    validated = _validate_step_outputs(
-                        step.step_id,
-                        outputs,
-                        expected_output_ids=produced[step.step_id],
-                    )
-                except StepOutputError as error:
-                    last_error = error
-                except WorkflowControlSignal:
-                    raise
-                except ExecutionPlanError:
-                    raise
-                except Exception as error:
-                    last_error = error
-                else:
-                    return validated, attempt
-
-            if attempt < step.max_attempts:
-                logger.warning(
-                    f"Retrying workflow step {invocation_id} after {type(last_error).__name__}: {last_error}"
+                return _validate_step_outputs(
+                    step.step_id,
+                    outputs,
+                    expected_output_ids=produced[step.step_id],
                 )
 
-        if last_error is None:
-            raise AssertionError("step retry loop completed without a result")
-        raise last_error
+        def should_retry(error: Exception, attempt: int) -> bool:
+            """Retry ordinary executor/output failures, never graph control."""
+
+            del attempt
+            return isinstance(error, StepOutputError) or not isinstance(
+                error,
+                WorkflowControlSignal | ExecutionPlanError,
+            )
+
+        def warn_retry(error: Exception, attempt: int) -> None:
+            """Keep the graph-specific retry diagnostic outside the kernel."""
+
+            del attempt
+            logger.warning(f"Retrying workflow step {invocation_id} after {type(error).__name__}: {error}")
+
+        return await _retry_operation(
+            run_attempt,
+            max_attempts=step.max_attempts,
+            initial_delay=0,
+            backoff_factor=1,
+            max_delay=0,
+            should_retry=should_retry,
+            on_retry=warn_retry,
+        )
 
     def checkpoint_iterations() -> tuple[ForeachIterationCheckpoint, ...]:
         """Return the current terminal iteration records in stable order."""
@@ -1171,63 +1170,110 @@ async def execute_plan(
             ),
         )
 
-        local_capacity = step.foreach_concurrency or max(1, len(source))
+        local_capacity = step.foreach_concurrency
         if capacity is not None:
-            local_capacity = min(local_capacity, capacity)
-        limiter = anyio.Semaphore(local_capacity)
+            local_capacity = capacity if local_capacity is None else min(local_capacity, capacity)
 
-        async def run_iteration(iteration_index: int, item: object) -> None:
-            identity = (step.step_id, iteration_index)
-            if identity in foreach_iterations:
-                return
-            async with limiter:
+        pending = tuple(
+            (iteration_index, item)
+            for iteration_index, item in enumerate(source)
+            if (step.step_id, iteration_index) not in foreach_iterations
+        )
+
+        async def run_iteration(
+            pending_item: tuple[int, object],
+            pending_index: int,
+        ) -> tuple[dict[str, object], int]:
+            """Adapt one expanded item to the shared indexed execution kernel."""
+
+            del pending_index
+            iteration_index, item = pending_item
+            try:
                 step_inputs = {artifact_id: values[artifact_id] for artifact_id in consumed[step.step_id]}
-                step_inputs[edge.item_binding_id] = item
-                step_inputs = _copy_json_mapping(
-                    step_inputs,
-                    context=f"inputs for {step.step_id}[{iteration_index}]",
-                )
-                try:
-                    outputs, attempts = await invoke_step(
-                        step,
-                        step_inputs,
-                        iteration_index=iteration_index,
-                    )
-                except WorkflowControlSignal:
-                    raise
-                except StepOutputError as error:
-                    iteration = _failed_iteration(
-                        step.step_id,
-                        iteration_index,
-                        step.max_attempts,
-                        error,
-                    )
-                except ExecutionPlanError:
-                    raise
-                except Exception as error:
-                    iteration = _failed_iteration(
-                        step.step_id,
-                        iteration_index,
-                        step.max_attempts,
-                        error,
-                    )
-                else:
-                    iteration = ForeachIterationCheckpoint(
-                        step_id=step.step_id,
-                        iteration_index=iteration_index,
-                        attempts=attempts,
-                        outputs=outputs,
-                    )
-                await commit_iteration(iteration)
+            except KeyError as error:
+                raise ExecutionPlanError(
+                    f"foreach step {step.step_id!r} input artifact is unavailable: {error.args[0]!r}"
+                ) from None
+            step_inputs[edge.item_binding_id] = item
+            step_inputs = _copy_json_mapping(
+                step_inputs,
+                context=f"inputs for {step.step_id}[{iteration_index}]",
+            )
+            return await invoke_step(
+                step,
+                step_inputs,
+                iteration_index=iteration_index,
+            )
 
-        async with anyio.create_task_group() as task_group:
-            for iteration_index, item in enumerate(source):
-                task_group.start_soon(run_iteration, iteration_index, item)
+        def collect_iteration_error(error: Exception) -> bool:
+            """Collect ordinary item failures but never graph control/invariants."""
+
+            return isinstance(error, StepOutputError) or not isinstance(
+                error,
+                WorkflowControlSignal | ExecutionPlanError,
+            )
+
+        async def checkpoint_outcome(
+            outcome: _IndexedOutcome[tuple[dict[str, object], int]],
+        ) -> None:
+            """Translate one terminal Flow outcome into durable graph state."""
+
+            iteration_index, _ = pending[outcome.index]
+            if isinstance(outcome, _IndexedSuccess):
+                outputs, attempts = outcome.value
+                iteration = ForeachIterationCheckpoint(
+                    step_id=step.step_id,
+                    iteration_index=iteration_index,
+                    attempts=attempts,
+                    outputs=outputs,
+                )
+            elif isinstance(outcome, _IndexedFailure):
+                iteration = _failed_iteration(
+                    step.step_id,
+                    iteration_index,
+                    step.max_attempts,
+                    outcome.error,
+                )
+            else:
+                raise AssertionError("indexed kernel returned an unknown outcome")
+            await commit_iteration(iteration)
+
+        try:
+            await _run_indexed_parallel(
+                pending,
+                run_iteration,
+                max_concurrency=local_capacity,
+                collect_error=collect_iteration_error,
+                on_outcome=checkpoint_outcome,
+            )
+        except Exception as error:
+            # Preserve the structured-concurrency boundary previously formed
+            # by the foreach task group. The outer fiber group adds its own
+            # boundary while cancellation (a BaseException) still escapes.
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [error],
+            ) from None
 
         iteration_records = [
             foreach_iterations[(step.step_id, iteration_index)] for iteration_index in range(len(source))
         ]
-        return aggregate_foreach_iterations(step, iteration_records)
+        error_artifact_id = step.foreach_error_artifact_id
+        if error_artifact_id is None:
+            raise ExecutionPlanError(f"foreach step {step.step_id!r} must declare foreach_errors")
+        return _aggregate_foreach_outputs(
+            produced[step.step_id],
+            tuple(
+                (
+                    iteration.iteration_index,
+                    iteration.attempts,
+                    iteration.outputs,
+                    iteration.error,
+                )
+                for iteration in iteration_records
+            ),
+            error_artifact_id=error_artifact_id,
+        )
 
     async def run_fiber(fiber: Fiber) -> None:
         for instruction in fiber.instructions:
