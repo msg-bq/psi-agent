@@ -46,9 +46,11 @@ class SystemPrompt:
         checker: Callable[..., Any] | None = None,
         compaction_fn: Callable[..., Any] | None = None,
     ):
+        self._has_builder = builder is not None
         self._builder = builder if builder is not None else self._default_builder
         self._checker = checker if checker is not None else self._default_checker
         self._compaction_fn = compaction_fn
+        self._initialized = False
 
     @property
     def compaction_fn(self) -> Callable[..., Any] | None:
@@ -63,21 +65,41 @@ class SystemPrompt:
 
     async def ensure(self, conversation: Conversation) -> None:
         """Build or rebuild the system prompt if needed."""
-        if not conversation.messages:
+        # A SystemPrompt instance belongs to one running Session. Build once on
+        # that Session's first turn even when history was restored: persisted
+        # prompts may be stale, blank, or left missing by an earlier builder
+        # failure. A successful build marks this instance initialized; failures
+        # deliberately do not, so the next turn retries instead of permanently
+        # falling back to the underlying model's defaults.
+        if not self._initialized:
+            if not self._has_builder:
+                # Preserve the historical empty-conversation behaviour for
+                # workspaces without systems/system.py, but do not inject an
+                # empty system row into an already restored conversation.
+                if not conversation.messages:
+                    conversation.replace_system("")
+                self._initialized = True
+                return
             try:
                 sp = await self._builder()
+                if not isinstance(sp, str):
+                    raise TypeError(f"system_prompt_builder returned {type(sp).__name__}, expected str")
                 logger.info(f"System prompt loaded ({len(sp)} chars)")
                 conversation.replace_system(sp)
+                self._initialized = True
             except Exception as e:
                 logger.error(f"Failed to build system prompt: {e}")
-        else:
-            try:
-                if await self._checker():
-                    sp = await self._builder()
-                    logger.info(f"System prompt rebuilt ({len(sp)} chars)")
-                    conversation.replace_system(sp)
-            except Exception as e:
-                logger.error(f"Rebuild check or rebuild failed: {e}")
+            return
+
+        try:
+            if await self._checker():
+                sp = await self._builder()
+                if not isinstance(sp, str):
+                    raise TypeError(f"system_prompt_builder returned {type(sp).__name__}, expected str")
+                logger.info(f"System prompt rebuilt ({len(sp)} chars)")
+                conversation.replace_system(sp)
+        except Exception as e:
+            logger.error(f"Rebuild check or rebuild failed: {e}")
 
     # -- module loading --------------------------------------------------------
 

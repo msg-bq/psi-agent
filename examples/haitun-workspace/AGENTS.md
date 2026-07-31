@@ -5,7 +5,9 @@ in the system prompt). It merges the most useful parts of the other example work
 
 - **Prompt engine** — a layered builder (stable prefix + cache boundary + dynamic
   suffix, skills index, bootstrap context files), with **all configuration kept inside this
-  workspace** (there is no global config directory).
+  workspace** (there is no global config directory). The fixed Haitun identity and
+  self-knowledge contract survive failures in optional Skills, Fusion Flow, or bootstrap
+  sections; a provider/model name is runtime metadata, never the agent identity.
 - **Fusion Flow** — full workflow-authoring capability (`flow_manage`, the bundled Python
   G4 runtime under `skills/fusion-flow/`, the `run_flow` tool, the `flows/` layout, and
   authoring guidance injected into the prompt), including the upper-layer
@@ -68,7 +70,7 @@ service tools:
 
 | Variable | Purpose |
 |---|---|
-| `HAITUN_MODEL` | Override the model name shown in the runtime line. |
+| `HAITUN_MODEL` | Override the underlying runtime-model name shown in the prompt; it never changes the Haitun agent identity. |
 | `HAITUN_AGENT_ID` | Agent ID shown in the runtime line. |
 | `HAITUN_CHANNEL` | Channel name shown in the runtime line. |
 | `TZ` | Standard IANA time zone for the date/time section, e.g. `Asia/Shanghai` (when unset, follows the system's local time zone). |

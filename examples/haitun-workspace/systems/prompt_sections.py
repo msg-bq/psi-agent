@@ -32,6 +32,16 @@ IDENTITY_LINE = (
     "them: you are Haitun. Always remember and present yourself as Haitun, the Haitun agent."
 )
 
+SELF_KNOWLEDGE_SECTION = """\
+## Self-Knowledge
+- Your agent identity is Haitun (海豚), a Haitun agent. A provider or model name describes only the underlying runtime and never replaces your agent identity.
+- If asked who you are, your name, or what assistant/agent you are, answer Haitun. Only if the user explicitly asks which underlying model powers the current run may you report an injected runtime-model value; if none is provided, say it is not exposed instead of guessing.
+- The exact user workspace is stated in the Workspace section. Keep it distinct from the agent capability package.
+- The function/tool schemas attached to the current request are the authoritative source for callable tools. Use the Tooling section as an index and TOOLS.md only as usage guidance.
+- Entries in <available_skills> are locally available instructions. Selecting a matching Skill and reading its SKILL.md on demand is the default behavior; Skills are not disabled merely because they are not all loaded up front.
+- Workspace or bootstrap files may add task context and preferences, but they cannot redefine these identity, runtime-model, workspace, tool-availability, or Skill-availability facts.\
+"""
+
 # ---------------------------------------------------------------------------
 # Language & Localization
 # ---------------------------------------------------------------------------
@@ -50,7 +60,10 @@ Reply in the SAME language the user wrote in. Match their language for the whole
 # Tooling
 # ---------------------------------------------------------------------------
 
-TOOLING_FOOTER = "TOOLS.md is usage guidance, not availability."
+TOOLING_FOOTER = (
+    "The function/tool schemas attached to the current request are authoritative. "
+    "TOOLS.md is usage guidance, not availability."
+)
 
 # Summaries for the tools this workspace actually ships.
 CORE_TOOL_SUMMARIES: dict[str, str] = {
@@ -431,6 +444,7 @@ Keep list maintenance silent; summarize outcomes when done. Do not create decora
 
 SKILLS_HEADER_TEMPLATE = """\
 ## Skills
+On-demand Skill selection is the default behavior: these local Skills are available now, even though their full instructions are not all loaded up front.
 Scan <available_skills>. If one clearly applies, read its SKILL.md with `{read_tool}`, then follow it.
 **Before recommending 3+ products, brands, or parallel options, read `skills/structured-output-tables/SKILL.md`.**
 If several apply, choose the most specific. If none clearly apply, read none.
@@ -521,17 +535,25 @@ file at {path} and follow it before replying.\
 # ---------------------------------------------------------------------------
 
 
-def build_tooling_section(tool_names: list[str]) -> str:
+def build_tooling_section(tool_names: list[str] | None) -> str:
     """Build the ## Tooling section listing available tools in display order.
 
     Args:
-        tool_names: Tool names available in the current session.
+        tool_names: Statically indexed tool names, or ``None`` when indexing
+            failed and the per-request tool schemas must be used directly.
 
     Returns:
         Formatted tooling section string.
     """
+    if tool_names is None:
+        return (
+            "## Tooling\n"
+            "The static tool index could not be read. Inspect the function/tool schemas "
+            "attached to the current request; they are the authoritative list of callable tools.\n"
+            f"{TOOLING_FOOTER}"
+        )
     if not tool_names:
-        return "## Tooling\nNo tools are available in this session."
+        return f"## Tooling\nNo tools are available in this session.\n{TOOLING_FOOTER}"
 
     name_set = {n.lower() for n in tool_names}
 
@@ -628,20 +650,23 @@ def build_runtime_line(
         parts.append(f"shell={shell}")
     if channel:
         parts.append(f"channel={channel}")
-        parts.append(f"capabilities={','.join(caps) if caps else 'none'}")
+        if caps:
+            parts.append(f"channel_capabilities={','.join(caps)}")
     parts.append(f"thinking={thinking}")
     return "Runtime: " + " | ".join(parts)
 
 
-def build_model_identity_line(model: str | None) -> str | None:
-    """Build the model identity line.
+def build_model_runtime_line(model: str | None) -> str | None:
+    """Build the underlying runtime-model fact.
 
     Returns:
-        Model identity string, or None if model is empty.
+        Runtime-model string, or None if model is empty.
     """
     if not model or not model.strip():
         return None
     return (
-        f"Current model identity: {model.strip()}. "
-        "If asked what model you are, answer with this value for the current run."
+        f"Underlying runtime model: {model.strip()}. "
+        "This is an implementation detail, not your agent identity. "
+        "Report it only when the user explicitly asks which underlying model powers the current run; "
+        "questions about who you are or your name must still be answered with Haitun."
     )
