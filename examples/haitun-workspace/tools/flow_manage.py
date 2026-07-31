@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 import _runtime_paths as _paths
 import anyio
 
+_FLOW_SOURCE_SUFFIXES = (".workflow", ".g4")
+
 
 def _flows_dir() -> anyio.Path:
     # Flow task dirs live under the user workspace.
@@ -53,13 +55,29 @@ async def _atomic_write(path: anyio.Path, content: str) -> None:
 
 async def _find_task_flow(flows_dir: anyio.Path, flow_name: str) -> anyio.Path | None:
     task_dir = flows_dir / flow_name
-    preferred = task_dir / f"{flow_name}.workflow"
-    if await preferred.exists():
-        return preferred
     if not await task_dir.is_dir():
         return None
-    async for candidate in task_dir.glob("*.workflow"):
-        return candidate
+
+    for suffix in _FLOW_SOURCE_SUFFIXES:
+        preferred = task_dir / f"{flow_name}{suffix}"
+        if await preferred.is_file():
+            return preferred
+
+    for suffix in _FLOW_SOURCE_SUFFIXES:
+        candidates = [candidate async for candidate in task_dir.glob(f"*{suffix}") if await candidate.is_file()]
+        if candidates:
+            return min(candidates, key=lambda candidate: candidate.name)
+    return None
+
+
+async def _find_adhoc_flow(flows_dir: anyio.Path, flow_name: str) -> anyio.Path | None:
+    adhoc_dir = flows_dir / "adhoc" / flow_name
+    if not await adhoc_dir.is_dir():
+        return None
+    for suffix in _FLOW_SOURCE_SUFFIXES:
+        candidate = adhoc_dir / f"flow{suffix}"
+        if await candidate.is_file():
+            return candidate
     return None
 
 
@@ -155,9 +173,11 @@ async def flow_manage(
             adhoc_entries: list[str] = []
             if await adhoc_dir.exists():
                 async for entry in adhoc_dir.iterdir():
-                    flow_file = entry / "flow.workflow"
-                    if await entry.is_dir() and not entry.name.startswith(".") and await flow_file.exists():
-                        adhoc_entries.append(f"  - {entry.name}: flow.workflow")
+                    if not await entry.is_dir() or entry.name.startswith("."):
+                        continue
+                    flow_file = await _find_adhoc_flow(flows_dir, entry.name)
+                    if flow_file is not None:
+                        adhoc_entries.append(f"  - {entry.name}: {flow_file.name}")
             if adhoc_entries:
                 lines.append("adhoc/")
                 lines.extend(sorted(adhoc_entries))
@@ -179,8 +199,8 @@ async def flow_manage(
                 return await task_flow.read_text(encoding="utf-8", errors="replace")
 
         if target in {"adhoc", "all"}:
-            adhoc_flow = flows_dir / "adhoc" / flow_name / "flow.workflow"
-            if await adhoc_flow.exists():
+            adhoc_flow = await _find_adhoc_flow(flows_dir, flow_name)
+            if adhoc_flow is not None:
                 return await adhoc_flow.read_text(encoding="utf-8", errors="replace")
 
         return f"[Error] Flow not found: {flow_name!r}"
@@ -247,12 +267,12 @@ async def flow_manage(
             return f"[Error] {err}"
 
         source_path = await _find_task_flow(flows_dir, flow_name)
-        source_label = f"flows/{flow_name}"
+        source_label = f"flows/{flow_name}/{source_path.name}" if source_path is not None else ""
         if source_path is None:
-            adhoc_path = flows_dir / "adhoc" / flow_name / "flow.workflow"
-            if await adhoc_path.exists():
+            adhoc_path = await _find_adhoc_flow(flows_dir, flow_name)
+            if adhoc_path is not None:
                 source_path = adhoc_path
-                source_label = f"flows/adhoc/{flow_name}/flow.workflow"
+                source_label = f"flows/adhoc/{flow_name}/{adhoc_path.name}"
 
         if source_path is None:
             return f"[Error] No task or adhoc flow found for: {flow_name!r}"

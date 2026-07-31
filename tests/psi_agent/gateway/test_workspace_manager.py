@@ -11,10 +11,12 @@ from psi_agent.gateway._workspace_manager import WorkspaceManager
 async def _write_workflow(
     workspace: anyio.Path,
     name: str,
+    *,
+    suffix: str = ".workflow",
 ) -> anyio.Path:
     workflow_dir = workspace / "flows" / "workflows" / name
     await workflow_dir.mkdir(parents=True, exist_ok=True)
-    await (workflow_dir / f"{name}.workflow").write_text(
+    await (workflow_dir / f"{name}{suffix}").write_text(
         f"workflow {name.replace('-', '_')} {{}}",
         encoding="utf-8",
     )
@@ -60,7 +62,7 @@ async def test_list_places_includes_cwd() -> None:
 @pytest.mark.anyio
 async def test_list_workflows_returns_valid_sorted_summaries(tmp_path) -> None:
     workspace = anyio.Path(str(tmp_path))
-    await _write_workflow(workspace, "zeta-flow")
+    await _write_workflow(workspace, "zeta-flow", suffix=".g4")
     await _write_workflow(workspace, "alpha-flow")
 
     result = await WorkspaceManager().list_workflows(str(workspace))
@@ -72,8 +74,27 @@ async def test_list_workflows_returns_valid_sorted_summaries(tmp_path) -> None:
         },
         {
             "name": "zeta-flow",
-            "path": "flows/workflows/zeta-flow/zeta-flow.workflow",
+            "path": "flows/workflows/zeta-flow/zeta-flow.g4",
         },
+    ]
+
+
+@pytest.mark.anyio
+async def test_list_workflows_prefers_workflow_over_g4(tmp_path) -> None:
+    workspace = anyio.Path(str(tmp_path))
+    workflow_dir = await _write_workflow(workspace, "dual-source", suffix=".g4")
+    await (workflow_dir / "dual-source.workflow").write_text(
+        "workflow preferred {}",
+        encoding="utf-8",
+    )
+
+    result = await WorkspaceManager().list_workflows(str(workspace))
+
+    assert result == [
+        {
+            "name": "dual-source",
+            "path": "flows/workflows/dual-source/dual-source.workflow",
+        }
     ]
 
 

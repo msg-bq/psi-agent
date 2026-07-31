@@ -153,6 +153,7 @@ _PROGRAM_TERMINATION_GRACE_SECONDS = 1.0
 _PROGRAM_STDOUT_LIMIT_ENV = "PSI_FUSION_FLOW_PROGRAM_STDOUT_LIMIT_BYTES"
 _PROGRAM_STDERR_LIMIT_ENV = "PSI_FUSION_FLOW_PROGRAM_STDERR_LIMIT_BYTES"
 _JOB_STORE_RELATIVE_PATH = Path(".psi") / "fusion-flow" / "runs"
+_FLOW_SOURCE_SUFFIXES = frozenset({".workflow", ".g4"})
 
 
 def _workspace_dir() -> Path:
@@ -598,8 +599,8 @@ async def _resolve_flow_path(flow_path: str) -> anyio.Path:
     flows_dir = await (workspace / "flows").resolve()
     if not Path(str(resolved)).is_relative_to(Path(str(flows_dir))):
         raise ValueError("flow_path must stay inside the workspace flows directory")
-    if resolved.suffix != ".workflow":
-        raise ValueError("flow_path must name a .workflow file")
+    if resolved.suffix not in _FLOW_SOURCE_SUFFIXES:
+        raise ValueError("flow_path must name a .workflow or .g4 file")
     return resolved
 
 
@@ -2122,7 +2123,7 @@ async def run_flow(
     """Start one G4 workflow and return outputs or a persisted Human request.
 
     Args:
-        flow_path: Workspace-relative path to a UTF-8 ``.workflow`` file.
+        flow_path: Workspace-relative path to a UTF-8 ``.workflow`` or ``.g4`` file.
         inputs_json: JSON object keyed by the workflow's input artifact IDs.
         resource_capacities_json: Optional JSON object mapping resource IDs to
             positive counts or concrete instance-ID arrays.

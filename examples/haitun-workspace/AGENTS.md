@@ -114,7 +114,7 @@ service tools:
 | `write_excel` | Build a real `.xlsx` from a 2D array (bold header, column-width fitting). |
 | `write_word` | Build a real `.docx` from structured blocks (headings/paragraphs/tables); sets the East-Asian font (`w:eastAsia`) on every style so Chinese text isn't "字体不齐". |
 | `skill_manage` | CRUD on **agent** `skills/<name>/SKILL.md`（经 `get_agent()`；agent-created skills are mutable）. |
-| `flow_manage` | CRUD + promote on Fusion Flow `.workflow` assets under **workspace** `flows/`. |
+| `flow_manage` | CRUD + promote on Fusion Flow `.workflow` / `.g4` assets under **workspace** `flows/`. |
 | `run_flow` / `run_flow_resume` | Start the bundled Python G4 Fusion Flow runner and resume only its active Human request. Agent Steps use ephemeral Sessions. Program Steps use a specialized Program Agent that can prepare or install a language runtime/toolchain; the declared workspace script needs no executable bit. In fidelity mode an interpreted launch is host-built exactly as `[interpreter, declared_script, *logical_argv[1:]]`, never an Agent-selected arbitrary argv. Compiled source must pass through structured `compile_program`, which binds the source hash, artifact hashes, and exact launch argv before `execute_program` verifies and starts it. Once the real Program starts, fidelity mode forbids a second attempt and preserves the original result or error. Only the exact standalone instruction line `Program execution policy: successful completion outranks fidelity.` authorizes adaptation. Captured Program execution/format failures become `$fusion_flow/program_error` values on every declared output Artifact; a failing zero-output Program aborts. For a `$fusion_flow/control` wait envelope, pass its nested `request.question/options/recommended/default` fields to `clarify`, show the formatted text returned by `clarify` verbatim, and immediately end the turn; JSON-encode the next user reply into `run_flow_resume`. |
 | `schedule_manage` | CRUD on **workspace** `schedules/<name>/TASK.md`. **Recurring**: `action=create` + `cron`. **One-shot**: `action=create` + `once_at` (`YYYY-MM-DD HH:MM` local) → writes cron + `run_once: true` (Session deletes TASK.md after first successful fire). **`fire=tool`**: Session calls `tool(**tool_args)` at fire time with no LLM (required for Feishu IM reminders via `feishu_message_send`). `fire=prompt` (default) injects TASK body for an agent turn. Also `visibility` (`display`/`silent`), list/view/patch/delete. |
 | `trigger_manage` | CRUD on **agent** `triggers/<name>/TRIGGER.md`。`event` 名应对齐 agent ``channel_events/`` 已接通能力；Session 不再用 catalog 硬拒。`fire=tool` 命中后直调工具。见 `skills/feishu-event-remind`；事件定义见 ``channel_events/README.md``。 |
@@ -197,8 +197,9 @@ service tools:
   permission for the parent Session to edit and rerun the workflow; a failing zero-output
   Program aborts because no Artifact can carry its diagnostic.
 - Save reusable declarations with the existing `write`/`edit` file tools. The
-  fixed layout is `flows/workflows/<slug>/<slug>.workflow`; no management tool
-  or manifest format is introduced.
+  fixed bundle accepts `flows/workflows/<slug>/<slug>.workflow` or
+  `flows/workflows/<slug>/<slug>.g4`; use `.workflow` by default and prefer it
+  when both exist. No management tool or manifest format is introduced.
 - Reuse a saved declaration with the exact command `/workflow:<slug>`. Do not
   append inline parameters. Before the sole `run_flow` call, read the saved
   declaration and collect every declared input through normal conversation.
@@ -214,10 +215,11 @@ service tools:
 - Execution is non-recursive: an Agent Step cannot invoke `run_flow` or start
   another workflow. A Step may write a self-contained child declaration to the
   fixed folder; the parent Session remains the only launcher.
-- The registry contract reads only the canonical `.workflow` source. Generated
-  `runs/` directories are ignored by the registry and Git. Saving does not copy
-  or rewrite instruction sidecars; `"./..."` references remain
-  workspace-root-relative and must point to stable files.
+- The registry contract reads the exact `<slug>.workflow` or `<slug>.g4`
+  source, preferring `.workflow` when both exist. Generated `runs/` directories
+  are ignored by the registry and Git. Saving does not copy or rewrite
+  instruction sidecars; `"./..."` references remain workspace-root-relative
+  and must point to stable files.
 - Agent Step `read`/`write`/`edit` calls bind relative paths to the invoking
   psi workspace root, not the launcher process CWD. This keeps instruction
   sidecar reads and child declaration saves inside the selected workspace.

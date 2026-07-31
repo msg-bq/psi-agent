@@ -61,6 +61,11 @@ import { ensureDefaultAi, pickPreferredAi, purgePlaceholderAis, writeStoredAiId 
 import { chatFileToFile, filesToChatFiles } from "../services/chatFiles";
 import { filesFromClipboard } from "../services/clipboardFiles";
 import { onComposerEnterKey } from "../services/composerKeys";
+import {
+  useWorkflowCommandMenu,
+  WorkflowCommandMenu,
+} from "../components/WorkflowCommandMenu";
+import { validateWorkflowSubmission } from "../services/workflowCommands";
 import { streamSessionChat } from "../services/chatStream";
 import { applyProgressEvent, progressLogStart, type ProgressLog } from "../services/turnProgress";
 import {
@@ -165,6 +170,13 @@ export default function HaiTunAgentWorkspace({ workspace, defaultAgent = "", onC
   const currentTask = currentIndex === 0 ? null : tasks[currentIndex - 1];
   const currentCard = cards[currentIndex] ?? cards[0];
   const currentChatDraft = chatDrafts[currentCard.id] ?? "";
+  const workflowMenu = useWorkflowCommandMenu({
+    value: currentChatDraft,
+    workspace,
+    onChange: (value) => {
+      setChatDrafts((current) => ({ ...current, [currentCard.id]: value }));
+    },
+  });
   const pendingTasks = tasks.filter((task) => task.status === "attention");
   const deliveryTasks = tasks.filter((task) => task.newDeliverables.length > 0);
   const normalizedSearch = globalSearch.trim().toLocaleLowerCase("zh-CN");
@@ -743,6 +755,16 @@ export default function HaiTunAgentWorkspace({ workspace, defaultAgent = "", onC
     if (Date.now() < suppressSubmitUntilRef.current) return;
     const files = chatAttachments[currentCard.id] ?? [];
     if (!currentChatDraft.trim() && !files.length) return;
+    const validationError = validateWorkflowSubmission(
+      currentChatDraft,
+      files.length,
+      workflowMenu.workflows,
+      workflowMenu.status,
+    );
+    if (validationError) {
+      showToast(validationError);
+      return;
+    }
     if (!chatExpanded) setChatExpanded(true);
     void sendMessage(currentChatDraft, currentCard.id, files);
   };
@@ -1195,6 +1217,7 @@ export default function HaiTunAgentWorkspace({ workspace, defaultAgent = "", onC
               expandChatFromStrip();
             }}
           >
+            {interactive && <WorkflowCommandMenu controller={workflowMenu} />}
             <button
               type="button"
               className="chat-attach-button"
@@ -1225,13 +1248,19 @@ export default function HaiTunAgentWorkspace({ workspace, defaultAgent = "", onC
               rows={1}
               value={unitDraft}
               onChange={(event) => interactive && setChatDrafts((current) => ({ ...current, [unitCard.id]: event.target.value }))}
-              onFocus={() => interactive && setChatExpanded(true)}
+              onFocus={() => {
+                if (!interactive) return;
+                setChatExpanded(true);
+                workflowMenu.reopen();
+              }}
+              onBlur={() => interactive && workflowMenu.dismiss()}
               onPaste={(event) => {
                 if (!interactive) return;
                 handleChatPaste(unitCard.id, event);
               }}
               onKeyDown={(event) => {
                 if (!interactive) return;
+                if (workflowMenu.handleKeyDown(event)) return;
                 onComposerEnterKey(event, unitDraft, (next, cursor) => {
                   setChatDrafts((current) => ({ ...current, [unitCard.id]: next }));
                   queueMicrotask(() => {
@@ -1243,6 +1272,10 @@ export default function HaiTunAgentWorkspace({ workspace, defaultAgent = "", onC
               }}
               placeholder={`告诉 Agent 如何继续「${unitCard.title}」…`}
               aria-label="对话内容"
+              aria-autocomplete={interactive ? "list" : undefined}
+              aria-expanded={interactive ? workflowMenu.menuOpen : undefined}
+              aria-controls={interactive && workflowMenu.menuOpen ? workflowMenu.menuId : undefined}
+              aria-activedescendant={interactive ? workflowMenu.activeDescendant : undefined}
               readOnly={!interactive}
             />
             {typingCard === unitCard.id ? (
@@ -1499,12 +1532,14 @@ export default function HaiTunAgentWorkspace({ workspace, defaultAgent = "", onC
             key={newTaskSession}
             draft={newTaskDraft}
             category={newTaskCategory}
+            workspace={workspace}
             setDraft={setNewTaskDraft}
             setCategory={setNewTaskCategory}
             onBack={goHome}
             onOpenTemplates={openTemplates}
             onCreate={createTask}
             onViewTask={viewCreatedTask}
+            onValidationError={showToast}
           />
         )}
 

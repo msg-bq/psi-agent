@@ -58,6 +58,8 @@ async def test_exact_workflow_command_precedes_natural_language_routing():
     assert "Accept no suffix, inline parameters, or trailing" in section
     assert "argument syntax." in section
     assert "`flows/workflows/<slug>/<slug>.workflow`" in section
+    assert "`flows/workflows/<slug>/<slug>.g4`" in section
+    assert section.index("when it exists; otherwise use") < section.index("If both exist, prefer `.workflow`")
     inspect_index = section.index("Read that declaration before execution")
     collect_index = section.index("Resolve every required input from the conversation")
     call_index = section.index("call the existing `run_flow` runner")
@@ -107,6 +109,8 @@ def test_fusion_skill_defines_only_the_exact_frontend_command():
     assert "/workflow:daily-brief" in text
     assert "accept a suffix or" in text
     assert "flows/workflows/<slug>/<slug>.workflow" in text
+    assert "flows/workflows/<slug>/<slug>.g4" in text
+    assert "if both exist, prefer" in text
     assert "existing file tools" in text
     assert "new save/list/load operator" in text
     assert "workflow_manage" not in text

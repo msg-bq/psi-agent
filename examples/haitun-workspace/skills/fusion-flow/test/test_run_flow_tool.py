@@ -3292,6 +3292,24 @@ async def test_split_root_reusable_flow_and_run_store_use_runtime_workspace(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("suffix", [".workflow", ".g4"])
+async def test_read_flow_source_accepts_supported_g4_suffixes(
+    suffix: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow_dir = tmp_path / "flows" / "dual-format"
+    flow_dir.mkdir(parents=True)
+    source = "workflow dual_format {}"
+    (flow_dir / f"dual-format{suffix}").write_text(source, encoding="utf-8")
+    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
+
+    result = await run_flow_tool._read_flow_source(f"flows/dual-format/dual-format{suffix}")
+
+    assert result == source
+
+
+@pytest.mark.anyio
 async def test_run_flow_rejects_paths_outside_flows_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3304,6 +3322,8 @@ async def test_run_flow_rejects_paths_outside_flows_directory(
         await run_flow_tool._read_flow_source("other/example.workflow")
     with pytest.raises(ValueError, match="relative to the workspace"):
         await run_flow_tool._read_flow_source(str(tmp_path / "flows" / "example.workflow"))
+    with pytest.raises(ValueError, match=r"\.workflow or \.g4"):
+        await run_flow_tool._read_flow_source("flows/example.txt")
 
 
 @pytest.mark.anyio

@@ -105,3 +105,56 @@ async def test_flow_manage_creates_and_promotes_workflow_source(
 
     assert patched == "Curated flow patched: 'demo'"
     assert "max_concurrency(demo) == 1" in curated.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
+async def test_flow_manage_discovers_g4_and_prefers_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path))
+    task_dir = tmp_path / "flows" / "review"
+    task_dir.mkdir(parents=True)
+    (task_dir / "review.g4").write_text("workflow from_g4 {}\n", encoding="utf-8")
+
+    assert await flow_manage_tool.flow_manage(
+        action="view",
+        target="tasks",
+        flow_name="review",
+    ) == "workflow from_g4 {}\n"
+
+    (task_dir / "review.workflow").write_text("workflow preferred {}\n", encoding="utf-8")
+
+    assert await flow_manage_tool.flow_manage(
+        action="view",
+        target="tasks",
+        flow_name="review",
+    ) == "workflow preferred {}\n"
+    assert "review: review.workflow" in await flow_manage_tool.flow_manage(action="list", target="tasks")
+
+
+@pytest.mark.anyio
+async def test_flow_manage_promotes_g4_adhoc_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path))
+    adhoc_dir = tmp_path / "flows" / "adhoc" / "g4-demo"
+    adhoc_dir.mkdir(parents=True)
+    source = "workflow g4_demo {}\n"
+    (adhoc_dir / "flow.g4").write_text(source, encoding="utf-8")
+
+    assert await flow_manage_tool.flow_manage(
+        action="view",
+        target="adhoc",
+        flow_name="g4-demo",
+    ) == source
+    assert await flow_manage_tool.flow_manage(
+        action="promote",
+        flow_name="g4-demo",
+    ) == "Flow promoted to curated: 'g4-demo'"
+
+    curated = tmp_path / "flows" / "curated" / "g4-demo" / "FLOW.md"
+    curated_text = curated.read_text(encoding="utf-8")
+    assert "source: flows/adhoc/g4-demo/flow.g4" in curated_text
+    assert "```fusionflow\n" + source.strip() + "\n```" in curated_text

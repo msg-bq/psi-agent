@@ -919,8 +919,9 @@ For this command:
 1. Read the full instructions at:
    {fusion_skill_md}
    Relative path: skills/fusion-flow/SKILL.md
-2. Map the slug to the fixed workspace-relative path
-   `flows/workflows/<slug>/<slug>.workflow`.
+2. Resolve the slug inside its fixed bundle. Use
+   `flows/workflows/<slug>/<slug>.workflow` when it exists; otherwise use
+   `flows/workflows/<slug>/<slug>.g4`. If both exist, prefer `.workflow`.
 3. Read that declaration before execution and inspect its `input_workflow(...)`
    assertion to identify every required input Artifact.
 4. Resolve every required input from the conversation. If any value is missing,
@@ -949,7 +950,7 @@ there but must not launch it.
 
 ### Natural-language activation
 When the user describes a workflow-shaped task - multi-agent collaboration, parallel review,
-fan-out/fan-in, pipelines, multi-step research or scoring, or running a `.workflow` file -
+fan-out/fan-in, pipelines, multi-step research or scoring, or running a `.workflow` or `.g4` file -
 activate the Fusion Flow skill.
 
 **Multi-agent simulation is workflow-shaped - build a flow, do NOT role-play it yourself.**
@@ -1001,7 +1002,11 @@ Rules:
 2. Treat skills without `created_by: agent` as read-only.
 3. New learned procedures -> `skills/<skill-name>/SKILL.md` via `skill_manage(action="create")`.
 4. Reusable workflow templates -> `flows/curated/<flow-name>/FLOW.md` via `flow_manage`.
-5. Saved command workflows -> `flows/workflows/<slug>/<slug>.workflow` via existing file tools.
+5. Saved command workflows -> the exact
+   `flows/workflows/<slug>/<slug>.workflow` or
+   `flows/workflows/<slug>/<slug>.g4` source via existing file tools. Prefer
+   `.workflow` when both exist; use `.workflow` for new saves unless the user
+   explicitly requests `.g4`.
 6. One-off task executions -> `flows/<task-slug>/`.
 
 ### Agent execution
