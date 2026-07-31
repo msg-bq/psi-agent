@@ -85,15 +85,10 @@ def test_compiles_all_graph_operators() -> None:
     step = Constant("step")
     input_artifact = Constant("input")
     output_artifact = Constant("output")
-    error_artifact = Constant("errors")
     compilation = _compile(
         (
             _assertion("input_workflow", (workflow,), ListTerm((input_artifact,))),
-            _assertion(
-                "output_workflow",
-                (workflow,),
-                ListTerm((output_artifact, error_artifact)),
-            ),
+            _assertion("output_workflow", (workflow,), ListTerm((output_artifact,))),
             _assertion("step_name", (step,), Constant("name")),
             _assertion("step_instruction", (step,), Constant("instruction")),
             _assertion(
@@ -104,8 +99,6 @@ def test_compiles_all_graph_operators() -> None:
             _assertion("consumes", (step,), ListTerm((input_artifact,))),
             _assertion("produces", (step,), ListTerm((output_artifact,))),
             _assertion("foreach_item", (step, input_artifact), Constant("item")),
-            _assertion("foreach_concurrency", (step,), Constant("2")),
-            _assertion("foreach_errors", (step,), error_artifact),
             _assertion("step_timeout", (step,), Constant("30")),
             _assertion("max_attempts", (step,), Constant("2")),
             _assertion(
@@ -135,17 +128,9 @@ def test_compiles_all_graph_operators() -> None:
                         "amount": 3,
                     }
                 ],
-                "foreach_concurrency": 2,
-                "foreach_error_artifact_id": "errors",
             }
         ],
         "artifacts": [
-            {
-                "artifact_id": "errors",
-                "is_input": False,
-                "is_output": True,
-                "binding_step_id": None,
-            },
             {
                 "artifact_id": "input",
                 "is_input": True,
@@ -180,59 +165,15 @@ def test_compiles_all_graph_operators() -> None:
     }
 
 
-def test_compiles_foreach_policies_order_independently() -> None:
+def test_foreach_source_must_be_an_artifact() -> None:
     step = Constant("step", (Concept("Step"),))
-    items = Constant("items", (Concept("Artifact"),))
+    source = Constant("not-an-artifact", (Concept("List"),))
     item = Constant("item", (Concept("Artifact"),))
-    errors = Constant("errors", (Concept("Artifact"),))
-    assertions = (
-        *_step_declarations(),
-        _assertion("input_workflow", (Constant("workflow"),), ListTerm((items,))),
-        _assertion("output_workflow", (Constant("workflow"),), ListTerm((errors,))),
-        _assertion("foreach_item", (step, items), item),
-        _assertion("foreach_concurrency", (step,), Constant("4")),
-        _assertion("foreach_errors", (step,), errors),
-    )
-
-    left = _compile(assertions)
-    right = _compile(tuple(reversed(assertions)))
-
-    assert left.graph.to_dict() == right.graph.to_dict()
-    compiled_step = left.graph.steps[0]
-    assert compiled_step.foreach_concurrency == 4
-    assert compiled_step.foreach_error_artifact_id == "errors"
-
-
-@pytest.mark.parametrize(
-    ("operator_name", "argument", "rhs", "message"),
-    [
-        (
-            "foreach_item",
-            Constant("not-an-artifact", (Concept("List"),)),
-            Constant("item", (Concept("Artifact"),)),
-            "foreach source must belong to Artifact",
-        ),
-        (
-            "foreach_errors",
-            None,
-            Constant("not-an-artifact", (Concept("List"),)),
-            "foreach_errors value must belong to Artifact",
-        ),
-    ],
-)
-def test_foreach_artifact_positions_are_typed(
-    operator_name: str,
-    argument: Constant | None,
-    rhs: Constant,
-    message: str,
-) -> None:
-    step = Constant("step", (Concept("Step"),))
-    arguments = (step, cast(Term, argument)) if argument is not None else (step,)
-    with pytest.raises(WorkflowGraphCompilationError, match=message):
+    with pytest.raises(WorkflowGraphCompilationError, match="foreach source must belong to Artifact"):
         _compile(
             (
                 *_step_declarations(),
-                _assertion(operator_name, arguments, rhs),
+                _assertion("foreach_item", (step, source), item),
             )
         )
 

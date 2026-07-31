@@ -7,16 +7,8 @@ from typing import cast
 import anyio
 import pytest
 from fusion_flow.execution import PipelineStep, RunContext, flow, run
-from fusion_flow.execution.flow import (
-    _aggregate_foreach_outputs,
-    _IndexedFailure,
-    _IndexedSuccess,
-    _retry_operation,
-    _run_indexed_parallel,
-)
-from fusion_flow.execution.flow import (
-    logger as flow_logger,
-)
+from fusion_flow.execution.flow import _retry_operation, _run_parallel_tasks
+from fusion_flow.execution.flow import logger as flow_logger
 
 
 async def _execute(
@@ -41,7 +33,7 @@ async def _execute(
 
 
 @pytest.mark.anyio
-async def test_shared_execution_kernels_do_not_require_run_context() -> None:
+async def test_shared_retry_kernel_does_not_require_run_context() -> None:
     attempts: list[int] = []
 
     async def flaky(attempt: int) -> str:
@@ -56,91 +48,131 @@ async def test_shared_execution_kernels_do_not_require_run_context() -> None:
         initial_delay=0,
     ) == ("ok", 2)
 
-    active = 0
-    maximum = 0
-    terminal_indexes: list[int] = []
 
-    async def visit(item: int, index: int) -> int:
-        nonlocal active, maximum
-        active += 1
-        maximum = max(maximum, active)
-        try:
-            await anyio.sleep(0.01)
-            if item == 2:
-                raise ValueError("collected")
-            return item * 10
-        finally:
-            active -= 1
-
-    outcomes = await _run_indexed_parallel(
-        [1, 2, 3],
-        visit,
-        max_concurrency=2,
-        collect_error=lambda error: isinstance(error, ValueError),
-        on_outcome=lambda outcome: terminal_indexes.append(outcome.index),
-    )
-
-    assert maximum == 2
-    assert [outcome.index for outcome in outcomes] == [0, 1, 2]
-    assert isinstance(outcomes[0], _IndexedSuccess)
-    assert outcomes[0].value == 10
-    assert isinstance(outcomes[1], _IndexedFailure)
-    assert str(outcomes[1].error) == "collected"
-    assert isinstance(outcomes[2], _IndexedSuccess)
-    assert outcomes[2].value == 30
-    assert sorted(terminal_indexes) == [0, 1, 2]
-
+@pytest.mark.anyio
+async def test_parallel_task_kernel_bounds_the_started_task_window() -> None:
     started: list[int] = []
+    two_started = anyio.Event()
+    release = anyio.Event()
+    results: list[int] = []
 
-    async def fatal(_: int, index: int) -> None:
+    async def visit(index: int) -> int:
         started.append(index)
-        if index == 0:
-            raise RuntimeError("fatal")
-        await anyio.sleep_forever()
+        if len(started) == 2:
+            two_started.set()
+        await release.wait()
+        return index
 
-    with pytest.raises(RuntimeError, match="fatal"):
-        await _run_indexed_parallel(
-            tuple(range(100)),
-            fatal,
+    tasks = [partial(visit, index) for index in range(5)]
+
+    async def run_all() -> None:
+        nonlocal results
+        results, _ = await _run_parallel_tasks(
+            tasks,
+            join="all",
+            required=len(tasks),
             max_concurrency=2,
         )
-    assert set(started) <= {0, 1}
 
-    started.clear()
+    with anyio.fail_after(1):
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(run_all)
+            await two_started.wait()
+            assert started == [0, 1]
+            release.set()
 
-    async def simultaneous_fatal(_: int, index: int) -> None:
-        started.append(index)
-        raise RuntimeError(f"fatal {index}")
+    assert results == [0, 1, 2, 3, 4]
 
-    with pytest.raises(RuntimeError, match=r"fatal [01]"):
-        await _run_indexed_parallel(
-            tuple(range(100)),
-            simultaneous_fatal,
+
+@pytest.mark.anyio
+async def test_bounded_parallel_any_refills_the_task_window() -> None:
+    async def visit(index: int) -> int:
+        await anyio.sleep(0.001)
+        return index
+
+    tasks = [partial(visit, index) for index in range(5)]
+    with anyio.fail_after(1):
+        results, indexes = await _run_parallel_tasks(
+            tasks,
+            join="any",
+            required=3,
             max_concurrency=2,
         )
-    assert set(started) <= {0, 1}
+
+    assert len(results) == len(indexes) == 3
+    assert results == list(indexes)
 
 
-def test_shared_foreach_aggregation_is_ordered_and_aligned() -> None:
-    assert _aggregate_foreach_outputs(
-        ("result",),
-        (
-            (0, 1, {"result": None}, None),
-            (1, 2, None, {"kind": "RuntimeError", "message": "failed"}),
-        ),
-        error_artifact_id="errors",
-    ) == {
-        "result": [None, None],
-        "errors": [
-            None,
-            {
-                "index": 1,
-                "kind": "RuntimeError",
-                "message": "failed",
-                "attempts": 2,
-            },
-        ],
-    }
+@pytest.mark.anyio
+@pytest.mark.parametrize("join", ["all", "first", "any"])
+async def test_parallel_task_kernel_propagates_self_cancellation(join: str) -> None:
+    cancelled_error = anyio.get_cancelled_exc_class()
+
+    async def cancel_self() -> None:
+        raise cancelled_error()
+
+    with anyio.fail_after(1), pytest.raises(cancelled_error):
+        await _run_parallel_tasks(
+            [cancel_self],
+            join=join,
+            required=1,
+        )
+
+
+@pytest.mark.anyio
+async def test_parallel_task_kernel_preserves_cleanup_failures() -> None:
+    sibling_started = anyio.Event()
+
+    async def fail_primary() -> None:
+        await sibling_started.wait()
+        raise RuntimeError("primary")
+
+    async def fail_during_cleanup() -> None:
+        sibling_started.set()
+        try:
+            await anyio.sleep_forever()
+        finally:
+            raise ValueError("cleanup")
+
+    with pytest.RaisesGroup(
+        pytest.RaisesExc(RuntimeError, match="primary"),
+        pytest.RaisesExc(ValueError, match="cleanup"),
+    ):
+        await _run_parallel_tasks(
+            [fail_primary, fail_during_cleanup],
+            join="all",
+            required=2,
+        )
+
+
+@pytest.mark.anyio
+async def test_parallel_task_kernel_preserves_external_cancel_cleanup_failure() -> None:
+    async def fail_during_cleanup() -> None:
+        try:
+            await anyio.sleep_forever()
+        finally:
+            raise ValueError("cleanup during external cancellation")
+
+    with pytest.raises(BaseException) as caught:
+        with anyio.fail_after(0.01):
+            await _run_parallel_tasks(
+                [fail_during_cleanup],
+                join="all",
+                required=1,
+            )
+
+    pending = [caught.value]
+    leaves: list[BaseException] = []
+    while pending:
+        error = pending.pop()
+        if isinstance(error, BaseExceptionGroup):
+            pending.extend(error.exceptions)
+        else:
+            leaves.append(error)
+    assert any(
+        isinstance(error, ValueError) and "external cancellation" in str(error)
+        for error in leaves
+    )
 
 
 @pytest.mark.anyio

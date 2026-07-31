@@ -28,8 +28,6 @@ def test_runner_catalog_includes_typed_depends_on() -> None:
     assert program_path.output_concept == context.concepts["Path"]
     assert tuple(concept.name for concept in context.operators["allowed_tool"].input_concepts) == ("Agent", "Tool")
     assert context.operators["agent_system_prompt"].output_concept == context.concepts["Instruction"]
-    assert tuple(concept.name for concept in context.operators["foreach_concurrency"].input_concepts) == ("Step",)
-    assert context.operators["foreach_errors"].output_concept == context.concepts["Artifact"]
     assert tuple(concept.name for concept in context.operators["foreach_item"].input_concepts) == ("Step", "Artifact")
 
 
@@ -893,20 +891,17 @@ const reviewer: Human;
 const items: Artifact;
 const item: Artifact;
 const results: Artifact;
-const errors: Artifact;
 
 workflow human_foreach {
     input_workflow(human_foreach) == [items];
-    output_workflow(human_foreach) == [results, errors];
+    output_workflow(human_foreach) == [results];
 
     step_name(review_step) == review_name;
     step_instruction(review_step) == "Review this item.";
     step_executor(review_step) == reviewer;
     foreach_item(review_step, items) == item;
-    foreach_concurrency(review_step) == 2;
     consumes(review_step) == [item];
     produces(review_step) == [results];
-    foreach_errors(review_step) == errors;
 }
 """
     calls: list[str] = []

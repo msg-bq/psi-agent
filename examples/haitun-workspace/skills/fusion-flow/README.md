@@ -4,11 +4,10 @@ FusionFlow is the workspace-local G4 parser/compiler, graph compiler, workflow
 runner, and authoring Skill. Agent-backed Steps reuse
 `fusion_flow.execution.run()`, `flow.agent()`, and `flow.session()` through a
 workspace `SessionRunner`. Private `RunContext`-free helpers in
-`fusion_flow.execution.flow` provide retry sequencing, bounded indexed
-parallel traversal to both the public Flow API and the G4 interpreter, and keep
-G4's ordered aligned aggregation in the same mechanism layer. The graph
-interpreter retains graph readiness, Artifact/checkpoint/resume, global
-admission, resources, and timeout.
+`fusion_flow.execution.flow` provide `_retry_operation` and
+`_run_parallel_tasks` to both the public Flow API and the G4 interpreter. The
+graph interpreter retains graph readiness, Artifact/checkpoint/resume, ordered
+foreach results, global admission, resources, timeout, and G4 error policy.
 Program-backed Steps use an injected Program runner contract; the workspace
 entry point implements it with a specialized Program Agent and structured
 AnyIO `compile_program` / `execute_program` tools. The Agent can prepare or
@@ -64,13 +63,13 @@ and script assets without resource requirements.
 - `fusion_flow/checker.py`: static semantics boundary.
 - `fusion_flow/compiler.py`: target-neutral Core IR traversal and backend hook boundary.
 - `fusion_flow/workflow_graph/`: immutable Step-Artifact graph model, validation, and deterministic serialization.
-- `fusion_flow/workflow_execution.py`: graph planning and interpretation, Artifact/checkpoint/resume state, global admission, resources, and timeouts; generic retry/indexed-foreach mechanisms come from the shared execution kernel.
+- `fusion_flow/workflow_execution.py`: graph planning and interpretation, Artifact/checkpoint/resume state, global admission, resources, and timeouts; retry and parallel scheduling reuse the Flow helpers.
 - `fusion_flow/graph_compiler.py`: concrete `CoreIRCompiler` backend that builds `fusion_flow.workflow_graph` models.
 - `fusion_flow/workflow_runner.py`: fail-closed compile/plan/execute entry point with Agent, Human, Program, and checkpoint injection boundaries.
 - `fusion_flow/artifact_store.py`: atomic, workflow-local Markdown persistence for every materialized G4 Artifact.
 - `fusion_flow/job_store.py`: strict v2 JSON state plus non-blocking, OS-released advisory leases and an in-process guard for G4 runs waiting on Human input.
 - `fusion_flow/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
-- `fusion_flow/execution/`: Python `flow.*` runtime, historical compatibility surface, and private `RunContext`-free retry/bounded-indexed-parallel/aggregation kernel. Public Flow combinators and the G4 interpreter share those helpers, while the workspace adapter reuses `run`/`agent`/`session` for G4 Agent leaves; immediate control combinators are not G4 graph bytecode.
+- `fusion_flow/execution/`: Python `flow.*` runtime, historical compatibility surface, and private `RunContext`-free retry/parallel helpers. Public Flow combinators and the G4 interpreter share them, while the workspace adapter reuses `run`/`agent`/`session` for G4 Agent leaves; immediate control combinators are not G4 graph bytecode.
 - `test/test_graph_compiler.py`: real Core IR to WorkflowGraph compiler contract checks.
 - `test/test_workflow_runner.py`: compile, plan, dependency, resource, and dispatch checks.
 - `test/execution/`: parity and shared Agent-session runtime regression tests.
@@ -86,7 +85,7 @@ FusionFlow Skill owns all of them.
 
 ## Current scope and known gaps
 
-The language contract now covers file-level identity declarations, assertions, `!`/`AND`/`OR` formulas and comparisons, arithmetic, Lists, JSON-style quoted text, and value-producing `if(condition, then, else)` expressions. Workflow blocks contain assertions; a standalone Bool-returning operator call is shorthand for that call asserted equal to `True`. Concepts and operator signatures come from an external catalog, so quoted text is accepted by the surface grammar while typed catalogs decide where text is valid. The 23 preset operators are split into five disjoint owner groups. The canonical dataflow operators `input_workflow(Workflow)`, `output_workflow(Workflow)`, `consumes(Step)`, and `produces(Step)` return ordinary List terms. Their artifact relation is always explicit on the RHS, including singleton forms such as `consumes(step) == [artifact]`; `foreach_item(Step, Artifact)` instead names one source Artifact whose runtime value must be a List and one Step-local item binding. `foreach_concurrency` and `foreach_errors` declare its iteration limit and aligned error Artifact. The removed `*_multi` spellings and former two-argument Bool relations have no compatibility aliases. `program_path` and `agent_system_prompt` remain typed executor configuration; a short `step_instruction` may contain quoted text and a longer one may use an explicit `./...` instruction-file reference. `FusionFlow.g4` fixes `if` at three arguments while ordinary preset and externally registered operators keep flexible call arity for checker-owned validation.
+The language contract now covers file-level identity declarations, assertions, `!`/`AND`/`OR` formulas and comparisons, arithmetic, Lists, JSON-style quoted text, and value-producing `if(condition, then, else)` expressions. Workflow blocks contain assertions; a standalone Bool-returning operator call is shorthand for that call asserted equal to `True`. Concepts and operator signatures come from an external catalog, so quoted text is accepted by the surface grammar while typed catalogs decide where text is valid. The 21 preset operators are split into five disjoint owner groups. The canonical dataflow operators `input_workflow(Workflow)`, `output_workflow(Workflow)`, `consumes(Step)`, and `produces(Step)` return ordinary List terms. Their artifact relation is always explicit on the RHS, including singleton forms such as `consumes(step) == [artifact]`; `foreach_item(Step, Artifact)` instead names one List-valued source Artifact and one Step-local item binding. The removed `*_multi` spellings and former two-argument Bool relations have no compatibility aliases. `program_path` and `agent_system_prompt` remain typed executor configuration; a short `step_instruction` may contain quoted text and a longer one may use an explicit `./...` instruction-file reference. `FusionFlow.g4` fixes `if` at three arguments while ordinary preset and externally registered operators keep flexible call arity for checker-owned validation.
 
 For a compact, readable BNF and consistency with KEDispatcher, preset operators remain syntax sugar over the same flexible call rule instead of receiving separate arity-constrained grammar productions. After syntax parsing, the checker/catalog validates their arity and types. Because that information is intentionally not encoded structurally in the BNF, every preset operator in `FusionFlow.g4` documents its parameter types, return type, and explicit arity for human and agent readers; the grammar contract test enforces this documentation invariant.
 
@@ -103,7 +102,7 @@ assertions become graph nodes, edges, or typed policy. In addition to dataflow
 and ordinary Step policy, the backend consumes `independent`,
 `resource_requirement`, and the explicit control-order relation `depends_on`.
 `depends_on` is a runner-registered typed catalog extension over the grammar's
-generic operator-call syntax, not a new member of the grammar's 23 canonical
+generic operator-call syntax, not a new member of the grammar's 21 canonical
 preset operators.
 Unknown well-formed assertions remain in `residual_assertions`. A top-level
 `selected == if(condition, artifact_a, artifact_b)` lowers to an eager
@@ -325,17 +324,18 @@ between them; repeat the relation for multiple predecessors. Declaration order
 has no scheduling meaning.
 
 `ForeachEdge` dynamically expands Agent- or Program-backed Steps into durable
-`step[index]` instances. Normal outputs and the required `foreach_errors`
-Artifact are collected as source-ordered Lists; an empty source produces empty
-Lists. Ordinary terminal item failures become aligned error entries instead of
-cancelling siblings. `foreach_concurrency`, workflow `max_concurrency`, and
-resource capacity compose, while resources, timeout, retry, and checkpoint
-state belong to each iteration. Human-backed foreach is rejected before
-dispatch until Human requests and responses carry iteration identity.
+`step[index]` instances. Iterations are parallel by default and are limited only
+by workflow `max_concurrency` and resource capacity. Normal outputs become
+source-ordered Lists when every iteration succeeds; an empty source produces
+empty Lists. Resources, timeout, retry, and successful checkpoint state belong
+to each iteration. Ordinary failures do not cancel siblings: after all ordinary
+iterations finish, their errors are raised together rather than materialized as
+G4 Artifacts. Successful iteration checkpoints are reused on resume.
+Human-backed foreach is rejected before dispatch until Human requests and
+responses carry iteration identity.
 Non-foreach Program Steps retain their existing `$fusion_flow/program_error`
 error-valued Artifact compatibility. In foreach, that reserved Program failure
-instead participates in per-item retry and, after exhaustion, produces `null`
-normal output plus a compact aligned error entry without captured stdout/stderr.
+instead participates in per-item retry and then joins the aggregate exception.
 Feedback/input-plus-producer graphs and circular Artifact or explicit control
 awaits remain fail-closed execution-plan boundaries.
 

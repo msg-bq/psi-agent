@@ -298,7 +298,7 @@ Read `grammar/FusionFlow.g4` completely before using these patterns. The grammar
 | --- | --- | --- |
 | **Fan-out + fan-in** | Several Steps each use `consumes(step) == [shared_artifact]`; one final Step uses `consumes(final_step) == [result_a, result_b]`. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
 | **Artifact pipeline** | Each Step produces the Artifact consumed by the next Step. Use `max_attempts` only when rerunning that individual Step is safe. | Writing, ETL, and refine-and-check work. |
-| **Per-item map** | Bind one List-valued source Artifact with `foreach_item`, declare an aligned `foreach_errors` Artifact, and optionally cap iterations with `foreach_concurrency`. | Parallel processing with ordered results and collected item errors. |
+| **Per-item map** | Bind one List-valued source Artifact with `foreach_item`; use workflow `max_concurrency` or resources when a limit is needed. | Parallel processing with ordered results; ordinary failures are raised together after siblings finish. |
 | **Named Artifact selection** | Keep every candidate result explicit, then bind `selected_artifact == if(formula, artifact_a, artifact_b)` and use `selected_artifact` in ordinary dataflow. For priority selection, chain named intermediate Artifacts. | Eagerly run all candidate producers, then choose one value for downstream Steps. |
 | **Composite workflow** | Combine artifact chains, fan-out/fan-in, explicit bounded Agent Steps, and named Artifact selections. | When one simple pattern does not cover the task. |
 
@@ -376,7 +376,7 @@ workflow code_review {
 ### G4 source of truth
 
 Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole authority for surface syntax, declarations, assertions, formulas, terms, and preset operator signatures. This skill additionally defines which grammar-valid shapes the executable graph backend accepts.
-Runner-specific typed catalog extensions use the grammar's generic operator-call syntax without changing its preset catalog. In particular, `depends_on(Step, Step) -> Bool` is registered by `fusion_flow/workflow_runner.py` and is executable there, but is not one of the grammar's 23 canonical preset operators.
+Runner-specific typed catalog extensions use the grammar's generic operator-call syntax without changing its preset catalog. In particular, `depends_on(Step, Step) -> Bool` is registered by `fusion_flow/workflow_runner.py` and is executable there, but is not one of the grammar's 21 canonical preset operators.
 
 ### Executable graph backend guardrails
 
@@ -400,15 +400,15 @@ Runner-specific typed catalog extensions use the grammar's generic operator-call
 - Model fan-out by making several steps consume the same artifact.
 - Model fan-in with `consumes(step) == [artifact_a, artifact_b];`.
 - Use `foreach_item(step, source_artifact) == item_binding` when a source Artifact contains a finite JSON List. The item binding is local to the expanded Step and is added to that iteration's inputs; do not also declare it as a workflow input.
-- Every executable foreach declares `foreach_errors(step) == errors`. Each normal output and this error Artifact become source-ordered Lists. A failed item contributes `null` to every normal output and a structured record to the aligned error entry; an empty source produces empty Lists.
-- Use `foreach_concurrency(step) == count` to bound active iterations. It composes with workflow `max_concurrency` and resource capacity rather than overriding them.
+- Foreach iterations run in parallel by default. Only workflow `max_concurrency` and resource capacity bound them; there is no per-foreach limit.
+- Normal foreach outputs become source-ordered Lists only after every iteration succeeds; an empty source produces empty Lists. Iteration failures are raised, never declared or returned as G4 Artifacts.
 - Bind each step to its executor with `step_executor`.
 - Configure concurrency, timeouts, retries, and resources with the corresponding supported operators. Resources, `step_timeout`, `max_attempts`, and checkpoint progress apply independently to each foreach iteration.
 - Treat `independent(step)` only as a hint. Artifact dependencies and `depends_on` still decide when the Step is ready.
 - Declare resource demand with `resource_requirement(step, resource)`. Resource capacities or concrete IDs come from runner configuration, never from `.workflow` source.
 - Agent- and Program-backed foreach Steps are executable. Human-backed foreach is rejected before dispatch until Human requests and responses carry iteration identity.
-- A Program failure inside foreach participates in that Step's `max_attempts` and then becomes a compact aligned error with `null` normal output. Outside foreach, preserve the existing `$fusion_flow/program_error` error-valued Artifact behavior.
-- Ordinary terminal foreach failures are collected without cancelling siblings. Cancellation, workflow timeout, Human suspension, and graph/checkpoint/allocator invariant failures still escape and stop or suspend the run.
+- A Program failure inside foreach participates in that Step's `max_attempts` and then joins the aggregate exception. Outside foreach, preserve the existing `$fusion_flow/program_error` error-valued Artifact behavior.
+- Ordinary terminal foreach failures do not cancel siblings; after all ordinary iterations finish, the runner raises them together. Successful iteration checkpoints are reused on resume. Cancellation, workflow timeout, Human suspension, and graph/checkpoint/allocator invariant failures still escape immediately.
 - Unknown or unsupported assertions remain residual and stop execution. Never delete them, comment them out, or bypass residual validation to make a run start.
 - Lower executable `if` as a named Artifact selection: `selected_artifact == if(formula, artifact_a, artifact_b);`, followed by ordinary list dataflow such as `consumes(final_step) == [selected_artifact];`.
 - Variables, quantifiers, rules, implications, biconditionals, query/SAT/optimization requests, local concept declarations, local operator declarations, and imperative blocks are outside this language.
@@ -424,15 +424,13 @@ const worker: Agent, Executor;
 const items: Artifact;
 const item: Artifact;
 const enriched_items: Artifact;
-const item_errors: Artifact;
 
 workflow enrich_batch {
   -- DATA FLOW
   input_workflow(enrich_batch) == [items];
   foreach_item(enrich_item, items) == item;
   produces(enrich_item) == [enriched_items];
-  foreach_errors(enrich_item) == item_errors;
-  output_workflow(enrich_batch) == [enriched_items, item_errors];
+  output_workflow(enrich_batch) == [enriched_items];
 
   -- EXECUTOR ASSIGNMENT
   step_executor(enrich_item) == worker;
@@ -443,17 +441,15 @@ workflow enrich_batch {
   step_timeout(enrich_item) == 120;
   max_attempts(enrich_item) == 2;
 
-  -- SCHEDULING CONFIGURATION
-  foreach_concurrency(enrich_item) == 4;
-
   -- WORKFLOW CONFIGURATION
   max_concurrency(enrich_batch) == 8;
 }
 ```
 
-At runtime `items` must be a JSON List. `enriched_items[index]` and
-`item_errors[index]` always refer to the same source item, even when iterations
-finish out of order.
+At runtime `items` must be a JSON List. Iterations run in parallel and
+`enriched_items` preserves source order. If ordinary iterations fail, siblings
+finish and the failures are raised together; successful iteration checkpoints
+can be reused on resume.
 
 #### Executor configuration
 

@@ -100,8 +100,6 @@ class _StepDraft:
     # None means the assertion was absent; an explicit value of 1 must still
     # make a second max_attempts assertion a duplicate.
     max_attempts: int | None = None
-    foreach_concurrency: int | None = None
-    foreach_error_artifact_id: str | None = None
     independent: bool | None = None
     resources: dict[str, int] = field(default_factory=dict)
     depends_on: set[str] = field(default_factory=set)
@@ -134,8 +132,6 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             "consumes",
             "produces",
             "foreach_item",
-            "foreach_concurrency",
-            "foreach_errors",
             # Step and workflow policies.
             "step_timeout",
             "max_attempts",
@@ -448,42 +444,6 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                         )
                     )
 
-                case "foreach_concurrency":
-                    # foreach_concurrency(step) = positive_count
-                    self._require_arity(arguments, 1, operator_name)
-                    step_id = self._concept_symbol(
-                        arguments[0],
-                        "Step",
-                        "foreach_concurrency step",
-                    )
-                    step_draft = step_drafts.setdefault(step_id, _StepDraft())
-                    concurrency = self._positive_integer(fact_value, operator_name)
-                    if step_draft.foreach_concurrency is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
-                    step_draft.foreach_concurrency = concurrency
-
-                case "foreach_errors":
-                    # foreach_errors(step) = aligned_error_artifact
-                    self._require_arity(arguments, 1, operator_name)
-                    step_id = self._concept_symbol(
-                        arguments[0],
-                        "Step",
-                        "foreach_errors step",
-                    )
-                    step_draft = step_drafts.setdefault(step_id, _StepDraft())
-                    error_artifact_id = self._concept_symbol(
-                        fact_value,
-                        "Artifact",
-                        "foreach_errors value",
-                    )
-                    if step_draft.foreach_error_artifact_id is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
-                    step_draft.foreach_error_artifact_id = error_artifact_id
-                    artifacts.setdefault(
-                        error_artifact_id,
-                        ArtifactNode(artifact_id=error_artifact_id),
-                    )
-
                 case "step_timeout":
                     # step_timeout(step) = seconds
                     self._require_arity(arguments, 1, operator_name)
@@ -601,8 +561,6 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                         resources=tuple(resources),
                         independent=step_draft.independent is True,
                         depends_on=tuple(sorted(step_draft.depends_on)),
-                        foreach_concurrency=step_draft.foreach_concurrency,
-                        foreach_error_artifact_id=step_draft.foreach_error_artifact_id,
                     )
                 )
 

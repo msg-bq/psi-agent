@@ -251,53 +251,27 @@ def test_generate_plan_rejects_explicit_self_dependency() -> None:
         generate_plan(graph)
 
 
-@pytest.mark.parametrize(
-    ("graph", "message"),
-    [
+def test_generate_plan_rejects_input_artifact_that_is_also_produced() -> None:
+    graph = WorkflowGraph(
+        "input-producer",
         (
-            WorkflowGraph(
-                "foreach",
-                (StepNode("step", "step", "executor"),),
-                (
-                    ArtifactNode("items", is_input=True),
-                    ArtifactNode("item", binding_step_id="step"),
-                ),
-                (
-                    ForeachEdge("items", "step", "item"),
-                    ConsumesEdge("item", "step"),
-                ),
-            ),
-            "foreach",
+            StepNode("producer", "producer", "producer-executor"),
+            StepNode("consumer", "consumer", "consumer-executor"),
         ),
+        (ArtifactNode("value", is_input=True),),
         (
-            WorkflowGraph(
-                "input-producer",
-                (
-                    StepNode("producer", "producer", "producer-executor"),
-                    StepNode("consumer", "consumer", "consumer-executor"),
-                ),
-                (ArtifactNode("value", is_input=True),),
-                (
-                    ProducesEdge("producer", "value"),
-                    ConsumesEdge("value", "consumer"),
-                ),
-            ),
-            "also produced",
+            ProducesEdge("producer", "value"),
+            ConsumesEdge("value", "consumer"),
         ),
-    ],
-)
-def test_generate_plan_rejects_unsupported_one_shot_semantics(
-    graph: WorkflowGraph,
-    message: str,
-) -> None:
-    with pytest.raises(ExecutionPlanError, match=message):
+    )
+
+    with pytest.raises(ExecutionPlanError, match="also produced"):
         generate_plan(graph)
 
 
 def _foreach_graph(
     *,
     items_are_output: bool = False,
-    foreach_concurrency: int | None = 3,
     max_attempts: int = 1,
     resources: tuple[ResourceRequirement, ...] = (),
     max_concurrency: int | None = None,
@@ -311,15 +285,12 @@ def _foreach_graph(
                 "agent",
                 max_attempts=max_attempts,
                 resources=resources,
-                foreach_concurrency=foreach_concurrency,
-                foreach_error_artifact_id="errors",
             ),
         ),
         (
             ArtifactNode("items", is_input=True, is_output=items_are_output),
             ArtifactNode("item", binding_step_id="process"),
             ArtifactNode("result", is_output=True),
-            ArtifactNode("errors", is_output=True),
         ),
         (
             ForeachEdge("items", "process", "item"),
@@ -334,18 +305,12 @@ def test_generate_plan_lowers_foreach_source_dependency() -> None:
         "generated-foreach",
         (
             StepNode("prepare", "prepare", "agent"),
-            StepNode(
-                "process",
-                "process",
-                "agent",
-                foreach_error_artifact_id="errors",
-            ),
+            StepNode("process", "process", "agent"),
         ),
         (
             ArtifactNode("items"),
             ArtifactNode("item", binding_step_id="process"),
             ArtifactNode("result", is_output=True),
-            ArtifactNode("errors", is_output=True),
         ),
         (
             ProducesEdge("prepare", "items"),
@@ -364,7 +329,7 @@ def test_generate_plan_lowers_foreach_source_dependency() -> None:
 
 
 @pytest.mark.anyio
-async def test_foreach_aggregates_by_input_order_and_collects_errors() -> None:
+async def test_foreach_aggregates_by_input_order() -> None:
     graph = _foreach_graph()
     contexts: list[DispatchContext] = []
 
@@ -376,8 +341,6 @@ async def test_foreach_aggregates_by_input_order_and_collects_errors() -> None:
         del step
         contexts.append(context)
         item = cast(int, inputs["item"])
-        if item == 2:
-            raise RuntimeError("cannot process two")
         await anyio.sleep(0.01 * (4 - item))
         return {"result": item * 10}
 
@@ -388,24 +351,77 @@ async def test_foreach_aggregates_by_input_order_and_collects_errors() -> None:
         contextual_dispatch=dispatch,
     )
 
-    assert outputs == {
-        "result": [10, None, 30],
-        "errors": [
-            None,
-            {
-                "index": 1,
-                "kind": "RuntimeError",
-                "message": "cannot process two",
-                "attempts": 1,
-            },
-            None,
-        ],
-    }
+    assert outputs == {"result": [10, 20, 30]}
     assert {(context.invocation_id, context.iteration_index, context.attempt) for context in contexts} == {
         ("process[0]", 0, 1),
         ("process[1]", 1, 1),
         ("process[2]", 2, 1),
     }
+
+
+@pytest.mark.anyio
+async def test_foreach_collects_failures_after_all_iterations_finish() -> None:
+    graph = _foreach_graph()
+    completed: set[int] = set()
+
+    class ItemError(Exception):
+        pass
+
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        del step
+        item = cast(int, inputs["item"])
+        if item == 2:
+            raise TimeoutError("cannot process two")
+        if item == 4:
+            raise ItemError("cannot process four")
+        await anyio.sleep(0.01)
+        completed.add(item)
+        return {"result": item * 10}
+
+    with pytest.RaisesGroup(
+        pytest.RaisesGroup(
+            pytest.RaisesExc(TimeoutError, match="cannot process two"),
+            pytest.RaisesExc(ItemError, match="cannot process four"),
+        )
+    ):
+        await execute_plan(
+            generate_plan(graph),
+            graph,
+            inputs={"items": [1, 2, 3, 4]},
+            dispatch=dispatch,
+        )
+
+    assert completed == {1, 3}
+
+
+@pytest.mark.parametrize(
+    ("error", "ordinary"),
+    [
+        pytest.param(
+            ExceptionGroup("wrapped", [WorkflowControlSignal("pause")]),
+            False,
+            id="wrapped-control",
+        ),
+        pytest.param(
+            ExceptionGroup("wrapped", [ExecutionPlanError("invariant")]),
+            False,
+            id="wrapped-invariant",
+        ),
+        pytest.param(
+            ExceptionGroup("wrapped", [RuntimeError("ordinary")]),
+            True,
+            id="wrapped-ordinary",
+        ),
+    ],
+)
+def test_step_error_classification_recurses_into_exception_groups(
+    error: Exception,
+    ordinary: bool,
+) -> None:
+    assert workflow_execution._is_ordinary_step_error(error) is ordinary
 
 
 @pytest.mark.anyio
@@ -429,17 +445,13 @@ async def test_foreach_empty_input_materializes_empty_lists() -> None:
         dispatch=dispatch,
     ) == {
         "result": [],
-        "errors": [],
     }
     assert dispatch_count == 0
 
 
 @pytest.mark.anyio
-async def test_foreach_parallelism_is_bounded_by_step_and_workflow() -> None:
-    graph = _foreach_graph(
-        foreach_concurrency=3,
-        max_concurrency=2,
-    )
+async def test_foreach_parallelism_is_bounded_by_workflow() -> None:
+    graph = _foreach_graph(max_concurrency=2)
     active = 0
     maximum = 0
     two_started = anyio.Event()
@@ -480,7 +492,7 @@ async def test_foreach_parallelism_is_bounded_by_step_and_workflow() -> None:
 
 @pytest.mark.anyio
 async def test_foreach_is_parallel_when_concurrency_limits_are_omitted() -> None:
-    graph = _foreach_graph(foreach_concurrency=None)
+    graph = _foreach_graph()
     active = 0
     maximum = 0
     all_started = anyio.Event()
@@ -521,7 +533,6 @@ async def test_foreach_is_parallel_when_concurrency_limits_are_omitted() -> None
 @pytest.mark.anyio
 async def test_foreach_resources_and_retries_are_per_iteration() -> None:
     graph = _foreach_graph(
-        foreach_concurrency=4,
         max_attempts=2,
         resources=(ResourceRequirement("gpu", 1),),
     )
@@ -543,31 +554,25 @@ async def test_foreach_resources_and_retries_are_per_iteration() -> None:
             raise RuntimeError("terminal")
         return {"result": item}
 
-    outputs = await execute_plan(
-        generate_plan(graph),
-        graph,
-        inputs={"items": [1, 2]},
-        contextual_dispatch=dispatch,
-        resource_capacities={"gpu": ("gpu-a",)},
-    )
-
-    assert outputs["result"] == [1, None]
-    assert outputs["errors"] == [
-        None,
-        {
-            "index": 1,
-            "kind": "RuntimeError",
-            "message": "terminal",
-            "attempts": 2,
-        },
-    ]
+    with pytest.RaisesGroup(
+        pytest.RaisesGroup(
+            pytest.RaisesExc(RuntimeError, match="terminal"),
+        )
+    ):
+        await execute_plan(
+            generate_plan(graph),
+            graph,
+            inputs={"items": [1, 2]},
+            contextual_dispatch=dispatch,
+            resource_capacities={"gpu": ("gpu-a",)},
+        )
     assert attempts == {1: 2, 2: 2}
     assert leases == [("gpu-a",)] * 4
 
 
 @pytest.mark.anyio
 async def test_foreach_resumes_only_missing_iterations() -> None:
-    graph = _foreach_graph(foreach_concurrency=1)
+    graph = _foreach_graph(max_concurrency=1)
     plan = generate_plan(graph)
     checkpoint_value = create_execution_checkpoint(
         plan,
@@ -607,20 +612,8 @@ async def test_foreach_resumes_only_missing_iterations() -> None:
         checkpoint=checkpoint_value,
     )
 
-    assert called == [3]
-    assert outputs == {
-        "result": [10, None, 30],
-        "errors": [
-            None,
-            {
-                "index": 1,
-                "kind": "RuntimeError",
-                "message": "stored",
-                "attempts": 1,
-            },
-            None,
-        ],
-    }
+    assert called == [2, 3]
+    assert outputs == {"result": [10, 20, 30]}
 
 
 @pytest.mark.parametrize(
@@ -642,45 +635,13 @@ async def test_foreach_resumes_only_missing_iterations() -> None:
                     outputs={"result": 20},
                 ),
             ),
-            {
-                "result": [10, 20],
-                "errors": [None, None],
-            },
+            {"result": [10, 20]},
             id="successful-items",
-        ),
-        pytest.param(
-            [1],
-            (
-                ForeachIterationCheckpoint(
-                    step_id="process",
-                    iteration_index=0,
-                    attempts=1,
-                    error={
-                        "kind": "RuntimeError",
-                        "message": "stored failure",
-                    },
-                ),
-            ),
-            {
-                "result": [None],
-                "errors": [
-                    {
-                        "index": 0,
-                        "kind": "RuntimeError",
-                        "message": "stored failure",
-                        "attempts": 1,
-                    }
-                ],
-            },
-            id="failed-item",
         ),
         pytest.param(
             [],
             (),
-            {
-                "result": [],
-                "errors": [],
-            },
+            {"result": []},
             id="empty-source",
         ),
     ],
@@ -716,37 +677,14 @@ async def test_completed_foreach_checkpoint_aggregates_match_terminal_iterations
     )
 
 
-@pytest.mark.parametrize(
-    ("artifact_id", "corrupt_value"),
-    [
-        pytest.param("result", [True], id="normal-output"),
-        pytest.param(
-            "errors",
-            [
-                {
-                    "index": 0,
-                    "kind": "RuntimeError",
-                    "message": "invented",
-                    "attempts": 1,
-                }
-            ],
-            id="error-output",
-        ),
-    ],
-)
 @pytest.mark.anyio
-async def test_completed_foreach_checkpoint_rejects_corrupt_aggregate(
-    artifact_id: str,
-    corrupt_value: object,
-) -> None:
+async def test_completed_foreach_checkpoint_rejects_corrupt_aggregate() -> None:
     graph = _foreach_graph()
     plan = generate_plan(graph)
     values: dict[str, object] = {
         "items": [1],
-        "result": [1],
-        "errors": [None],
+        "result": [True],
     }
-    values[artifact_id] = corrupt_value
     checkpoint_value = create_execution_checkpoint(
         plan,
         graph,
@@ -764,7 +702,7 @@ async def test_completed_foreach_checkpoint_rejects_corrupt_aggregate(
 
     with pytest.raises(
         ExecutionPlanError,
-        match=rf"aggregate {artifact_id!r} does not match terminal iterations",
+        match=r"aggregate 'result' does not match terminal iterations",
     ):
         await execute_plan(
             plan,
@@ -777,7 +715,7 @@ async def test_completed_foreach_checkpoint_rejects_corrupt_aggregate(
 
 @pytest.mark.anyio
 async def test_foreach_checkpoints_each_terminal_iteration_before_collection() -> None:
-    graph = _foreach_graph(foreach_concurrency=1)
+    graph = _foreach_graph(max_concurrency=1)
     checkpoints: list[ExecutionCheckpoint] = []
 
     async def dispatch(
@@ -810,12 +748,11 @@ async def test_foreach_checkpoints_each_terminal_iteration_before_collection() -
         (2, ("process",)),
     ]
     assert checkpoints[-1].values["result"] == [10, 20]
-    assert checkpoints[-1].values["errors"] == [None, None]
 
 
 @pytest.mark.anyio
 async def test_foreach_does_not_collect_workflow_control_signals() -> None:
-    graph = _foreach_graph(foreach_concurrency=1)
+    graph = _foreach_graph(max_concurrency=1)
 
     async def dispatch(
         step: StepNode,
@@ -825,9 +762,7 @@ async def test_foreach_does_not_collect_workflow_control_signals() -> None:
         raise WorkflowControlSignal("pause")
 
     with pytest.RaisesGroup(
-        pytest.RaisesGroup(
-            pytest.RaisesExc(WorkflowControlSignal, match="pause"),
-        )
+        pytest.RaisesExc(WorkflowControlSignal, match="pause"),
     ):
         await execute_plan(
             generate_plan(graph),
@@ -839,7 +774,7 @@ async def test_foreach_does_not_collect_workflow_control_signals() -> None:
 
 @pytest.mark.anyio
 async def test_foreach_does_not_collect_execution_invariant_errors() -> None:
-    graph = _foreach_graph(foreach_concurrency=1)
+    graph = _foreach_graph(max_concurrency=1)
 
     async def dispatch(
         step: StepNode,
@@ -849,9 +784,7 @@ async def test_foreach_does_not_collect_execution_invariant_errors() -> None:
         raise ExecutionPlanError("broken invariant")
 
     with pytest.RaisesGroup(
-        pytest.RaisesGroup(
-            pytest.RaisesExc(ExecutionPlanError, match="broken invariant"),
-        )
+        pytest.RaisesExc(ExecutionPlanError, match="broken invariant"),
     ):
         await execute_plan(
             generate_plan(graph),
@@ -864,7 +797,7 @@ async def test_foreach_does_not_collect_execution_invariant_errors() -> None:
 @pytest.mark.anyio
 async def test_foreach_does_not_retry_or_collect_allocator_invariants() -> None:
     graph = _foreach_graph(
-        foreach_concurrency=1,
+        max_concurrency=1,
         max_attempts=3,
     )
 
@@ -896,12 +829,10 @@ async def test_foreach_does_not_retry_or_collect_allocator_invariants() -> None:
         return {"result": "unreachable"}
 
     with pytest.RaisesGroup(
-        pytest.RaisesGroup(
-            pytest.RaisesExc(
-                ExecutionPlanError,
-                match="workflow resource admission failed",
-            ),
-        )
+        pytest.RaisesExc(
+            ExecutionPlanError,
+            match="workflow resource admission failed",
+        ),
     ):
         await execute_plan(
             generate_plan(graph),

@@ -5,7 +5,7 @@
 This document defines the runtime contract for:
 
 - interpreting the G4 workflow graph while reusing the Python Flow execution
-  kernels instead of duplicating generic retry and indexed fan-out;
+  helpers instead of duplicating retry and parallel scheduling;
 - dispatching Agent Steps through the Python `flow.agent()` / `flow.session()` API;
 - executing `foreach_item` as durable per-item Step instances;
 - applying Step resources, timeouts, retries, output validation, and checkpoints to
@@ -21,13 +21,13 @@ The G4 runtime has four semantic layers:
 
 1. The parser and compiler lower declarations into an immutable graph and
    catalog-owned executor configuration.
-2. Private top-level helpers in `fusion_flow.execution.flow` provide a shared,
-   `RunContext`-free execution kernel for retry sequencing, bounded indexed
-   parallel traversal, plus deterministic G4 foreach aggregation.
+2. The graph interpreter reuses the existing, `RunContext`-free
+   `_retry_operation` and `_run_parallel_tasks` helpers from
+   `fusion_flow.execution.flow`.
 3. The durable graph interpreter owns graph readiness and interpretation,
    Artifact state, checkpoint/resume, global admission, resources, and
-   workflow/Step timeout. It supplies G4 policies and persistence hooks to the
-   shared kernel instead of implementing a second retry or foreach scheduler.
+   workflow/Step timeout. It wraps the shared helpers with G4 policy and
+   persistence instead of implementing a second scheduler.
 4. Leaf executor adapters run Agent, Program, or Human work. The Agent adapter
    uses `flow.agent()` and `flow.session()` rather than implementing another
    session protocol.
@@ -36,43 +36,33 @@ Public `flow.parallel()`, `flow.if_()`, `flow.for_each()`, and `flow.retry()` ar
 immediate Python callback combinators, not graph bytecode. The G4 interpreter
 does not mechanically lower graph instructions into those public calls.
 Where their semantics overlap, the public Flow API and the G4 interpreter call
-the same private retry/indexed-traversal kernels and add their own policy and
-state layers. The graph-facing aggregation helper stays in the same `flow.py`
-mechanism layer even though the public Flow API has no aligned-error Artifact
-contract.
+the same private retry/parallel helpers and add their own policy and state.
 
 ## Shared execution kernel contract
 
-The shared helpers live in `fusion_flow/execution/flow.py`, but they must be
-callable without an active `execution.run()`. The retry and indexed-traversal
-kernels must not call `current_run_context()` or know about Flow
-bindings/traces, WorkflowGraph types, Artifacts, checkpoints, resource
-allocators, or executor kinds. The aggregation helper is a stateless value
-transform: it accepts Artifact IDs only as opaque mapping keys and knows
-nothing about graph topology, readiness, commits, or checkpoints.
+The shared helpers must be callable without an active `execution.run()` and
+must not call `current_run_context()` or know about Flow bindings/traces,
+WorkflowGraph types, Artifacts, checkpoints, resources, or executor kinds.
 
 The kernel provides mechanisms rather than one hard-coded policy:
 
 - retry sequencing reports a one-based attempt and accepts explicit retry
   classification, so cancellation, Human suspension, and execution invariants
   can escape without being retried;
-- bounded indexed parallel traversal preserves source indexes, supports an
-  explicit concurrency bound, and exposes terminal outcomes without forcing
-  either fail-fast or error collection on every caller;
-- indexed/foreach aggregation is deterministic by source index, including
-  empty input, successful `null`, and aligned terminal errors.
+- `_run_parallel_tasks` provides structured parallel execution, join, and an
+  optional bounded startup window; it propagates self-cancellation and drains
+  the active window so cleanup failures are not lost, while callers own their
+  error and persistence policy.
 
 The public Flow API adds its active-run requirement, traces and existing
 TypeScript-compatible fail-fast/retry-backoff behavior around the shared retry
-and indexed-traversal helpers. The G4 interpreter adds per-attempt global
-admission and resource leases, exact output validation, ordinary-error
-collection, per-iteration checkpoint hooks, graph-facing aggregation, and
-Artifact publication. Step and workflow timeout may remain in
-`workflow_execution`; timeout does not need to move into the shared kernel.
+and parallel helpers. The G4 interpreter adds per-attempt admission, resources,
+timeout and output validation, plus per-iteration checkpoints and ordered
+Artifact publication.
 
-Sharing the mechanism must not collapse the two public contracts. In
-particular, G4 control signals and invariant errors must still escape, and a
-Flow fail-fast collection must not silently adopt G4's aligned-error behavior.
+Sharing the mechanism must not collapse the contracts. Public Flow remains
+fail-fast. G4 foreach lets ordinary iterations finish, then raises their errors
+together; cancellation, control signals and invariants still escape promptly.
 
 ## Agent Step contract
 
@@ -171,28 +161,11 @@ Changing any of those values invalidates an old result.
 
 `foreach_item(step, source) == item_binding` declares that `source` is an
 Artifact whose runtime value must be a List, and that `step` is a template
-expanded once for each member of that List.
+expanded once for each member of that List. Iterations run in parallel by
+default. Only workflow `max_concurrency` and available resource instances limit
+how many are active; foreach has no separate scheduling declaration.
 
-Two Step-owned declarations complete the runtime contract:
-
-```g4
-foreach_concurrency(step) == 8;
-foreach_errors(step) == errors;
-```
-
-`foreach_concurrency` is optional. When absent, the workflow-wide
-`max_concurrency` is the only explicit concurrency limit. The effective number
-of active iterations is bounded simultaneously by:
-
-- the foreach-specific concurrency value, when present;
-- workflow `max_concurrency`;
-- available resource instances.
-
-`foreach_errors` identifies the global aligned error Artifact. It is required
-for an executable foreach Step so terminal item failures remain observable,
-including for a zero-output Step.
-
-## Foreach execution and aggregation
+## Foreach execution and results
 
 The source value must be a finite JSON List. Expansion creates logical
 `step[index]` instances. Every instance receives the normal consumed global
@@ -200,22 +173,11 @@ Artifacts plus the local item binding. It uses the same executor dispatcher as
 a non-foreach Step.
 
 Each declared normal output Artifact becomes a List ordered by source index,
-not completion order. Every aggregate output and the error Artifact have exactly
-the source length:
-
-- successful item: each output list stores its returned value and the aligned
-  error entry is `null`;
-- terminal failed item: every output list stores `null` and the aligned error
-  entry stores a structured error record;
-- empty source: every output and the error Artifact are empty Lists.
-
-An error record contains at least `index`, `kind`, `message`, and `attempts`.
-It does not include the raw item by default. Legitimate successful `null` output
-is distinguishable because the aligned error entry remains `null`.
-
-The collector publishes aggregate Artifacts only after every item is terminal.
-Downstream graph operations continue normally even when some entries contain
-collected errors.
+not completion order; an empty source produces empty output Lists. Outputs are
+published only if every iteration succeeds. Ordinary exhausted failures do not
+cancel siblings: all ordinary iterations reach a terminal result, then the
+interpreter raises their errors together. Those errors are exceptions, not G4
+Artifacts, so downstream graph operations do not run after a failed foreach.
 
 ## Per-iteration Step policy
 
@@ -229,13 +191,12 @@ item is a normal Step instance and inherits:
 Resources are released before another attempt. If a caller configures retry
 backoff, it must happen outside the lease. Cancellation is never retried. The
 workflow timeout remains an outer bound over all iterations.
-The shared retry and bounded indexed-parallel kernels drive these mechanisms;
-the interpreter remains responsible for wrapping each attempt with admission,
-resource leasing, timeout, validation, and checkpoint publication.
+The shared retry and parallel helpers drive these mechanisms; the interpreter
+wraps each attempt with admission, resources, timeout and validation.
 
 After an item exhausts its attempts, ordinary executor/validation/timeout
-failures become the aligned error record. Workflow control and invariant
-failures still abort or suspend the workflow:
+failures join the final aggregate exception. Workflow control and invariant
+failures still abort or suspend immediately:
 
 - cancellation or workflow timeout;
 - Human-input suspension;
@@ -246,9 +207,7 @@ failures still abort or suspend the workflow:
 Outside foreach, a workspace Program keeps the existing
 `$fusion_flow/program_error` error-valued Artifact compatibility behavior.
 Inside foreach, that same reserved Program result is an iteration failure: it
-participates in the Step's `max_attempts`, then contributes `null` normal
-outputs and one compact aligned error after exhaustion. Raw captured
-stdout/stderr are not copied into the foreach error record.
+participates in the Step's `max_attempts`, then joins the aggregate exception.
 
 Agent- and Program-backed Steps are supported as foreach templates. A
 Human-backed foreach fails during runner preflight in this version. The
@@ -256,27 +215,26 @@ existing Human resume document identifies only the base Step, not one expanded
 iteration, and parallel Human iterations could otherwise race to publish
 multiple active requests. Supporting it requires an iteration-aware request
 queue and response checkpoint contract; it must not be approximated by
-collecting a Human suspension as an ordinary item error.
+waiting for every Human suspension as an ordinary item failure.
 
 ## Partial checkpoint and resume
 
-The checkpoint stores the exact source Artifact in its normal finite-JSON value
-map and stores the terminal result of each item independently. Resume validates
-that source plus the plan-bound Step/index identities, so a second redundant
-source-digest field is unnecessary. A terminal result contains either validated
-per-output values or the structured terminal error.
+The checkpoint stores the exact source Artifact and each terminal iteration.
+Successful records contain validated outputs; failed records contain durable
+diagnostic summaries while the live aggregate retains the original exception
+objects. Resume validates the source plus plan-bound Step/index identities, so
+a second source digest is unnecessary.
 
 On resume:
 
 - succeeded items are not invoked again;
-- terminal failed items are not invoked again;
-- pending items run;
+- failed and pending items run;
 - an item that was running during interruption returns to pending unless its
   validated Flow binding can be reused.
 
-The aggregate Step is marked complete only after collection succeeds. A
-checkpoint written after an individual item prevents already-terminal work from
-being repeated even if collection or a sibling item is interrupted.
+The Step is marked complete only after every iteration succeeds and ordered
+outputs are published. A successful iteration checkpoint prevents that work
+from being repeated after a sibling failure or interruption.
 
 ## Existing eager selection
 
@@ -290,18 +248,21 @@ not alter its behavior.
 The implementation is complete only when tests prove:
 
 - where semantics overlap, public Flow and G4 paths exercise the same
-  `RunContext`-free retry/indexed-traversal kernels without changing their
-  distinct policies, while G4 exercises the graph-facing aggregation helper;
-- the shared kernels work without an active `execution.run()` context;
+  `RunContext`-free `_retry_operation` and `_run_parallel_tasks` helpers without
+  changing their distinct policies;
+- the shared helpers work without an active `execution.run()` context;
 - every Agent-owned grammar operator is consumed or rejected explicitly;
 - the production `SessionRunner` honors the normalized Agent configuration;
 - invalid Agent output is never committed to a Flow binding;
 - foreach preserves input order under out-of-order completion;
-- empty foreach produces empty output/error Lists;
-- local and workflow concurrency limits compose;
+- empty foreach produces empty output Lists;
+- workflow concurrency and resource limits compose;
 - resource leases, timeout, and retry are per item;
-- a terminal item failure is collected without cancelling siblings;
-- cancellation and Human suspension are not collected as errors;
+- ordinary item failures do not cancel siblings and are raised together after
+  all ordinary iterations finish;
+- successful item checkpoints resume without rerunning those items;
+- iteration failures are not G4 Artifacts;
+- cancellation and Human suspension are not aggregated as ordinary errors;
 - Human-backed foreach is rejected before any item is dispatched;
 - checkpoint resume invokes only unfinished items;
 - existing eager select behavior remains unchanged.

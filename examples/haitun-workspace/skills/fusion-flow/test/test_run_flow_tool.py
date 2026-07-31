@@ -244,20 +244,18 @@ const worker: Agent;
 const items: Artifact;
 const item: Artifact;
 const results: Artifact;
-const errors: Artifact;
 
 workflow agent_foreach {
     input_workflow(agent_foreach) == [items];
-    output_workflow(agent_foreach) == [results, errors];
+    output_workflow(agent_foreach) == [results];
+    max_concurrency(agent_foreach) == 2;
 
     step_name(process_step) == process_name;
     step_instruction(process_step) == "Process this item.";
     step_executor(process_step) == worker;
     foreach_item(process_step, items) == item;
-    foreach_concurrency(process_step) == 2;
     consumes(process_step) == [item];
     produces(process_step) == [results];
-    foreach_errors(process_step) == errors;
 }
 """
 
@@ -269,22 +267,20 @@ const worker: Program;
 const items: Artifact;
 const item: Artifact;
 const results: Artifact;
-const errors: Artifact;
 
 workflow program_foreach {
     input_workflow(program_foreach) == [items];
-    output_workflow(program_foreach) == [results, errors];
+    output_workflow(program_foreach) == [results];
+    max_concurrency(program_foreach) == 2;
 
     program_path(worker) == "./worker.py";
     step_name(process_step) == process_name;
     step_instruction(process_step) == "Process this item.";
     step_executor(process_step) == worker;
     foreach_item(process_step, items) == item;
-    foreach_concurrency(process_step) == 2;
     max_attempts(process_step) == 2;
     consumes(process_step) == [item];
     produces(process_step) == [results];
-    foreach_errors(process_step) == errors;
 }
 """
 
@@ -1369,7 +1365,7 @@ async def test_run_flow_executes_once_with_dependencies_and_resources(
 
 
 @pytest.mark.anyio
-async def test_run_flow_agent_foreach_collects_errors_with_stable_bindings(
+async def test_run_flow_agent_foreach_collects_failures_after_all_items(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1407,26 +1403,15 @@ async def test_run_flow_agent_foreach_collects_errors_with_stable_bindings(
     monkeypatch.setattr(run_flow_tool, "_complete_agent_step", complete_agent_step)
     monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
 
-    result = json.loads(
+    with pytest.RaisesGroup(
+        pytest.RaisesGroup(
+            pytest.RaisesExc(RuntimeError, match="item failed"),
+        )
+    ):
         await run_flow_tool.run_flow(
             "flows/foreach.workflow",
             '{"items": ["a", "bad", "c"]}',
         )
-    )
-
-    assert result == {
-        "results": ["A", None, "C"],
-        "errors": [
-            None,
-            {
-                "index": 1,
-                "kind": "RuntimeError",
-                "message": "item failed",
-                "attempts": 1,
-            },
-            None,
-        ],
-    }
     assert sorted(invocations) == [
         ("process_step[0]", 0, "a"),
         ("process_step[1]", 1, "bad"),
@@ -1442,7 +1427,7 @@ async def test_run_flow_agent_foreach_collects_errors_with_stable_bindings(
 
 
 @pytest.mark.anyio
-async def test_run_flow_program_foreach_retries_and_collects_compact_errors(
+async def test_run_flow_program_foreach_retries_and_collects_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1501,26 +1486,16 @@ async def test_run_flow_program_foreach_retries_and_collects_compact_errors(
     monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
     _install_program_agent_driver(monkeypatch, drive)
 
-    result = json.loads(
+    expected_message = "Program step 'process_step[1]' failed (execution/nonzero_exit): Program exited with code 7."
+    with pytest.RaisesGroup(
+        pytest.RaisesGroup(
+            pytest.RaisesExc(RuntimeError, match=r"process_step\[1\].*Program exited with code 7"),
+        )
+    ):
         await run_flow_tool.run_flow(
             "flows/program-foreach.workflow",
             '{"items": ["ok", "bad"]}',
         )
-    )
-
-    expected_message = "Program step 'process_step[1]' failed (execution/nonzero_exit): Program exited with code 7."
-    assert result == {
-        "results": ["OK", None],
-        "errors": [
-            None,
-            {
-                "index": 1,
-                "kind": "RuntimeError",
-                "message": expected_message,
-                "attempts": 2,
-            },
-        ],
-    }
     assert sorted(calls) == [
         (0, 1, "ok"),
         (1, 1, "bad"),

@@ -15,14 +15,7 @@ from typing import cast
 import anyio
 from loguru import logger
 
-from .execution.flow import (
-    _aggregate_foreach_outputs,
-    _IndexedFailure,
-    _IndexedOutcome,
-    _IndexedSuccess,
-    _retry_operation,
-    _run_indexed_parallel,
-)
+from .execution.flow import _retry_operation, _run_parallel_tasks
 from .workflow_graph import (
     ArtifactOperand,
     ComparisonCondition,
@@ -560,20 +553,7 @@ class ResourceAllocator:
 def generate_plan(graph: WorkflowGraph) -> ExecutionPlan:
     """Lower static data dependencies and dynamic foreach steps into fibers."""
 
-    foreach_by_step = {edge.step_id: edge for edge in graph.edges if isinstance(edge, ForeachEdge)}
-    for step_id in sorted(foreach_by_step):
-        step = next(item for item in graph.steps if item.step_id == step_id)
-        if step.foreach_error_artifact_id is None:
-            raise ExecutionPlanError(f"foreach step {step_id!r} must declare foreach_errors")
-
     step_producers = {edge.artifact_id: edge.step_id for edge in graph.edges if isinstance(edge, ProducesEdge)}
-    step_producers.update(
-        {
-            step.foreach_error_artifact_id: step.step_id
-            for step in graph.steps
-            if step.foreach_error_artifact_id is not None
-        }
-    )
     selection_producers = {selector.output_artifact_id: selector.output_artifact_id for selector in graph.selectors}
     for artifact in graph.artifacts:
         if artifact.is_input and (
@@ -698,15 +678,9 @@ async def execute_plan(
     produced = {step_id: [] for step_id in steps}
     artifacts = {artifact.artifact_id: artifact for artifact in graph.artifacts}
     foreach_by_step = {edge.step_id: edge for edge in graph.edges if isinstance(edge, ForeachEdge)}
-    foreach_error_by_step = {
-        step.step_id: step.foreach_error_artifact_id
-        for step in graph.steps
-        if step.foreach_error_artifact_id is not None
-    }
     step_producer_by_artifact = {
         edge.artifact_id: edge.step_id for edge in graph.edges if isinstance(edge, ProducesEdge)
     }
-    step_producer_by_artifact.update({artifact_id: step_id for step_id, artifact_id in foreach_error_by_step.items()})
     for edge in graph.edges:
         if isinstance(edge, ConsumesEdge):
             if artifacts[edge.artifact_id].binding_step_id is None:
@@ -714,13 +688,6 @@ async def execute_plan(
         elif isinstance(edge, ProducesEdge):
             produced[edge.step_id].append(edge.artifact_id)
 
-    materialized_by_step = {
-        step_id: [
-            *artifact_ids,
-            *((foreach_error_by_step[step_id],) if step_id in foreach_error_by_step else ()),
-        ]
-        for step_id, artifact_ids in produced.items()
-    }
     required_artifacts_by_step = {
         step_id: [
             *artifact_ids,
@@ -888,7 +855,7 @@ async def execute_plan(
             raise ExecutionPlanError("checkpoint values must have string artifact IDs")
         expected_checkpoint_values = set(expected_inputs)
         expected_checkpoint_values.update(
-            artifact_id for step_id in completed_step_ids for artifact_id in materialized_by_step[step_id]
+            artifact_id for step_id in completed_step_ids for artifact_id in produced[step_id]
         )
         expected_checkpoint_values.update(completed_selection_ids)
         actual_checkpoint_values = set(checkpoint.values)
@@ -964,20 +931,14 @@ async def execute_plan(
             iteration_records = [
                 foreach_iterations[(step_id, iteration_index)] for iteration_index in range(len(source))
             ]
-            error_artifact_id = foreach_error_by_step[step_id]
-            rebuilt_aggregates = _aggregate_foreach_outputs(
-                produced[step_id],
-                tuple(
-                    (
-                        iteration.iteration_index,
-                        iteration.attempts,
-                        iteration.outputs,
-                        iteration.error,
-                    )
-                    for iteration in iteration_records
-                ),
-                error_artifact_id=error_artifact_id,
-            )
+            if any(iteration.outputs is None for iteration in iteration_records):
+                raise ExecutionPlanError(f"completed foreach checkpoint for {step_id!r} contains a failed iteration")
+            rebuilt_aggregates = {
+                artifact_id: [
+                    cast(dict[str, object], iteration.outputs)[artifact_id] for iteration in iteration_records
+                ]
+                for artifact_id in produced[step_id]
+            }
             for artifact_id, rebuilt_value in rebuilt_aggregates.items():
                 if not _json_values_equal(
                     checkpoint.values[artifact_id],
@@ -1081,10 +1042,7 @@ async def execute_plan(
             """Retry ordinary executor/output failures, never graph control."""
 
             del attempt
-            return isinstance(error, StepOutputError) or not isinstance(
-                error,
-                WorkflowControlSignal | ExecutionPlanError,
-            )
+            return _is_ordinary_step_error(error)
 
         def warn_retry(error: Exception, attempt: int) -> None:
             """Keep the graph-specific retry diagnostic outside the kernel."""
@@ -1170,24 +1128,22 @@ async def execute_plan(
             ),
         )
 
-        local_capacity = step.foreach_concurrency
-        if capacity is not None:
-            local_capacity = capacity if local_capacity is None else min(local_capacity, capacity)
-
         pending = tuple(
             (iteration_index, item)
             for iteration_index, item in enumerate(source)
-            if (step.step_id, iteration_index) not in foreach_iterations
+            if (
+                (iteration := foreach_iterations.get((step.step_id, iteration_index))) is None
+                or iteration.outputs is None
+            )
         )
+        iteration_failures: dict[int, Exception] = {}
 
         async def run_iteration(
-            pending_item: tuple[int, object],
-            pending_index: int,
-        ) -> tuple[dict[str, object], int]:
-            """Adapt one expanded item to the shared indexed execution kernel."""
+            iteration_index: int,
+            item: object,
+        ) -> ForeachIterationCheckpoint:
+            """Execute and checkpoint one expanded StepInstance."""
 
-            del pending_index
-            iteration_index, item = pending_item
             try:
                 step_inputs = {artifact_id: values[artifact_id] for artifact_id in consumed[step.step_id]}
             except KeyError as error:
@@ -1199,81 +1155,63 @@ async def execute_plan(
                 step_inputs,
                 context=f"inputs for {step.step_id}[{iteration_index}]",
             )
-            return await invoke_step(
-                step,
-                step_inputs,
-                iteration_index=iteration_index,
-            )
-
-        def collect_iteration_error(error: Exception) -> bool:
-            """Collect ordinary item failures but never graph control/invariants."""
-
-            return isinstance(error, StepOutputError) or not isinstance(
-                error,
-                WorkflowControlSignal | ExecutionPlanError,
-            )
-
-        async def checkpoint_outcome(
-            outcome: _IndexedOutcome[tuple[dict[str, object], int]],
-        ) -> None:
-            """Translate one terminal Flow outcome into durable graph state."""
-
-            iteration_index, _ = pending[outcome.index]
-            if isinstance(outcome, _IndexedSuccess):
-                outputs, attempts = outcome.value
+            try:
+                outputs, attempts = await invoke_step(
+                    step,
+                    step_inputs,
+                    iteration_index=iteration_index,
+                )
+            except Exception as error:
+                if not _is_ordinary_step_error(error):
+                    raise
+                iteration_failures[iteration_index] = error
+                iteration = _failed_iteration(
+                    step.step_id,
+                    iteration_index,
+                    step.max_attempts,
+                    error,
+                )
+            else:
                 iteration = ForeachIterationCheckpoint(
                     step_id=step.step_id,
                     iteration_index=iteration_index,
                     attempts=attempts,
                     outputs=outputs,
                 )
-            elif isinstance(outcome, _IndexedFailure):
-                iteration = _failed_iteration(
-                    step.step_id,
-                    iteration_index,
-                    step.max_attempts,
-                    outcome.error,
-                )
-            else:
-                raise AssertionError("indexed kernel returned an unknown outcome")
             await commit_iteration(iteration)
+            return iteration
 
-        try:
-            await _run_indexed_parallel(
-                pending,
-                run_iteration,
-                max_concurrency=local_capacity,
-                collect_error=collect_iteration_error,
-                on_outcome=checkpoint_outcome,
-            )
-        except Exception as error:
-            # Preserve the structured-concurrency boundary previously formed
-            # by the foreach task group. The outer fiber group adds its own
-            # boundary while cancellation (a BaseException) still escapes.
-            raise ExceptionGroup(
-                "unhandled errors in a TaskGroup",
-                [error],
-            ) from None
+        tasks: list[Callable[[], Awaitable[ForeachIterationCheckpoint]]] = []
+        for iteration_index, item in pending:
+
+            async def visit(
+                iteration_index: int = iteration_index,
+                item: object = item,
+            ) -> ForeachIterationCheckpoint:
+                return await run_iteration(iteration_index, item)
+
+            tasks.append(visit)
+
+        await _run_parallel_tasks(
+            tasks,
+            join="all",
+            required=len(tasks),
+            max_concurrency=capacity,
+        )
 
         iteration_records = [
             foreach_iterations[(step.step_id, iteration_index)] for iteration_index in range(len(source))
         ]
-        error_artifact_id = step.foreach_error_artifact_id
-        if error_artifact_id is None:
-            raise ExecutionPlanError(f"foreach step {step.step_id!r} must declare foreach_errors")
-        return _aggregate_foreach_outputs(
-            produced[step.step_id],
-            tuple(
-                (
-                    iteration.iteration_index,
-                    iteration.attempts,
-                    iteration.outputs,
-                    iteration.error,
-                )
-                for iteration in iteration_records
-            ),
-            error_artifact_id=error_artifact_id,
-        )
+        failed = [iteration for iteration in iteration_records if iteration.error is not None]
+        if failed:
+            raise ExceptionGroup(
+                f"foreach step {step.step_id!r} failed",
+                [iteration_failures[iteration.iteration_index] for iteration in failed],
+            )
+        return {
+            artifact_id: [cast(dict[str, object], iteration.outputs)[artifact_id] for iteration in iteration_records]
+            for artifact_id in produced[step.step_id]
+        }
 
     async def run_fiber(fiber: Fiber) -> None:
         for instruction in fiber.instructions:
@@ -1366,8 +1304,9 @@ def _validate_step_outputs(
 
     if not isinstance(outputs, Mapping) or not all(isinstance(artifact_id, str) for artifact_id in outputs):
         raise StepOutputError(f"outputs for {step_id} must be a mapping with string keys")
+    outputs_by_id = cast(Mapping[str, object], outputs)
     expected_outputs = set(expected_output_ids)
-    actual_outputs = set(outputs)
+    actual_outputs = set(outputs_by_id)
     if actual_outputs != expected_outputs:
         raise StepOutputError(
             f"outputs for {step_id} must match exactly: "
@@ -1376,7 +1315,7 @@ def _validate_step_outputs(
         )
     try:
         return _copy_json_mapping(
-            outputs,
+            outputs_by_id,
             context=f"outputs for {step_id}",
         )
     except ExecutionPlanError as error:
@@ -1399,6 +1338,17 @@ def _failed_iteration(
             "kind": type(error).__name__,
             "message": str(error),
         },
+    )
+
+
+def _is_ordinary_step_error(error: Exception) -> bool:
+    """Return whether retry/foreach may handle a dispatcher failure."""
+
+    if isinstance(error, BaseExceptionGroup):
+        return all(isinstance(nested, Exception) and _is_ordinary_step_error(nested) for nested in error.exceptions)
+    return isinstance(error, StepOutputError) or not isinstance(
+        error,
+        WorkflowControlSignal | ExecutionPlanError,
     )
 
 

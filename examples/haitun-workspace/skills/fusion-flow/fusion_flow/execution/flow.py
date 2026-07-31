@@ -194,172 +194,6 @@ async def _retry_operation[T](
     raise AssertionError("retry operation completed without a result")
 
 
-@dataclass(frozen=True, slots=True)
-class _IndexedSuccess[T]:
-    """One successful indexed parallel operation."""
-
-    index: int
-    value: T
-
-
-@dataclass(frozen=True, slots=True)
-class _IndexedFailure:
-    """One collected indexed parallel failure."""
-
-    index: int
-    error: Exception
-
-
-type _IndexedOutcome[T] = _IndexedSuccess[T] | _IndexedFailure
-
-
-async def _run_indexed_parallel[T, R](
-    items: Sequence[T],
-    operation: Callable[[T, int], Awaitable[R]],
-    *,
-    max_concurrency: int | None = None,
-    collect_error: Callable[[Exception], bool] | None = None,
-    on_outcome: Callable[[_IndexedOutcome[R]], Awaitable[object] | object] | None = None,
-) -> tuple[_IndexedOutcome[R], ...]:
-    """Run an ordered, optionally bounded indexed map without a ``RunContext``.
-
-    Successful values and explicitly collected ordinary failures are returned
-    in source order.  ``on_outcome`` runs as each item becomes terminal, before
-    the aggregate is returned, which lets a graph interpreter checkpoint
-    individual iterations.  Errors rejected by ``collect_error`` are raised
-    after sibling cancellation; cancellation itself is never collected.
-    """
-
-    if max_concurrency is not None and (
-        isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int) or max_concurrency < 1
-    ):
-        raise ValueError("max_concurrency must be a positive integer or None")
-    snapshot = tuple(items)
-    if not snapshot:
-        return ()
-
-    worker_count = min(len(snapshot), max_concurrency or len(snapshot))
-    jobs_send, jobs_receive = anyio.create_memory_object_stream[tuple[int, T]](
-        worker_count,
-    )
-    outcomes_send, outcomes_receive = anyio.create_memory_object_stream[
-        tuple[_IndexedOutcome[R] | None, Exception | None]
-    ](len(snapshot))
-
-    async def worker(
-        receiver: Any,
-        sender: Any,
-    ) -> None:
-        """Run queued items until exhaustion or one fatal ordinary error."""
-
-        async with receiver, sender:
-            async for index, item in receiver:
-                try:
-                    value = await operation(item, index)
-                except Exception as error:
-                    if collect_error is None or not _ensure_bool(
-                        collect_error(error),
-                        label="collect_error",
-                    ):
-                        await sender.send((None, error))
-                        return
-                    outcome: _IndexedOutcome[R] = _IndexedFailure(index, error)
-                else:
-                    outcome = _IndexedSuccess(index, value)
-
-                try:
-                    if on_outcome is not None:
-                        await _await_maybe(on_outcome(outcome))
-                except Exception as error:
-                    await sender.send((None, error))
-                    return
-                await sender.send((outcome, None))
-
-    async def produce_jobs() -> None:
-        """Feed workers concurrently so a fatal outcome can stop expansion."""
-
-        async with jobs_send:
-            for index, item in enumerate(snapshot):
-                try:
-                    await jobs_send.send((index, item))
-                except anyio.BrokenResourceError:
-                    # Every worker receiver closed after reporting a fatal
-                    # outcome. The coordinator will raise that original error.
-                    return
-
-    ordered: dict[int, _IndexedOutcome[R]] = {}
-    fatal_error: Exception | None = None
-    async with outcomes_receive, anyio.create_task_group() as task_group:
-        for _ in range(worker_count):
-            task_group.start_soon(
-                worker,
-                jobs_receive.clone(),
-                outcomes_send.clone(),
-            )
-        await jobs_receive.aclose()
-        await outcomes_send.aclose()
-        task_group.start_soon(produce_jobs)
-
-        while len(ordered) < len(snapshot):
-            outcome, error = await outcomes_receive.receive()
-            if error is not None:
-                fatal_error = error
-                task_group.cancel_scope.cancel()
-                break
-            if outcome is None:
-                raise AssertionError("indexed worker emitted no outcome")
-            ordered[outcome.index] = outcome
-
-    if fatal_error is not None:
-        raise fatal_error
-    return tuple(ordered[index] for index in range(len(snapshot)))
-
-
-def _aggregate_foreach_outputs(
-    output_ids: Sequence[str],
-    records: Sequence[
-        tuple[
-            int,
-            int,
-            Mapping[str, object] | None,
-            Mapping[str, object] | None,
-        ]
-    ],
-    *,
-    error_artifact_id: str,
-) -> dict[str, object]:
-    """Build source-aligned output and error Lists from terminal item records."""
-
-    aggregated: dict[str, object] = {output_id: [] for output_id in output_ids}
-    errors: list[object] = []
-    for expected_index, (index, attempts, outputs, error) in enumerate(records):
-        if index != expected_index:
-            raise ValueError(
-                "foreach records must be complete and ordered by source index",
-            )
-        if outputs is None:
-            if error is None:
-                raise ValueError("failed foreach record must contain an error")
-            for output_id in output_ids:
-                cast(list[object], aggregated[output_id]).append(None)
-            errors.append(
-                {
-                    "index": index,
-                    "kind": error["kind"],
-                    "message": error["message"],
-                    "attempts": attempts,
-                }
-            )
-            continue
-        if error is not None:
-            raise ValueError("successful foreach record must not contain an error")
-        for output_id in output_ids:
-            cast(list[object], aggregated[output_id]).append(outputs[output_id])
-        errors.append(None)
-    aggregated[error_artifact_id] = errors
-    return aggregated
-
-
 def _preview(value: object) -> str:
     """生成长度受限的 trace 摘要。"""
 
@@ -636,61 +470,146 @@ async def _run_parallel_tasks[T](
     *,
     join: str,
     required: int,
+    max_concurrency: int | None = None,
 ) -> tuple[list[T], tuple[int, ...]]:
-    """并发运行任务, 按 join 策略聚合结果与选中输入索引。"""
+    """并发运行任务, 可限制启动窗口, 并按 join 策略聚合结果。"""
 
-    # 事件依次为输入索引、成功标志和结果或异常。
-    send_stream, receive_stream = anyio.create_memory_object_stream[tuple[int, bool, object]](
-        len(tasks),
-    )
+    if max_concurrency is not None and (
+        isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int) or max_concurrency < 1
+    ):
+        raise ValueError("max_concurrency must be a positive integer or None")
+    task_count = len(tasks)
+    concurrency = task_count if max_concurrency is None else min(max_concurrency, task_count)
+
+    # 事件依次为输入索引、状态和结果或异常。None 表示由本 helper 主动取消。
+    send_stream, receive_stream = anyio.create_memory_object_stream[
+        tuple[int, bool | None, object]
+    ](concurrency)
 
     async def worker(
         index: int,
         task: Callable[[], Awaitable[T]],
         sender: Any,
+        cancel_scope: anyio.CancelScope,
     ) -> None:
         """执行一个任务, 并将其成功值或异常发送给汇聚端。"""
 
         async with sender:
-            try:
-                value = await task()
-            except Exception as error:
-                await sender.send((index, False, error))
-            else:
-                await sender.send((index, True, value))
+            with cancel_scope:
+                try:
+                    payload: object = await task()
+                except BaseException as error:
+                    status = (
+                        None
+                        if cancel_scope.cancel_called
+                        and isinstance(error, anyio.get_cancelled_exc_class())
+                        else False
+                    )
+                    payload = error
+                else:
+                    status = True
+            # A cancelled task must still report settlement. The channel is
+            # sized to the active window, so cleanup cannot block indefinitely
+            # even when the parent itself is being cancelled.
+            with anyio.CancelScope(shield=True):
+                await sender.send((index, status, payload))
 
     results: dict[int, T] = {}
     completed: list[T] = []
     selected_indexes: list[int] = []
-    failure: Exception | None = None
-    async with receive_stream, anyio.create_task_group() as task_group:
-        for index, task in enumerate(tasks):
-            task_group.start_soon(worker, index, task, send_stream.clone())
-        await send_stream.aclose()
+    failures: list[BaseException] = []
+    async with send_stream, receive_stream, anyio.create_task_group() as task_group:
+        next_index = 0
+        running = 0
+        worker_scopes: dict[int, anyio.CancelScope] = {}
 
-        expected = len(tasks) if join == "all" else required
-        while len(completed) < expected:
-            index, ok, payload = await receive_stream.receive()
-            if not ok:
-                failure = cast("Exception", payload)
-                task_group.cancel_scope.cancel()
-                break
-            value = cast("T", payload)
-            if join == "all":
-                results[index] = value
-                completed.append(value)
-            else:
-                # first/any 的结果按完成顺序保留, 而不是按输入索引重排。
-                selected_indexes.append(index)
-                completed.append(value)
-        if join != "all" or failure is not None:
-            # 已满足 first/any, 或观察到失败后不再等待同组任务。
-            task_group.cancel_scope.cancel()
+        def start_available() -> None:
+            """Fill the configured task window without expanding the whole source."""
 
-    if failure is not None:
-        raise failure
+            nonlocal next_index, running
+            while next_index < task_count and running < concurrency:
+                cancel_scope = anyio.CancelScope()
+                worker_scopes[next_index] = cancel_scope
+                task_group.start_soon(
+                    worker,
+                    next_index,
+                    tasks[next_index],
+                    send_stream.clone(),
+                    cancel_scope,
+                )
+                next_index += 1
+                running += 1
+
+        def cancel_running() -> None:
+            """Cancel only tasks in the active bounded window."""
+
+            for cancel_scope in worker_scopes.values():
+                cancel_scope.cancel()
+
+        start_available()
+
+        expected = task_count if join == "all" else required
+        stopping = False
+        try:
+            while True:
+                if stopping:
+                    if running == 0:
+                        break
+                elif len(completed) >= expected:
+                    if join == "all":
+                        break
+                    stopping = True
+                    cancel_running()
+                    continue
+
+                index, status, payload = await receive_stream.receive()
+                running -= 1
+                worker_scopes.pop(index, None)
+                if status is False:
+                    failures.append(cast("BaseException", payload))
+                    if not stopping:
+                        stopping = True
+                        cancel_running()
+                    continue
+                if status is None or stopping:
+                    continue
+
+                value = cast("T", payload)
+                if join == "all":
+                    results[index] = value
+                    completed.append(value)
+                    start_available()
+                else:
+                    # first/any 的结果按完成顺序保留, 而不是按输入索引重排。
+                    selected_indexes.append(index)
+                    completed.append(value)
+                    if len(completed) < expected:
+                        start_available()
+        except BaseException as parent_error:
+            # External timeout/cancellation also has to settle the active
+            # window. Otherwise a sibling's finally/lease-release exception
+            # would be hidden behind the parent's cancellation exception.
+            cancel_running()
+            with anyio.CancelScope(shield=True):
+                while running:
+                    index, status, payload = await receive_stream.receive()
+                    running -= 1
+                    worker_scopes.pop(index, None)
+                    if status is False:
+                        failures.append(cast("BaseException", payload))
+            if failures:
+                raise BaseExceptionGroup(
+                    "parallel task cancellation failures",
+                    [parent_error, *failures],
+                ) from None
+            raise
+
+    if len(failures) == 1:
+        raise failures[0]
+    if failures:
+        raise BaseExceptionGroup("parallel task failures", failures)
     if join == "all":
-        return [results[index] for index in range(len(tasks))], ()
+        return [results[index] for index in range(task_count)], ()
     return completed, tuple(selected_indexes)
 
 
@@ -1115,22 +1034,25 @@ class Flow:
             "parallelForEach",
             metadata={"parallel": True, "item_count": len(items)},
         ):
+            tasks: list[Callable[[], Awaitable[object]]] = []
+            for index, item in enumerate(items):
 
-            async def visit(item: T, index: int) -> object:
-                """为一个并发元素记录 iteration trace 并调用回调。"""
+                async def visit(
+                    item: T = item,
+                    index: int = index,
+                ) -> object:
+                    """为一个并发元素记录 iteration trace 并调用回调。"""
 
-                async with run._trace(
-                    "iteration",
-                    str(index),
-                    input_summary=_preview(item),
-                    metadata={"index": index},
-                ):
-                    return await fn(item, index)
+                    async with run._trace(
+                        "iteration",
+                        str(index),
+                        input_summary=_preview(item),
+                        metadata={"index": index},
+                    ):
+                        return await fn(item, index)
 
-            await _run_indexed_parallel(
-                items,
-                visit,
-            )
+                tasks.append(visit)
+            await _run_parallel_tasks(tasks, join="all", required=len(tasks))
 
     # ============================================================
     # 第三批: 带 LLM 判断的高级控制流

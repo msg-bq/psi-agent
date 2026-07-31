@@ -172,8 +172,6 @@ _OPERATOR_SIGNATURES: Mapping[
     "consumes": (("Step",), "List"),
     "depends_on": (("Step", "Step"), "Bool"),
     "foreach_item": (("Step", "Artifact"), "Artifact"),
-    "foreach_concurrency": (("Step",), "Integer"),
-    "foreach_errors": (("Step",), "Artifact"),
     "independent": (("Step",), "Bool"),
     "input_workflow": (("Workflow",), "List"),
     "max_attempts": (("Step",), "Integer"),

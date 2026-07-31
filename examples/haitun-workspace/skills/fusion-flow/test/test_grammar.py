@@ -23,8 +23,6 @@ EXPECTED_PRESET_OPERATORS = CANONICAL_DATAFLOW_OPERATORS | {
     "agent_config",
     "agent_system_prompt",
     "allowed_tool",
-    "foreach_concurrency",
-    "foreach_errors",
     "foreach_item",
     "max_attempts",
     "max_concurrency",
@@ -93,7 +91,7 @@ def test_preset_operators_document_signatures() -> None:
     )
     signatures = _documented_signatures()
 
-    assert len(set(preset_operators)) == 23
+    assert len(set(preset_operators)) == 21
     assert sorted(name for name, _, _, _ in signatures) == sorted(set(preset_operators))
     assert set(preset_operators) == EXPECTED_PRESET_OPERATORS
     assert {
@@ -107,16 +105,9 @@ def test_preset_operators_document_signatures() -> None:
     assert {
         name: (parameters, return_type, arity)
         for name, parameters, return_type, arity in signatures
-        if name
-        in {
-            "foreach_item",
-            "foreach_concurrency",
-            "foreach_errors",
-        }
+        if name == "foreach_item"
     } == {
         "foreach_item": ("Step, Artifact", "Artifact", "2"),
-        "foreach_concurrency": ("Step", "Integer", "1"),
-        "foreach_errors": ("Step", "Artifact", "1"),
     }
     canonical_list_operators = {
         "input_workflow": ("Workflow", "List", "1"),
@@ -220,8 +211,6 @@ def test_preset_operators_have_five_disjoint_owner_groups() -> None:
         "consumes",
         "produces",
         "foreach_item",
-        "foreach_concurrency",
-        "foreach_errors",
         "resource_requirement",
     ]
 
