@@ -91,10 +91,8 @@ class _CoreIRVisitor:
         self._boolean_constants: dict[bool, Constant] = {}
         self._inferred_concepts: dict[str, Concept] = {}
         self._text_literals: dict[tuple[Concept, str], Constant] = {}
+        self._instruction_concept = context.concepts.get("Instruction")
         self._step_name_concept = context.concepts.get("StepName")
-        self._text_literal_concepts = frozenset(
-            concept for name in ("Instruction", "StepName") if (concept := context.concepts.get(name)) is not None
-        )
 
     def visit_workflow_file(self, context: Any) -> WorkflowFile:
         for declaration in context.constDecl():
@@ -278,30 +276,46 @@ class _CoreIRVisitor:
         if boolean_literal is not None:
             return self._boolean_constant(boolean_literal.getText())
 
+        # ANTLR chooses the first matching lexer rule, so JSON strings reach
+        # this visitor as three token kinds:
+        #   "Review" -> QUOTEDCONSTANTID
+        #   "./Review" -> RELATIVE_PATH_ID
+        #   "Security Review" or escaped text -> STRING_LITERAL
         string_literal = context.STRING_LITERAL()
         if string_literal is not None:
-            return self._resolve_text_literal(
+            if expected_concept is None or expected_concept not in {
+                self._instruction_concept,
+                self._step_name_concept,
+            }:
+                raise ValueError(
+                    "FusionFlow free-form quoted text is only valid where Instruction or StepName is required."
+                )
+            return self._intern_text_literal(
                 string_literal.getText(),
                 expected_concept,
             )
 
         constant_name = context.constantName()
-        is_step_name = expected_concept is not None and expected_concept == self._step_name_concept
         raw_constant = constant_name.getText()
+        is_quoted_id = constant_name.QUOTEDCONSTANTID() is not None
+        is_relative_path = constant_name.RELATIVE_PATH_ID() is not None
 
-        # More specific lexer rules precede STRING_LITERAL: short JSON strings
-        # arrive as QUOTEDCONSTANTID, and "./..." arrives as RELATIVE_PATH_ID.
-        # A StepName accepts either because both remain direct JSON strings.
-        if is_step_name:
-            if not raw_constant.startswith('"'):
+        if expected_concept is not None and expected_concept == self._step_name_concept:
+            if not (is_quoted_id or is_relative_path):
                 raise ValueError("FusionFlow step_name values must be JSON strings.")
-            return self._resolve_text_literal(
+            return self._intern_text_literal(
                 raw_constant,
                 expected_concept,
             )
 
-        if constant_name.QUOTEDCONSTANTID() is not None and expected_concept in self._text_literal_concepts:
-            return self._resolve_text_literal(
+        # Preserve relative-path Instruction constants, but treat short quoted
+        # Instruction values as typed text, matching STRING_LITERAL behavior.
+        if (
+            is_quoted_id
+            and expected_concept is not None
+            and expected_concept == self._instruction_concept
+        ):
+            return self._intern_text_literal(
                 raw_constant,
                 expected_concept,
             )
@@ -311,25 +325,20 @@ class _CoreIRVisitor:
             expected_concept,
         )
 
-    def _resolve_text_literal(
+    def _intern_text_literal(
         self,
         raw_text: str,
-        expected_concept: Concept | None,
+        concept: Concept,
     ) -> Constant:
-        """Decode typed text without merging it into the symbolic namespace."""
-
-        if expected_concept not in self._text_literal_concepts:
-            raise ValueError(
-                "FusionFlow free-form quoted text is only valid where Instruction or StepName is required."
-            )
+        """Decode and cache typed text outside the symbolic namespace."""
 
         symbol = self._decode_json_string(raw_text)
-        key = (expected_concept, symbol)
+        key = (concept, symbol)
         constant = self._text_literals.get(key)
         if constant is None:
             constant = Constant(
                 symbol=symbol,
-                belong_concepts=(expected_concept,),
+                belong_concepts=(concept,),
             )
             self._text_literals[key] = constant
 
