@@ -310,11 +310,7 @@ class _CoreIRVisitor:
 
         # Preserve relative-path Instruction constants, but treat short quoted
         # Instruction values as typed text, matching STRING_LITERAL behavior.
-        if (
-            is_quoted_id
-            and expected_concept is not None
-            and expected_concept == self._instruction_concept
-        ):
+        if is_quoted_id and expected_concept is not None and expected_concept == self._instruction_concept:
             return self._intern_text_literal(
                 raw_constant,
                 expected_concept,
