@@ -46,6 +46,51 @@ The registry includes three compact executable examples:
 instructions, Agent fan-out, multi-output Program Steps, and workspace Skill
 and script assets without resource requirements.
 
+## Event-activated workflows
+
+An EventD delivery activates a workflow; a workflow Step never opens a socket
+or blocks forever waiting for HTTP. Declare exactly one root listener:
+
+```fusionflow
+const expense_flow: Workflow;
+const receive_step: Step;
+const receive_name: StepName;
+const listener: Program, EventListeningProgram, Executor;
+const expense_hook: Path;
+const event: Artifact;
+
+workflow expense_flow {
+  output_workflow(expense_flow) == [event];
+  program_path(listener) == expense_hook;
+  step_name(receive_step) == receive_name;
+  step_executor(receive_step) == listener;
+  produces(receive_step) == [event];
+}
+```
+
+`expense_hook` is a logical EventD Subscription identity. It is not a script,
+public Webhook URL, secret, CloudEvent type, or schema. The matching EventD
+`webhookListeners` entry constructs the sender URL as
+`{publicBaseUrl}/hooks/expense_hook/{token}` and accepts arbitrary JSON as
+CloudEvent `data`; no business event list is declared.
+The listener does not execute, so it has no `step_instruction`.
+
+Configure a Session Trigger with `fire=tool`, `tool=run_flow_event`, static
+`flow_path`, `routing_filter.subscription_id=expense_hook`, and
+`event_context_arg=event_context_json`. For every delivery,
+`run_flow_event` injects the complete five-field CloudEvent as the listener's
+sole output Artifact, resumes a deterministic persisted run, and returns only
+after the workflow has durably completed. EventD's `LeaseWorker` therefore ACKs
+durable completion and NACKs raised workflow failures without coupling ingress
+storage to the Haitun process lifetime. A captured
+`$fusion_flow/program_error` is an ordinary completed Artifact under existing
+Program semantics.
+
+Version 1 permits exactly one listener Step. It must consume nothing, depend on
+nothing, reserve no resources, and produce exactly one Artifact. Event
+workflows cannot contain Human executors because an hours-long Human wait
+cannot share the delivery-completion ACK contract.
+
 ## Modules
 
 - `grammar/FusionFlow.g4`: the syntax grammar; ordinary preset/external-operator arity remains checker-owned.
@@ -61,7 +106,7 @@ and script assets without resource requirements.
 - `fusion_flow/graph_compiler.py`: concrete `CoreIRCompiler` backend that builds `fusion_flow.workflow_graph` models.
 - `fusion_flow/workflow_runner.py`: fail-closed compile/plan/execute entry point with Agent, Human, Program, and checkpoint injection boundaries.
 - `fusion_flow/artifact_store.py`: atomic, workflow-local Markdown persistence for every materialized G4 Artifact.
-- `fusion_flow/job_store.py`: strict v2 JSON state plus non-blocking, OS-released advisory leases and an in-process guard for G4 runs waiting on Human input.
+- `fusion_flow/job_store.py`: strict v2 JSON state plus non-blocking, OS-released advisory leases and an in-process guard for Human waits and EventD-activated runs.
 - `fusion_flow/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
 - `fusion_flow/execution/`: inactive Python parity port of legacy `flow.*` primitives; `run_flow` does not import or dispatch through it.
 - `test/test_graph_compiler.py`: real Core IR to WorkflowGraph compiler contract checks.

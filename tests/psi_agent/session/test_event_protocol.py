@@ -16,13 +16,18 @@ from psi_agent.session.agent import SessionAgent, current_tool_ai_socket
 from psi_agent.session.ai_client import AiClient
 from psi_agent.session.event_protocol import (
     EVENT_FEISHU_CHAT_MEMBER_ADDED,
+    EventEnvelope,
     EventProtocolError,
     filter_matches,
     parse_event_envelope,
 )
 from psi_agent.session.schedule_registry import FIRE_TOOL
 from psi_agent.session.tool_registry import FileEntry, ToolFunction, ToolRegistry
-from psi_agent.session.trigger_registry import Trigger, TriggerRegistry
+from psi_agent.session.trigger_registry import (
+    Trigger,
+    TriggerRegistry,
+    current_tool_trigger_event_context,
+)
 
 
 def test_parse_member_added_ok() -> None:
@@ -201,6 +206,128 @@ async def test_load_and_match_trigger(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_routing_filter_selects_one_eventd_listener(tmp_path: Path) -> None:
+    for listener_id in ("expense_hook", "order_hook"):
+        trigger_dir = tmp_path / "triggers" / listener_id
+        await anyio.Path(trigger_dir).mkdir(parents=True)
+        await anyio.Path(trigger_dir / "TRIGGER.md").write_text(
+            textwrap.dedent(
+                f"""\
+                ---
+                name: {listener_id}
+                source: eventd
+                event: external.event.received
+                routing_filter:
+                  subscription_id: {listener_id}
+                ---
+                """
+            ),
+            encoding="utf-8",
+        )
+
+    registry = await TriggerRegistry.load(tmp_path / "triggers")
+    envelope = parse_event_envelope(
+        {
+            "source": "eventd",
+            "event": "external.event.received",
+            "payload": {"amount": 99},
+            "routing": {"subscription_id": "expense_hook"},
+        }
+    )
+
+    assert [trigger.name for trigger in registry.match(envelope)] == ["expense_hook"]
+
+
+@pytest.mark.anyio
+async def test_eventd_idempotency_is_scoped_per_subscription(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    async def record(label: str) -> str:
+        calls.append(label)
+        return "ok"
+
+    tools = ToolRegistry()
+    tools._files["record.py"] = FileEntry(
+        file_hash="record",
+        tools={"record": ToolFunction.from_callable(record)},
+        funcs={"record": record},
+        fresh=True,
+    )
+    for listener_id in ("expense_hook", "order_hook"):
+        trigger_dir = tmp_path / "triggers" / listener_id
+        await anyio.Path(trigger_dir).mkdir(parents=True)
+        await anyio.Path(trigger_dir / "TRIGGER.md").write_text(
+            textwrap.dedent(
+                f"""\
+                ---
+                name: {listener_id}
+                source: eventd
+                event: external.event.received
+                routing_filter:
+                  subscription_id: {listener_id}
+                fire: tool
+                tool: record
+                tool_args:
+                  label: {listener_id}
+                ---
+                """
+            ),
+            encoding="utf-8",
+        )
+
+    registry = await TriggerRegistry.load(tmp_path / "triggers")
+    agent = SessionAgent(
+        ai_client=AiClient("http://nonexistent/v1"),
+        tool_registry=tools,
+        trigger_registry=registry,
+        workspace_path=tmp_path,
+    )
+
+    def envelope(subscription_id: str) -> EventEnvelope:
+        return parse_event_envelope(
+            {
+                "source": "eventd",
+                "event": "external.event.received",
+                "payload": {"amount": 99},
+                "idempotency_key": "cloudevent/sha256:same-event",
+                "routing": {"subscription_id": subscription_id},
+            }
+        )
+
+    expense = await registry.dispatch_outcome(envelope("expense_hook"), agent)
+    order = await registry.dispatch_outcome(envelope("order_hook"), agent)
+    duplicate_expense = await registry.dispatch_outcome(envelope("expense_hook"), agent)
+
+    assert expense.fired == ["expense_hook"]
+    assert order.fired == ["order_hook"]
+    assert not order.duplicate
+    assert duplicate_expense.duplicate
+    assert calls == ["expense_hook", "order_hook"]
+
+
+@pytest.mark.anyio
+async def test_invalid_routing_filter_skips_trigger(tmp_path: Path) -> None:
+    trigger_dir = tmp_path / "triggers" / "invalid-routing"
+    await anyio.Path(trigger_dir).mkdir(parents=True)
+    await anyio.Path(trigger_dir / "TRIGGER.md").write_text(
+        textwrap.dedent(
+            """\
+            ---
+            name: invalid-routing
+            event: external.event.received
+            routing_filter: invalid
+            ---
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    registry = await TriggerRegistry.load(tmp_path / "triggers")
+
+    assert registry.triggers == []
+
+
+@pytest.mark.anyio
 async def test_match_falls_back_to_raw_event(tmp_path: Path) -> None:
     trig_dir = tmp_path / "triggers" / "raw-fallback"
     await anyio.Path(trig_dir).mkdir(parents=True)
@@ -312,6 +439,7 @@ async def test_tool_trigger_can_opt_in_to_dynamic_event_context(tmp_path: Path) 
     async def process_expense(queue: str = "", event_json: str = "") -> str:
         called["queue"] = queue
         called["event_json"] = event_json
+        called["active_event_json"] = current_tool_trigger_event_context() or ""
         return "ok"
 
     tools = ToolRegistry()
@@ -330,6 +458,8 @@ async def test_tool_trigger_can_opt_in_to_dynamic_event_context(tmp_path: Path) 
             name: expense
             source: eventd
             event: approval.status.changed
+            routing_filter:
+              subscription_id: expense_hook
             fire: tool
             tool: process_expense
             tool_args:
@@ -361,7 +491,10 @@ async def test_tool_trigger_can_opt_in_to_dynamic_event_context(tmp_path: Path) 
             "event": "approval.status.changed",
             "payload": cloud_event["data"],
             "idempotency_key": "feishu://tenant/app|approval-42",
-            "routing": {"delivery_id": "delivery-7"},
+            "routing": {
+                "delivery_id": "delivery-7",
+                "subscription_id": "expense_hook",
+            },
             "cloud_event": cloud_event,
         }
     )
@@ -374,6 +507,8 @@ async def test_tool_trigger_can_opt_in_to_dynamic_event_context(tmp_path: Path) 
     assert context["cloud_event"] == cloud_event
     assert context["idempotency_key"] == "feishu://tenant/app|approval-42"
     assert context["routing"]["delivery_id"] == "delivery-7"
+    assert called["active_event_json"] == called["event_json"]
+    assert current_tool_trigger_event_context() is None
     history = "\n".join(str(message.get("content") or "") for message in agent._conversation.messages)
     assert "<psi_event_context>" not in history
     assert "APPROVED" not in history

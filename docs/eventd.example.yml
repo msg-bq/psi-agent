@@ -3,27 +3,17 @@ daemon:
   dataPath: ""
   apiTokenRef: "env://PSI_EVENTD_TOKEN"
 
-hooks:
-  - id: "orders"
+webhookListeners:
+  - id: "order_hook"
     tokenRef: "env://ORDERS_HOOK_TOKEN"
-    source: "webhook://orders"
-    type: "order.received"
     idFrom:
       header: "X-Event-Id"
-
-subscriptions:
-  - id: "order-agent"
-    filter:
-      sourcePrefix: ""
-      types:
-        - "order.received"
-        - "order.paid"
     leaseSeconds: 60
     maxAttempts: 10
 
 consumer:
   daemonEndpoint: "http://127.0.0.1:8765"
-  subscriptionId: "order-agent"
+  subscriptionId: "order_hook"
   sessionSocket: "http://127.0.0.1:8766"
   renewEverySeconds: 20
   leaseSeconds: 0

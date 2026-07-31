@@ -852,11 +852,17 @@ class WorkflowGraphCompiler(CoreIRCompiler):
 
         Untyped constants remain valid for compatibility with minimal Core IR.
         A typed executor must carry exactly one recognized executor concept.
+        ``EventListeningProgram`` is a marker that may specialize only Program.
         """
 
         if not executor.belong_concepts:
             return
-        matches = {concept.name for concept in executor.belong_concepts} & cls._EXECUTOR_CONCEPTS
+        concepts = {concept.name for concept in executor.belong_concepts}
+        if "EventListeningProgram" in concepts and ("Program" not in concepts or concepts & {"Agent", "Human"}):
+            raise WorkflowGraphCompilationError(
+                "EventListeningProgram must also belong to Program and cannot belong to Agent or Human"
+            )
+        matches = concepts & cls._EXECUTOR_CONCEPTS
         if len(matches) != 1:
             raise WorkflowGraphCompilationError("step_executor must belong to exactly one of Human, Agent, or Program")
 

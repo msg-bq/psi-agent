@@ -5,6 +5,7 @@ import json
 from typing import Any, cast
 
 import pytest
+from fusion_flow.workflow_execution import create_execution_checkpoint, generate_plan
 
 run_workflow = cast(Any, importlib.import_module("fusion_flow.workflow_runner"))
 
@@ -17,6 +18,7 @@ class _StringableNonJson:
 def test_runner_catalog_includes_typed_depends_on() -> None:
     context = run_workflow._default_parse_context()
 
+    assert "EventListeningProgram" in context.concepts
     depends_on = context.operators["depends_on"]
     assert tuple(concept.name for concept in depends_on.input_concepts) == (
         "Step",
@@ -54,6 +56,48 @@ workflow dispatch {{
     produces(dispatch_step) == [result];
 }}
 """
+
+
+def _event_workflow(
+    *,
+    listener_declaration: str = "Program, EventListeningProgram, Executor",
+    listener_ref: str = "expense_hook",
+    consumes: str = "",
+    produces: str = "produces(receive_step) == [event];",
+) -> str:
+    return f"""
+const expense_flow: Workflow;
+const receive_step: Step;
+const receive_name: StepName;
+const listener: {listener_declaration};
+const {listener_ref}: Path;
+const event: Artifact;
+const request: Artifact;
+
+workflow expense_flow {{
+    {"input_workflow(expense_flow) == [request];" if consumes else ""}
+    output_workflow(expense_flow) == [event];
+    program_path(listener) == {listener_ref};
+    step_name(receive_step) == receive_name;
+    step_executor(receive_step) == listener;
+    {consumes}
+    {produces}
+}}
+"""
+
+
+def _event_workflow_with(extra_declarations: str, extra_body: str) -> str:
+    return (
+        _event_workflow()
+        .replace(
+            "const request: Artifact;",
+            f"{extra_declarations}\nconst request: Artifact;",
+        )
+        .replace(
+            "    produces(receive_step) == [event];",
+            f"    produces(receive_step) == [event];\n{extra_body}",
+        )
+    )
 
 
 def _select_workflow(condition: str) -> str:
@@ -134,6 +178,150 @@ def test_compile_workflow_rejects_duplicate_program_path() -> None:
                 program_path(worker) == "./bin/second";
                 """,
             )
+        )
+
+
+def test_compile_workflow_extracts_event_listener_activation() -> None:
+    compiled = run_workflow.compile_workflow(
+        _event_workflow(),
+        strict_executors=True,
+    )
+
+    assert compiled.executor_kinds == {"listener": "EventListeningProgram"}
+    assert compiled.program_paths == {"listener": "expense_hook"}
+    assert compiled.event_listener == run_workflow.EventListenerSpec(
+        step_id="receive_step",
+        executor_id="listener",
+        listener_ref="expense_hook",
+        output_artifact_id="event",
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (
+            _event_workflow(listener_declaration="EventListeningProgram, Executor"),
+            "operator position requires concept 'Program'",
+        ),
+        (
+            _event_workflow(listener_declaration="Program, EventListeningProgram, Agent, Executor"),
+            "cannot belong to Agent or Human",
+        ),
+        (
+            _event_workflow(consumes="consumes(receive_step) == [request];"),
+            "cannot consume artifacts",
+        ),
+        (
+            _event_workflow(produces=""),
+            "global artifact must be an input or producer-backed",
+        ),
+        (
+            _event_workflow().replace(
+                "output_workflow(expense_flow) == [event];",
+                "input_workflow(expense_flow) == [event];\n    output_workflow(expense_flow) == [event];",
+            ),
+            "output cannot also be a workflow input",
+        ),
+        (
+            _event_workflow().replace(
+                "program_path(listener) == expense_hook;",
+                'program_path(listener) == "./hook.py";',
+            ),
+            "lowercase logical Path identity",
+        ),
+        (
+            _event_workflow_with(
+                "const gpu: Resource;",
+                "    resource_requirement(receive_step, gpu) == 1;",
+            ),
+            "cannot reserve workflow resources",
+        ),
+        (
+            _event_workflow_with(
+                """const review_step: Step;
+const review_name: StepName;
+const reviewer: Human, Executor;
+const decision: Artifact;""",
+                """    step_name(review_step) == review_name;
+    step_instruction(review_step) == "Review the event.";
+    step_executor(review_step) == reviewer;
+    produces(review_step) == [decision];""",
+            ),
+            "cannot contain Human executors",
+        ),
+        (
+            _event_workflow_with(
+                """const second_step: Step;
+const second_name: StepName;
+const second_listener: Program, EventListeningProgram, Executor;
+const second_hook: Path;
+const second_event: Artifact;""",
+                """    program_path(second_listener) == second_hook;
+    step_name(second_step) == second_name;
+    step_executor(second_step) == second_listener;
+    produces(second_step) == [second_event];""",
+            ),
+            "exactly one EventListeningProgram step",
+        ),
+        (
+            _event_workflow_with(
+                """const prior_step: Step;
+const prior_name: StepName;
+const worker: Agent, Executor;""",
+                """    step_name(prior_step) == prior_name;
+    step_instruction(prior_step) == "Prepare.";
+    step_executor(prior_step) == worker;
+    depends_on(receive_step, prior_step) == True;""",
+            ),
+            "cannot depend on another step",
+        ),
+    ],
+)
+def test_compile_workflow_rejects_invalid_event_listener_shape(
+    source: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        run_workflow.compile_workflow(source, strict_executors=True)
+
+
+@pytest.mark.anyio
+async def test_event_listener_is_materialized_only_from_activation_checkpoint() -> None:
+    source = _event_workflow()
+    compiled = run_workflow.compile_workflow(source, strict_executors=True)
+    event = {
+        "specversion": "1.0",
+        "id": "expense-1",
+        "source": "webhook://eventd/expense_hook/",
+        "type": "external.event.received",
+        "data": {"amount": 100},
+    }
+    checkpoint = create_execution_checkpoint(
+        generate_plan(compiled.graph),
+        compiled.graph,
+        values={"event": event},
+        completed_step_ids=("receive_step",),
+    )
+
+    result = await run_workflow.execute_workflow(
+        source,
+        inputs={},
+        strict_executors=True,
+        supported_executor_kinds=("EventListeningProgram",),
+        checkpoint=checkpoint,
+    )
+
+    assert result == {"event": event}
+
+
+@pytest.mark.anyio
+async def test_event_listener_rejects_ordinary_execution() -> None:
+    with pytest.raises(ValueError, match="activation checkpoint"):
+        await run_workflow.execute_workflow(
+            _event_workflow(),
+            inputs={},
+            strict_executors=True,
         )
 
 

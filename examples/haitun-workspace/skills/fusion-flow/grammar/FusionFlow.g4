@@ -181,6 +181,13 @@ workflowOwnerOperator
 /*
  * Program owner (catalog identity):
  *   program_path(Program) -> Path                     [arity 1]
+ *
+ * A normal Program uses a workspace-local script/source Path. An event
+ * activation declares its executor as Program, EventListeningProgram,
+ * Executor; in that special case the Path is a lowercase logical listener
+ * identity. It is not a script, public Webhook URL, secret, CloudEvent type,
+ * or message schema. The deployment layer maps that identity to EventD and
+ * constructs the external Webhook URL.
  */
 programOwnerOperator
     : 'program_path'

@@ -84,6 +84,7 @@ def test_format_trigger_roundtrip_yaml() -> None:
         description="d",
         content="note",
         filter={"chat_id": "oc_1"},
+        routing_filter={"subscription_id": "expense_hook"},
         fire="tool",
         tool="feishu_message_send",
         tool_args={"receive_id": "oc_1", "text": "hi"},
@@ -94,6 +95,7 @@ def test_format_trigger_roundtrip_yaml() -> None:
     assert header["event"] == "feishu.chat.member_added"
     assert header["raw_event"] == "im.chat.member.user.added_v1"
     assert header["event_context_arg"] == "event_json"
+    assert header["routing_filter"] == {"subscription_id": "expense_hook"}
     assert yaml.safe_load(json.dumps(header["filter"])) == {"chat_id": "oc_1"}
     assert "note" in body
 
@@ -105,6 +107,7 @@ async def test_create_tool_trigger_with_only_dynamic_event_context(workspace: Pa
         trigger_name="dynamic-event",
         event="approval.status.changed",
         source="eventd",
+        routing_filter='{"subscription_id":"expense_hook"}',
         fire="tool",
         tool="process_approval",
         event_context_arg="event_json",
@@ -115,6 +118,7 @@ async def test_create_tool_trigger_with_only_dynamic_event_context(workspace: Pa
     header, _ = tm._parse_header(raw)
     assert header["tool_args"] == {}
     assert header["event_context_arg"] == "event_json"
+    assert header["routing_filter"] == {"subscription_id": "expense_hook"}
 
 
 @pytest.mark.anyio

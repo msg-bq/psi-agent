@@ -63,6 +63,14 @@ def secret_from_env_ref(value: object, name: str, *, required: bool = False) -> 
     return secret
 
 
+def webhook_token_from_env_ref(value: object, name: str) -> str:
+    """Resolve a Webhook token that is safe as one unescaped URL path segment."""
+    token = secret_from_env_ref(value, name, required=True)
+    if any(not (character.isascii() and (character.isalnum() or character in "-._~")) for character in token):
+        raise ValueError(f"{name} must resolve to an RFC 3986 unreserved token")
+    return token
+
+
 @dataclass(frozen=True, slots=True)
 class DaemonConfig:
     listen: str
@@ -144,11 +152,66 @@ async def load_daemon_config(
                 max_attempts=positive_int(row.get("maxAttempts"), 10, "maxAttempts"),
             )
         )
-    if not subscriptions:
-        subscriptions.append(Subscription(id="default"))
-
     hooks: list[Hook] = []
     hook_ids: set[str] = set()
+    listener_rows = raw.get("webhookListeners", [])
+    if not isinstance(listener_rows, list):
+        raise ValueError("webhookListeners must be a list")
+    for index, item in enumerate(listener_rows):
+        row = mapping(item, f"webhookListeners[{index}]")
+        listener_id = str(row.get("id") or "").strip()
+        if (
+            not listener_id
+            or not listener_id[0].islower()
+            or not listener_id[0].isascii()
+            or any(not (character.isascii() and (character.isalnum() or character == "_")) for character in listener_id)
+        ):
+            raise ValueError(f"webhookListeners[{index}].id must be a lowercase FusionFlow identity")
+        if listener_id in subscription_ids or listener_id in hook_ids:
+            raise ValueError(f"duplicate webhook listener id: {listener_id!r}")
+        if row.get("token"):
+            raise ValueError(f"webhookListeners[{index}].token cannot contain a secret; use tokenRef: env://NAME")
+        id_from = mapping(row.get("idFrom"), f"webhookListeners[{index}].idFrom")
+        id_header = str(id_from.get("header") or "").strip()
+        id_pointer = str(id_from.get("pointer") or "").strip()
+        if id_header and id_pointer:
+            raise ValueError(f"webhookListeners[{index}].idFrom accepts either header or pointer")
+        if id_pointer and not id_pointer.startswith("/"):
+            raise ValueError(f"webhookListeners[{index}].idFrom.pointer must start with '/'")
+
+        source = f"webhook://eventd/{listener_id}/"
+        subscriptions.append(
+            Subscription(
+                id=listener_id,
+                source_prefix=source,
+                lease_seconds=positive_int(
+                    row.get("leaseSeconds"),
+                    60,
+                    f"webhookListeners[{index}].leaseSeconds",
+                ),
+                max_attempts=positive_int(
+                    row.get("maxAttempts"),
+                    10,
+                    f"webhookListeners[{index}].maxAttempts",
+                ),
+            )
+        )
+        hooks.append(
+            Hook(
+                id=listener_id,
+                token=webhook_token_from_env_ref(
+                    row.get("tokenRef"),
+                    f"webhookListeners[{index}].tokenRef",
+                ),
+                source=source,
+                type="external.event.received",
+                id_header=id_header,
+                id_pointer=id_pointer,
+            )
+        )
+        subscription_ids.add(listener_id)
+        hook_ids.add(listener_id)
+
     hook_rows = raw.get("hooks", [])
     if not isinstance(hook_rows, list):
         raise ValueError("hooks must be a list")
@@ -183,6 +246,12 @@ async def load_daemon_config(
                 id_pointer=id_pointer,
             )
         )
+    if listener_rows and hook_rows and not subscription_rows:
+        raise ValueError("mixing webhookListeners with manual hooks requires explicit subscriptions")
+    if hook_rows and not subscription_rows:
+        subscriptions.insert(0, Subscription(id="default"))
+    elif not subscriptions:
+        subscriptions.append(Subscription(id="default"))
     return DaemonConfig(configured_listen, configured_path, token, tuple(subscriptions), tuple(hooks))
 
 

@@ -91,9 +91,84 @@ When neither yields a value, the daemon generates a UUID. That convenience
 mode cannot deduplicate sender retries. Reliable senders should provide a
 stable ID and reuse both ID and body for every retry.
 
-Hook tokens are capability secrets. Only `env://` references are accepted.
-Use long, independently revocable values and configure access logs not to
-record hook paths. Unknown hooks and incorrect tokens both return `404`.
+Hook tokens are capability secrets and only `env://` references are accepted.
+Generated `webhookListeners` additionally require RFC 3986 unreserved
+characters (`A-Z`, `a-z`, `0-9`, `-._~`), so use base64url or another URL-safe
+generator rather than standard base64. Use long, independently revocable
+values and configure access logs not to record hook paths. Unknown hooks and
+incorrect tokens both return `404`.
+
+### FusionFlow Webhook listeners
+
+An event-enabled FusionFlow does not declare a business event catalog, payload
+schema, public URL, or secret. It declares one lowercase logical Path such as
+`expense_hook`. Provision the same identity with the `webhookListeners`
+shorthand:
+
+```yaml
+webhookListeners:
+  - id: expense_hook
+    tokenRef: env://EXPENSE_HOOK_TOKEN
+    idFrom:
+      header: Idempotency-Key
+```
+
+This expands to exactly one Hook and one same-ID Subscription. The generated
+transport contract is fixed:
+
+- external URL:
+  `{publicBaseUrl}/hooks/{listener_id}/{resolved_token}`;
+- CloudEvent `source`: `webhook://eventd/{listener_id}/`;
+- CloudEvent `type`: `external.event.received`;
+- CloudEvent `data`: the complete incoming JSON value;
+- Subscription filter: that listener's generated source, with no `type`
+  filter.
+
+`publicBaseUrl` is the operator-owned public origin or reverse-proxy origin; it
+cannot be inferred safely from `daemon.listen`. The resolved token is supplied
+out of band to the sender and must never be written to G4 or committed config.
+This provisions a transport listener, not a set of domain events. Every JSON
+body is accepted without declaring an event name or message schema.
+If `webhookListeners` and manual `hooks` are mixed, declare manual
+`subscriptions` explicitly; EventD refuses to synthesize one broad `default`
+subscription that would also capture listener traffic.
+
+The matching G4 executor is declared as
+`Program, EventListeningProgram, Executor`, and
+`program_path(listener) == expense_hook`. The EventD consumer posts the
+delivery to Session with `routing.subscription_id=expense_hook`; a
+`fire=tool` Trigger selects that listener with
+`routing_filter.subscription_id`, then calls `run_flow_event` with that full
+event context. For example:
+
+```yaml
+---
+name: expense-hook
+source: eventd
+event: external.event.received
+routing_filter:
+  subscription_id: expense_hook
+fire: tool
+tool: run_flow_event
+tool_args:
+  flow_path: flows/workflows/expense/expense.workflow
+event_context_arg: event_context_json
+visibility: silent
+---
+```
+
+Create this record through `trigger_manage` rather than editing
+`TRIGGER.md` directly; the YAML above shows the persisted contract.
+Session binds a private call context around that `fire=tool` invocation, so a
+normal Agent tool call cannot fabricate an EventD activation. The tool injects
+the strict five-field CloudEvent as the listener Step's sole
+Artifact and waits for the rest of the workflow to complete before the
+consumer ACKs.
+
+Run the consumer only while its target Session is healthy. If a consumer keeps
+claiming while Session is unavailable, repeated delivery failures can consume
+`maxAttempts`; EventD itself should remain running so unclaimed events stay
+durable until the bridge is healthy.
 
 ## Durable delivery
 
@@ -194,6 +269,8 @@ argument:
 name: handle-paid-order
 source: eventd
 event: order.paid
+routing_filter:
+  subscription_id: order_hook
 fire: tool
 tool: handle_paid_order
 tool_args:
@@ -204,6 +281,9 @@ event_context_arg: event_json
 
 At dispatch, `event_json` receives deterministic JSON for the complete Session
 event envelope, including `cloud_event`, `routing`, and `idempotency_key`.
+`routing_filter` is an exact-subset match against the envelope's routing
+object; generated Webhook listeners must use it to prevent one listener's
+delivery from firing another listener's workflow.
 The configured name must be a valid Python parameter, the tool must declare
 it, and it must not also appear in static `tool_args`. Dynamic event JSON is
 passed directly to the tool and masked from logs and persisted conversation
@@ -211,16 +291,30 @@ history; the tool remains responsible for schema and authorization checks.
 
 The consumer ACKs only when Session reports at least one successful matching
 Trigger and no failures, or when Session recognizes an already completed
-event. Missing Triggers and execution failures are NACKed.
+event. Missing Triggers and raised execution failures are NACKed. Existing
+Program semantics still treat a captured launch, exit, or output-format
+failure as a completed `$fusion_flow/program_error` Artifact, so that value is
+ACKed unless a downstream Step deliberately raises.
 
 ## Guarantees and limits
 
 - SQLite uses WAL, `synchronous=FULL`, foreign keys, and a busy timeout.
 - Inbox identity is `UNIQUE(source, event_id)`.
+- Session dispatch idempotency for EventD is scoped by
+  `(CloudEvent identity, subscription_id)`, so one event may legitimately run
+  once for each matching durable subscription.
 - Delivery survives ordinary daemon and consumer restarts.
 - External side effects are not transactionally coupled to the local ACK.
   Mutating tools must use the delivery or CloudEvent identity as their
   idempotency key.
+- Event workflow JobStore records and materialized Artifact files currently
+  have no automatic retention policy. Operators must budget disk and must not
+  delete them casually: deterministic completed-run reuse is part of
+  idempotency.
+- A failed event run is bound to the workflow definition digest with which it
+  started. Editing that workflow does not silently resume the old delivery
+  under new semantics; replay/version migration tooling is not included.
 - This release is single-machine. PostgreSQL, multi-node coordination,
-  provider adapters, provider-specific signed webhooks, DLQ replay APIs, and
-  full metrics export are separate work.
+  provider adapters, provider-specific signed webhooks, DLQ replay APIs,
+  retention/GC, workflow-version migration, and full metrics export are
+  separate work.

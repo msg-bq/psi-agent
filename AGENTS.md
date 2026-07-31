@@ -125,6 +125,11 @@ Agent 只选择 interpreter executable，host 固定构造
 code 和 launch error，并保留既有的 AnyIO 进程树清理及输出上限。环境 shell
 不能冒充编译注册或最终 Program 执行。
 
+`EventListeningProgram` 是上述规则的显式例外：它仍属于 `Program`，但不会执行
+脚本；其 `program_path` 是 EventD 的小写 listener ID。EventD 通过
+`run_flow_event` 注入完整 CloudEvent 后才执行下游 Step，G4 中不保存公网 URL、
+token、业务事件枚举或 schema。
+
 Program Agent 默认是 fidelity mode：真实程序启动前可以修复并重试缺失环境或
 toolchain，但不能改脚本、改 consumed input Artifact、改 stdin 或重解释输出。
 一旦真实程序成功启动，就禁止第二次执行；无论它随后非零退出、报告

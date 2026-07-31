@@ -42,6 +42,7 @@ class EventConsumerWorker:
                         "delivery_id": delivery_id,
                         "event_source": event.source,
                         "event_id": event.id,
+                        "subscription_id": self.subscription_id,
                     }
                 )
                 result = await core.post_event(cloud_event_to_session_envelope(event, routing=event_routing))
