@@ -115,14 +115,18 @@ class Conversation:
         del self.messages[index + 1 :]
 
     def replace_system(self, content: str) -> None:
-        """Replace the system message (``messages[0]``) in-place,
-        or add it if the conversation is empty.  Automatically
-        snapshots on the first mutation."""
+        """Replace the leading system message or insert one safely.
+
+        A restored history may begin with a user message when an earlier
+        system-prompt build failed.  Preserve that message by inserting the
+        recovered system prompt instead of overwriting ``messages[0]``.
+        Automatically snapshots on the first mutation.
+        """
         self._begin_if_needed()
-        if self.messages:
+        if self.messages and self.messages[0].get("role") == "system":
             self.messages[0] = {"role": "system", "content": content}
         else:
-            self.messages.append({"role": "system", "content": content})
+            self.messages.insert(0, {"role": "system", "content": content})
 
     def stash(self, chunks: list[AgentChunk]) -> None:
         """Store schedule-produced chunks for the next channel request."""

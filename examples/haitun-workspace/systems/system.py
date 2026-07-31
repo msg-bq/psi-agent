@@ -71,6 +71,7 @@ from prompt_sections import (
     FUSION_MEMORY_SECTION,
     SAFETY_SECTION,
     SEND_FILES_SECTION,
+    SELF_KNOWLEDGE_SECTION,
     SILENT_REPLIES_SECTION,
     SILENT_TOKEN,
     SESSION_MANAGEMENT_SECTION,
@@ -81,7 +82,7 @@ from prompt_sections import (
     SUBAGENT_DELEGATION_SECTION,
     TOOL_CALL_STYLE_SECTION,
     WEB_SEARCH_RECENCY_SECTION,
-    build_model_identity_line,
+    build_model_runtime_line,
     build_runtime_line,
     build_skills_section,
     build_tooling_section,
@@ -124,6 +125,40 @@ _TOOL_RESULT_MAX_CHARS = 2000
 TOOL_RESULT_REAL_CONVERSATION_LOOKBACK = 20
 
 _NON_CONVERSATION_BLOCK_TYPES = frozenset(["toolCall", "toolUse", "functionCall", "thinking", "reasoning"])
+
+
+async def _optional_prompt_text(
+    label: str,
+    builder: Callable[[], Awaitable[str]],
+    *,
+    fallback: str = "",
+) -> str:
+    """Build one non-critical prompt section without dropping the core prompt."""
+    try:
+        return await builder()
+    except Exception as exc:
+        logger.warning(
+            "System prompt section %s omitted after %s: %s",
+            label,
+            type(exc).__name__,
+            exc,
+        )
+        return fallback
+
+
+async def _optional_path_exists(path: anyio.Path, label: str) -> bool:
+    """Best-effort existence check for optional prompt inputs."""
+    try:
+        return await path.exists()
+    except Exception as exc:
+        logger.warning(
+            "System prompt input %s ignored after %s: %s",
+            label,
+            type(exc).__name__,
+            exc,
+        )
+        return False
+
 
 # Self-evolution (future extension; not invoked by the framework yet)
 MAX_SELF_EVOLUTION_ITERATIONS = 6
@@ -1016,20 +1051,54 @@ graph declarations only; never write API keys into the workspace or generated `.
         # Capability root (skills/tools/SOUL) vs user open-folder (file IO guidance).
         ws = self._agent_dir
         user_ws = self._user_workspace
-        tools = tool_names or await _scan_tool_names(ws)
+        tools: list[str] | None = tool_names
+        if tools is None:
+            try:
+                tools = await _scan_tool_names(ws)
+            except Exception as exc:
+                logger.warning(
+                    "Static tool index unavailable after %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
 
         # -- Stable prefix ------------------------------------------------
-        identity = await _load_soul_md(ws)
-        skills_xml = await _build_skills_index(ws)
-        fusion_section = await self._build_fusion_section()
-        context_file = await _build_context_file(ws)
-        bootstrap = await _build_bootstrap_files(ws)
-        global_agents_md = await _build_global_agents_md()
+        identity = await _optional_prompt_text(
+            "identity/SOUL.md",
+            lambda: _load_soul_md(ws),
+            fallback=IDENTITY_LINE,
+        )
+        skills_xml = await _optional_prompt_text(
+            "Skills index",
+            lambda: _build_skills_index(ws),
+        )
+        fusion_section = await _optional_prompt_text(
+            "Fusion Flow",
+            self._build_fusion_section,
+        )
+        context_file = await _optional_prompt_text(
+            "project context",
+            lambda: _build_context_file(ws),
+        )
+        bootstrap = await _optional_prompt_text(
+            "bootstrap files",
+            lambda: _build_bootstrap_files(ws),
+        )
+        global_agents_md = await _optional_prompt_text(
+            "global AGENTS.md",
+            _build_global_agents_md,
+        )
 
-        stable_parts: list[str] = [identity, "", LANGUAGE_LOCALIZATION_SECTION]
+        stable_parts: list[str] = [
+            identity,
+            "",
+            SELF_KNOWLEDGE_SECTION,
+            "",
+            LANGUAGE_LOCALIZATION_SECTION,
+        ]
 
         help_skill_md = ws / "skills" / HELP_SKILL_NAME / "SKILL.md"
-        if await help_skill_md.exists():
+        if await _optional_path_exists(help_skill_md, "help Skill"):
             stable_parts += ["", PSI_AGENT_HELP_GUIDANCE.format(path=str(help_skill_md))]
 
         stable_parts += [
@@ -1081,10 +1150,11 @@ graph declarations only; never write API keys into the workspace or generated `.
             "sessions_create",
             "sessions_handoff",
         }
-        if _session_tools & set(tools):
+        tool_name_set = set(tools or [])
+        if _session_tools & tool_name_set:
             stable_parts += ["", SESSION_MANAGEMENT_SECTION]
 
-        if "todo" in tools:
+        if "todo" in tool_name_set:
             stable_parts += ["", TASK_PLANNING_SECTION]
 
         skills_section = build_skills_section(skills_xml)
@@ -1094,7 +1164,15 @@ graph declarations only; never write API keys into the workspace or generated `.
         if fusion_section:
             stable_parts += ["", fusion_section]
 
-        workspace_abs = str(await user_ws.resolve())
+        try:
+            workspace_abs = str(await user_ws.resolve())
+        except Exception as exc:
+            logger.warning(
+                "User workspace resolution fell back to raw path after %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            workspace_abs = str(user_ws)
         stable_parts += ["", build_workspace_section(workspace_abs)]
 
         if global_agents_md:
@@ -1106,7 +1184,7 @@ graph declarations only; never write API keys into the workspace or generated `.
         if context_file:
             stable_parts += ["", context_file]
 
-        if await (ws / "BOOTSTRAP.md").exists():
+        if await _optional_path_exists(ws / "BOOTSTRAP.md", "BOOTSTRAP.md"):
             stable_parts += ["", BOOTSTRAP_PENDING_SECTION]
 
         stable_parts += ["", SILENT_REPLIES_SECTION]
@@ -1120,15 +1198,22 @@ graph declarations only; never write API keys into the workspace or generated `.
         # that contract into every turn caused HEARTBEAT_OK to leak into normal chat.
         dynamic_parts: list[str] = []
 
-        model_identity = build_model_identity_line(model)
-        if model_identity:
-            dynamic_parts += [model_identity, ""]
+        effective_model = os.environ.get("HAITUN_MODEL") or model
+        model_runtime = build_model_runtime_line(effective_model)
+        if model_runtime:
+            dynamic_parts += [model_runtime, ""]
 
-        volatile = await _build_volatile(ws)
+        volatile = await _optional_prompt_text(
+            "volatile user profile",
+            lambda: _build_volatile(ws),
+        )
         if volatile:
             dynamic_parts += [volatile, ""]
 
-        dynamic_ctx = await _build_dynamic_context_files(ws)
+        dynamic_ctx = await _optional_prompt_text(
+            "dynamic context files",
+            lambda: _build_dynamic_context_files(ws),
+        )
         if dynamic_ctx:
             dynamic_parts += [dynamic_ctx, ""]
 

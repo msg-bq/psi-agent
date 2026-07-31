@@ -68,15 +68,18 @@ ContextVar 是**隐式环境态**，比进程全局好（多 Session 不互踩�
 - `SessionAgent.create()` 完成所有初始化——`__init__.py` 只做入口编排
 - Tool / system 从 **agent_path** 加载；**schedule 从 workspace_path 加载**（见上方「调度归属 workspace」）；history 写 **AppData** ``histories/``（第 4C；legacy ``{workspace}/histories/`` 双读）
 - AppData 路径助手在 ``psi_agent._appdata``（与 Gateway 共享；**禁止**经 ContextVar 传递 AppData 根）
-- System prompt 在首次 `run()` 调用时惰性构建（通过 `system_prompt_builder`）
-- 后续请求可调用 `system_prompt_rebuild_checker()`（如果定义），返回 True 则重建 system prompt
+- 每个运行中的 Session 在首次 `run()` 时都调用 `system_prompt_builder`：新会话创建提示，
+  恢复会话刷新持久化的旧/空提示。构建失败不标记完成，下一轮重试；恢复时首条不是 system
+  消息则在其前面插入，禁止覆盖用户历史
+- 同一运行实例的后续请求可调用 `system_prompt_rebuild_checker()`（如果定义），返回 True
+  则再次重建 system prompt
 
 ## Agent Loop 逻辑
 
 1. 收到 channel 请求 → `ChannelAdapter.handle()` 解析请求，提取 user_message + extra_params
 2. `SessionAgent.run()` 入口：
    - add() / replace_system() 在首次变更时自动建立快照（implicit snapshot）
-   - 惰性构建或重建 system prompt（首次 run 或 rebuild checker 返回 True 时）
+   - 首次 run 构建/刷新 system prompt；后续由 rebuild checker 决定是否重建
    - 检查暂存的 schedule 响应 → peek + yield → yield 全部成功后 `clear_pending()`
    - User message 追加到 history 后立即 ``commit()`` 落盘
 3. 获取 `anyio.Lock`（忙则 FIFO 排队等待）—— `handle_request()` 在调用 `run()` 前持有
