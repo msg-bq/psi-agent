@@ -232,9 +232,10 @@ def compile_workflow(
 
     Existing workflows that predate typed executor declarations keep their
     historical Agent default.  New entry points can opt into strict executor
-    typing so catalog mistakes fail before dispatch. Non-fatal checker
-    diagnostics are retained on the result and sent to ``diagnostic_callback``
-    before later strict compilation checks can fail.
+    typing so catalog mistakes fail before dispatch. ``diagnostic_callback``
+    receives only non-fatal warning diagnostics before this function returns
+    or raises; fatal diagnostics are reported through ``ValueError`` instead.
+    Successful results also retain their warnings in ``diagnostics``.
     """
 
     parsed = parse_workflow(
@@ -255,13 +256,15 @@ def compile_workflow(
     try:
         compiled = WorkflowGraphCompiler().compile(parsed.core_ir)
     except (TypeError, ValueError) as error:
-        # Core IR can expose compatibility warnings even when graph lowering
-        # fails. Surface those warnings before preserving the compiler error.
+        core_ir_diagnostics = collect_core_ir_diagnostics(parsed.core_ir)
         if diagnostic_callback is not None:
-            for diagnostic in collect_core_ir_diagnostics(parsed.core_ir):
+            for diagnostic in core_ir_diagnostics:
                 if diagnostic.severity == "warning":
                     diagnostic_callback(diagnostic)
-        raise ValueError(f"workflow check failed: {error}") from error
+        error_messages = [diagnostic.message for diagnostic in core_ir_diagnostics if diagnostic.severity == "error"]
+        error_messages.append(str(error))
+        unique_error_messages = tuple(dict.fromkeys(error_messages))
+        raise ValueError(f"workflow check failed: {'; '.join(unique_error_messages)}") from error
     if not isinstance(compiled, tuple):
         raise TypeError("workflow graph compiler returned an unexpected result")
     compilations = cast(tuple[WorkflowGraphCompilation, ...], compiled)
