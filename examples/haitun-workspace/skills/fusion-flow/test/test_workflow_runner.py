@@ -49,7 +49,6 @@ def _dispatch_workflow(
     return f"""
 const dispatch: Workflow;
 const dispatch_step: Step;
-const dispatch_name: StepName;
 {executor_declaration}
 const request: Artifact;
 const result: Artifact;
@@ -58,7 +57,7 @@ workflow dispatch {{
     input_workflow(dispatch) == [request];
     output_workflow(dispatch) == [result];
     {executor_configuration}
-    step_name(dispatch_step) == dispatch_name;
+    step_name(dispatch_step) == "Dispatch";
     step_instruction(dispatch_step) == "{instruction}";
     step_executor(dispatch_step) == worker;
     consumes(dispatch_step) == [request];
@@ -73,9 +72,6 @@ const select_demo: Workflow;
 const primary_step: Step;
 const fallback_step: Step;
 const final_step: Step;
-const primary_name: StepName;
-const fallback_name: StepName;
-const final_name: StepName;
 const worker: Agent;
 const request: Artifact;
 const primary_result: Artifact;
@@ -87,13 +83,13 @@ workflow select_demo {{
     input_workflow(select_demo) == [request];
     output_workflow(select_demo) == [selected_result, final_result];
 
-    step_name(primary_step) == primary_name;
+    step_name(primary_step) == "Primary";
     step_instruction(primary_step) == "produce_primary";
     step_executor(primary_step) == worker;
     consumes(primary_step) == [request];
     produces(primary_step) == [primary_result];
 
-    step_name(fallback_step) == fallback_name;
+    step_name(fallback_step) == "Fallback";
     step_instruction(fallback_step) == "produce_fallback";
     step_executor(fallback_step) == worker;
     consumes(fallback_step) == [request];
@@ -101,13 +97,20 @@ workflow select_demo {{
 
     selected_result == if({condition}, primary_result, fallback_result);
 
-    step_name(final_step) == final_name;
+    step_name(final_step) == "Final";
     step_instruction(final_step) == "consume_selected";
     step_executor(final_step) == worker;
     consumes(final_step) == [selected_result];
     produces(final_step) == [final_result];
 }}
 """
+
+
+def test_compile_workflow_uses_string_step_name_without_suffix() -> None:
+    compiled = run_workflow.compile_workflow(_dispatch_workflow("Agent", "do_work"))
+
+    assert compiled.graph.steps[0].name_id == "Dispatch"
+    assert isinstance(compiled.graph.steps[0].name_id, str)
 
 
 @pytest.mark.parametrize(
@@ -746,6 +749,39 @@ def test_untyped_executor_defaults_to_agent_for_compatibility() -> None:
     compiled = run_workflow.compile_workflow(_dispatch_workflow(None, "./instructions/untyped-agent.txt"))
 
     assert compiled.executor_kinds == {"worker": "Agent"}
+    assert [(item.severity, item.message) for item in compiled.diagnostics] == [
+        (
+            "warning",
+            "executor 'worker' for step 'dispatch_step' has no explicit "
+            "Agent, Human, or Program type; legacy execution defaults it to Agent",
+        )
+    ]
+
+
+def test_compile_workflow_accepts_untyped_graph_values() -> None:
+    source = _dispatch_workflow("Agent", "do_work")
+    source = source.replace("const request: Artifact;\n", "").replace("const result: Artifact;\n", "")
+
+    compiled = run_workflow.compile_workflow(source)
+
+    assert {artifact.artifact_id for artifact in compiled.graph.artifacts} == {"request", "result"}
+    assert compiled.diagnostics == ()
+
+
+def test_compile_workflow_reuses_graph_compilation(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_compile = run_workflow.WorkflowGraphCompiler.compile
+    compile_calls = 0
+
+    def counted_compile(compiler: Any, core_ir: Any) -> Any:
+        nonlocal compile_calls
+        compile_calls += 1
+        return original_compile(compiler, core_ir)
+
+    monkeypatch.setattr(run_workflow.WorkflowGraphCompiler, "compile", counted_compile)
+
+    run_workflow.compile_workflow(_dispatch_workflow("Agent", "do_work"))
+
+    assert compile_calls == 1
 
 
 def test_strict_runner_rejects_untyped_executor() -> None:
@@ -754,6 +790,48 @@ def test_strict_runner_rejects_untyped_executor() -> None:
             _dispatch_workflow(None, "./instructions/untyped-agent.txt"),
             strict_executors=True,
         )
+
+
+def test_strict_runner_reports_untyped_warning_before_rejection() -> None:
+    diagnostics: list[Any] = []
+
+    with pytest.raises(ValueError, match="must be declared as exactly one"):
+        run_workflow.compile_workflow(
+            _dispatch_workflow(None, "./instructions/untyped-agent.txt"),
+            strict_executors=True,
+            diagnostic_callback=diagnostics.append,
+        )
+
+    assert [(item.severity, item.message) for item in diagnostics] == [
+        (
+            "warning",
+            "executor 'worker' for step 'dispatch_step' has no explicit "
+            "Agent, Human, or Program type; legacy execution defaults it to Agent",
+        )
+    ]
+
+
+def test_graph_error_reports_untyped_warning_before_rejection() -> None:
+    diagnostics: list[Any] = []
+    source = _dispatch_workflow(None, "do_work").replace(
+        '    step_name(dispatch_step) == "Dispatch";\n',
+        "",
+    )
+
+    with pytest.raises(ValueError, match="step 'dispatch_step' has no step_name"):
+        run_workflow.compile_workflow(
+            source,
+            strict_executors=True,
+            diagnostic_callback=diagnostics.append,
+        )
+
+    assert [(item.severity, item.message) for item in diagnostics] == [
+        (
+            "warning",
+            "executor 'worker' for step 'dispatch_step' has no explicit "
+            "Agent, Human, or Program type; legacy execution defaults it to Agent",
+        )
+    ]
 
 
 @pytest.mark.anyio
@@ -941,14 +1019,29 @@ def test_unconsumed_assertions_report_operator_counts() -> None:
         name="custom_policy",
         output_concept=context.concepts["Bool"],
     )
-    source = _dispatch_workflow("Agent", "do_work").replace(
+    source = _configured_agent_workflow("agent_config(worker, model, engine, api);").replace(
         "\n}",
         "\n    custom_policy(dispatch_step) == True;\n}",
     )
 
     with pytest.raises(
         ValueError,
-        match=r"unconsumed assertions: custom_policy=1",
+        match=r"workflow check failed: workflow contains unsupported assertions: custom_policy=1",
+    ):
+        run_workflow.compile_workflow(source, context=context)
+
+
+def test_agent_setting_allowlist_does_not_hide_mixed_unknown_equality() -> None:
+    context = run_workflow._default_parse_context()
+    context.operators["custom_policy"] = run_workflow.Operator(
+        name="custom_policy",
+        output_concept=context.concepts["Bool"],
+    )
+    source = _configured_agent_workflow("agent_config(worker, model, engine, api) == custom_policy(dispatch_step);")
+
+    with pytest.raises(
+        ValueError,
+        match=r"workflow check failed: workflow contains unsupported assertions: <equality>=1",
     ):
         run_workflow.compile_workflow(source, context=context)
 
@@ -1026,8 +1119,6 @@ async def test_depends_on_orders_steps_without_an_artifact_dependency() -> None:
 const explicit_order: Workflow;
 const after_step: Step;
 const before_step: Step;
-const after_name: StepName;
-const before_name: StepName;
 const worker: Agent;
 const request: Artifact;
 const after_result: Artifact;
@@ -1037,13 +1128,13 @@ workflow explicit_order {
     input_workflow(explicit_order) == [request];
     output_workflow(explicit_order) == [after_result, before_result];
 
-    step_name(after_step) == after_name;
+    step_name(after_step) == "After";
     step_instruction(after_step) == "after";
     step_executor(after_step) == worker;
     consumes(after_step) == [request];
     produces(after_step) == [after_result];
 
-    step_name(before_step) == before_name;
+    step_name(before_step) == "Before";
     step_instruction(before_step) == "before";
     step_executor(before_step) == worker;
     consumes(before_step) == [request];
