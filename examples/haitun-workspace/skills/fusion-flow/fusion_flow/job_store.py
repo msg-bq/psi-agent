@@ -1,9 +1,9 @@
-"""Durable state for FusionFlow runs that may wait for human input.
+"""Durable state for resumable FusionFlow Human waits and EventD runs.
 
 This module is intentionally workspace-private.  It persists the small amount
-of adapter state needed to end a Haitun turn at a Human step and resume the
-same workflow from the next user message.  It does not implement an approval
-UI or an input channel.
+of adapter state needed either to resume a Human step from the next user
+message or to retry/deduplicate one EventD-activated run.  It does not
+implement an approval UI or an input channel.
 """
 
 from __future__ import annotations
@@ -356,6 +356,54 @@ class JobStore:
                     await run_lock.release()
                     logger.debug(f"FusionFlow run lock released for create {run_id!r}")
         raise JobStoreError("could not allocate a unique FusionFlow run ID")
+
+    async def create_or_load(
+        self,
+        *,
+        run_id: str,
+        flow_path: str | PathLike[str],
+        flow_source: str,
+        definition_digest: str | None = None,
+        inputs: Mapping[str, object],
+        resource_capacities: Mapping[str, ResourceCapacity] | None = None,
+        checkpoint: ExecutionCheckpoint | None = None,
+    ) -> HumanWorkflowRun:
+        """Atomically create or load one deterministically identified run."""
+
+        _validate_opaque_id(run_id, "run_id", error_type=ValueError)
+        if not isinstance(flow_source, str):
+            raise TypeError("flow_source must be a string")
+        if definition_digest is not None and _DIGEST_PATTERN.fullmatch(definition_digest) is None:
+            raise ValueError("definition_digest must be 64 lowercase hexadecimal characters")
+        normalized_path = str(flow_path)
+        if not normalized_path:
+            raise ValueError("flow_path must be non-empty")
+        await self.root.mkdir(parents=True, exist_ok=True)
+        await self._locks_dir.mkdir(parents=True, exist_ok=True)
+
+        run_lock = await _RunLock.try_acquire(self._lock_path(run_id))
+        if run_lock is None:
+            raise RunAlreadyActiveError(f"FusionFlow run {run_id!r} is already active")
+        try:
+            logger.debug(f"FusionFlow run lock acquired for create-or-load {run_id!r}")
+            if await self._run_path(run_id).exists():
+                return await self.load(run_id)
+            run = HumanWorkflowRun(
+                run_id=run_id,
+                status="running",
+                flow_path=normalized_path,
+                flow_source_digest=(
+                    hashlib.sha256(flow_source.encode()).hexdigest() if definition_digest is None else definition_digest
+                ),
+                inputs=dict(inputs),
+                resource_capacities=dict(resource_capacities or {}),
+                checkpoint=checkpoint,
+            )
+            await self._write(run)
+            return run
+        finally:
+            await run_lock.release()
+            logger.debug(f"FusionFlow run lock released for create-or-load {run_id!r}")
 
     async def load(self, run_id: str) -> HumanWorkflowRun:
         """Load and strictly validate one atomically published run document."""

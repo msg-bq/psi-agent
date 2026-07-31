@@ -12,6 +12,7 @@ import json
 import keyword
 from collections import OrderedDict
 from contextlib import aclosing, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -38,6 +39,31 @@ if TYPE_CHECKING:
 _IDEMPOTENCY_MAX = 2048
 _EVENT_CONTEXT_OPEN = "<psi_event_context>"
 _EVENT_CONTEXT_CLOSE = "</psi_event_context>"
+_CURRENT_TOOL_TRIGGER_EVENT_CONTEXT: ContextVar[str | None] = ContextVar(
+    "current_tool_trigger_event_context",
+    default=None,
+)
+
+
+def current_tool_trigger_event_context() -> str | None:
+    """Return the EventEnvelope JSON active during one ``fire=tool`` call."""
+    return _CURRENT_TOOL_TRIGGER_EVENT_CONTEXT.get()
+
+
+def _dispatch_idempotency_key(envelope: EventEnvelope) -> str:
+    """Scope EventD idempotency to one durable subscription delivery."""
+    event_key = envelope.idempotency_key
+    if not event_key or envelope.source != "eventd":
+        return event_key
+    subscription_id = envelope.routing.get("subscription_id")
+    if not isinstance(subscription_id, str) or not subscription_id.strip():
+        return event_key
+    scope = json.dumps(
+        [event_key, subscription_id.strip()],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"eventd-subscription/sha256:{hashlib.sha256(scope.encode()).hexdigest()}"
 
 
 @dataclass
@@ -47,6 +73,7 @@ class Trigger:
     name: str
     event: str
     filter: dict[str, Any] = field(default_factory=dict)
+    routing_filter: dict[str, Any] = field(default_factory=dict)
     source: str = ""
     task_content: str = ""
     visibility: str = "silent"
@@ -170,6 +197,8 @@ class TriggerRegistry:
         for trigger in self.triggers:
             if trigger.source and trigger.source != envelope.source:
                 continue
+            if trigger.routing_filter and not filter_matches(envelope.routing, trigger.routing_filter):
+                continue
             matched = False
             if trigger.event and trigger.event == envelope.event and filter_matches(envelope.payload, trigger.filter):
                 matched = True
@@ -221,7 +250,7 @@ class TriggerRegistry:
         that already completed in the same Session process.
         """
         await self.refresh()
-        event_key = envelope.idempotency_key
+        event_key = _dispatch_idempotency_key(envelope)
         if event_key and event_key in self._seen_keys:
             logger.info(f"Duplicate event idempotency_key={event_key!r}; skipping")
             return TriggerDispatchOutcome(duplicate=True)
@@ -332,7 +361,13 @@ class TriggerRegistry:
                 logger.error(f"Trigger {trigger.name!r}: {result}")
             else:
                 try:
-                    raw = await agent._execute_tool(func, args)
+                    context_token = _CURRENT_TOOL_TRIGGER_EVENT_CONTEXT.set(
+                        envelope.context_json() if trigger.event_context_arg else None
+                    )
+                    try:
+                        raw = await agent._execute_tool(func, args)
+                    finally:
+                        _CURRENT_TOOL_TRIGGER_EVENT_CONTEXT.reset(context_token)
                     result = str(raw)
                     logger.info(f"Trigger tool result ({tool_name!r}): {result[:1000]!r}")
                 except Exception as e:
@@ -445,6 +480,12 @@ class TriggerRegistry:
                 raw_filter = header.get("filter", {})
                 filt: dict[str, Any] = dict(raw_filter) if isinstance(raw_filter, dict) else {}
 
+                raw_routing_filter = header.get("routing_filter", {})
+                if not isinstance(raw_routing_filter, dict):
+                    logger.error(f"routing_filter in {task_file!r} must be an object; skipping")
+                    continue
+                routing_filter: dict[str, Any] = dict(raw_routing_filter)
+
                 platform_raw_event = str(header.get("raw_event") or "").strip()
                 raw_filter_hdr = header.get("raw_filter", {})
                 raw_filt: dict[str, Any] = dict(raw_filter_hdr) if isinstance(raw_filter_hdr, dict) else {}
@@ -512,6 +553,7 @@ class TriggerRegistry:
                     name=name,
                     event=event,
                     filter=filt,
+                    routing_filter=routing_filter,
                     source=source,
                     task_content=body.strip(),
                     visibility=visibility,

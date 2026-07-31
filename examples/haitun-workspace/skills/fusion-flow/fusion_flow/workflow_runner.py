@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
@@ -23,14 +24,24 @@ from .workflow_execution import (
     execute_plan,
     generate_plan,
 )
-from .workflow_graph import ProducesEdge, StepNode, WorkflowGraph
+from .workflow_graph import ConsumesEdge, ForeachEdge, ProducesEdge, StepNode, WorkflowGraph
 
 type Completion = Callable[[str], Awaitable[object]]
 type PathResolver = Callable[[str], Awaitable[str]]
 type InstructionResolver = Callable[[str], Awaitable[str]]
 type HumanInstructionPreparer = Callable[[str], Awaitable[str]]
 type HumanRequester = Callable[[str], Awaitable[object]]
-type ExecutorKind = Literal["Agent", "Human", "Program"]
+type ExecutorKind = Literal["Agent", "Human", "Program", "EventListeningProgram"]
+
+
+@dataclass(frozen=True, slots=True)
+class EventListenerSpec:
+    """One event-activated root Step and its logical EventD listener reference."""
+
+    step_id: str
+    executor_id: str
+    listener_ref: str
+    output_artifact_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +51,7 @@ class CompiledWorkflow:
     graph: WorkflowGraph
     executor_kinds: Mapping[str, ExecutorKind]
     program_paths: Mapping[str, str] = field(default_factory=dict)
+    event_listener: EventListenerSpec | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +103,7 @@ _CONCEPT_NAMES = (
     "Bool",
     "ComplexNumber",
     "Engine",
+    "EventListeningProgram",
     "Executor",
     "Human",
     "Instruction",
@@ -218,6 +231,52 @@ def _extract_program_paths(
     return program_paths, tuple(residual)
 
 
+def _event_listener_spec(
+    graph: WorkflowGraph,
+    executor_kinds: Mapping[str, ExecutorKind],
+    program_paths: Mapping[str, str],
+) -> EventListenerSpec | None:
+    """Validate the v1 event-activation shape and return its single listener."""
+
+    listener_steps = tuple(step for step in graph.steps if executor_kinds[step.executor_id] == "EventListeningProgram")
+    if not listener_steps:
+        return None
+    if len(listener_steps) != 1:
+        raise ValueError("an event workflow must declare exactly one EventListeningProgram step")
+    if any(kind == "Human" for kind in executor_kinds.values()):
+        raise ValueError("an event workflow cannot contain Human executors")
+
+    step = listener_steps[0]
+    if step.depends_on:
+        raise ValueError("EventListeningProgram step cannot depend on another step")
+    if step.resources:
+        raise ValueError("EventListeningProgram step cannot reserve workflow resources")
+    if any(isinstance(edge, ConsumesEdge) and edge.step_id == step.step_id for edge in graph.edges):
+        raise ValueError("EventListeningProgram step cannot consume artifacts")
+    if any(isinstance(edge, ForeachEdge) and edge.step_id == step.step_id for edge in graph.edges):
+        raise ValueError("EventListeningProgram step cannot iterate over artifacts")
+    outputs = tuple(
+        sorted(
+            edge.artifact_id for edge in graph.edges if isinstance(edge, ProducesEdge) and edge.step_id == step.step_id
+        )
+    )
+    if len(outputs) != 1:
+        raise ValueError("EventListeningProgram step must produce exactly one CloudEvent artifact")
+    output_artifact = next(artifact for artifact in graph.artifacts if artifact.artifact_id == outputs[0])
+    if output_artifact.is_input:
+        raise ValueError("EventListeningProgram output cannot also be a workflow input")
+
+    listener_ref = program_paths[step.executor_id]
+    if re.fullmatch(r"[a-z][A-Za-z0-9_]*", listener_ref) is None:
+        raise ValueError("EventListeningProgram program_path must be a lowercase logical Path identity")
+    return EventListenerSpec(
+        step_id=step.step_id,
+        executor_id=step.executor_id,
+        listener_ref=listener_ref,
+        output_artifact_id=outputs[0],
+    )
+
+
 def compile_workflow(
     source: str,
     *,
@@ -263,11 +322,19 @@ def compile_workflow(
     executor_kinds: dict[str, ExecutorKind] = {}
     for step in compilation.graph.steps:
         executor = constants_by_symbol.get(step.executor_id)
-        matches = (
-            set()
-            if executor is None
-            else {concept.name for concept in executor.belong_concepts if concept.name in {"Agent", "Human", "Program"}}
-        )
+        concepts = set() if executor is None else {concept.name for concept in executor.belong_concepts}
+        if "EventListeningProgram" in concepts:
+            if "Program" not in concepts or concepts & {"Agent", "Human"}:
+                raise ValueError(
+                    f"executor {step.executor_id!r} for step {step.step_id!r} "
+                    "must declare EventListeningProgram together with Program and not Agent or Human"
+                )
+            executor_kinds[step.executor_id] = "EventListeningProgram"
+            if step.executor_id not in program_paths:
+                raise ValueError(f"EventListeningProgram executor {step.executor_id!r} has no program_path")
+            continue
+
+        matches = concepts & {"Agent", "Human", "Program"}
         if not matches and not strict_executors:
             executor_kinds[step.executor_id] = "Agent"
             continue
@@ -280,10 +347,16 @@ def compile_workflow(
         if executor_kinds[step.executor_id] == "Program" and step.executor_id not in program_paths:
             raise ValueError(f"Program executor {step.executor_id!r} has no program_path")
 
+    event_listener = _event_listener_spec(
+        compilation.graph,
+        executor_kinds,
+        program_paths,
+    )
     return CompiledWorkflow(
         graph=compilation.graph,
         executor_kinds=executor_kinds,
         program_paths=program_paths,
+        event_listener=event_listener,
     )
 
 
@@ -358,6 +431,8 @@ async def _materialize_instructions(
     resolved_references: dict[str, str] = {}
     instructions: dict[str, str] = {}
     for step in sorted(compiled.graph.steps, key=lambda item: item.step_id):
+        if compiled.executor_kinds[step.executor_id] == "EventListeningProgram":
+            continue
         reference = step.instruction_id
         if reference is None:
             raise ValueError(f"step {step.step_id!r} has no step_instruction")
@@ -459,6 +534,10 @@ def _build_dispatch(
             output_ids=output_ids,
             dispatch=dispatch_context,
         )
+        if executor_kind == "EventListeningProgram":
+            raise ValueError(
+                "EventListeningProgram is an activation declaration; inject its CloudEvent through an event checkpoint"
+            )
         if executor_kind == "Human":
             has_legacy_callbacks = prepare_human_instruction is not None and request_human is not None
             has_contextual_callbacks = (
@@ -641,6 +720,10 @@ async def execute_workflow(
             raise ValueError(f"workflow contains unsupported executors: {details}")
 
     graph = compiled.graph
+    if compiled.event_listener is not None and (
+        checkpoint is None or compiled.event_listener.step_id not in checkpoint.completed_step_ids
+    ):
+        raise ValueError("event workflow requires an activation checkpoint containing one CloudEvent")
     if (
         any(compiled.executor_kinds[step.executor_id] == "Agent" for step in graph.steps)
         and complete is None

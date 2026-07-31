@@ -77,6 +77,128 @@ subscriptions:
 
 
 @pytest.mark.anyio
+async def test_daemon_config_expands_event_workflow_webhook_listener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EXPENSE_HOOK_TOKEN", "expense-secret")
+    path = tmp_path / "eventd.yml"
+    await anyio.Path(path).write_text(
+        """\
+webhookListeners:
+  - id: expense_hook
+    tokenRef: env://EXPENSE_HOOK_TOKEN
+    idFrom:
+      header: Idempotency-Key
+    leaseSeconds: 90
+    maxAttempts: 12
+""",
+        encoding="utf-8",
+    )
+
+    config = await load_daemon_config(
+        path=str(path),
+        listen="http://127.0.0.1:8765",
+        data_path=str(tmp_path / "events.sqlite3"),
+        appdata="",
+        api_token="",
+    )
+
+    assert len(config.hooks) == len(config.subscriptions) == 1
+    hook = config.hooks[0]
+    subscription = config.subscriptions[0]
+    assert hook.id == subscription.id == "expense_hook"
+    assert hook.token == "expense-secret"
+    assert hook.source == subscription.source_prefix == "webhook://eventd/expense_hook/"
+    assert hook.type == "external.event.received"
+    assert hook.id_header == "Idempotency-Key"
+    assert subscription.types == ()
+    assert subscription.lease_seconds == 90
+    assert subscription.max_attempts == 12
+
+
+@pytest.mark.anyio
+async def test_webhook_listener_id_matches_fusionflow_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOOK_SECRET_FOR_TEST", "secret")
+    path = tmp_path / "eventd.yml"
+    await anyio.Path(path).write_text(
+        """\
+webhookListeners:
+  - id: not-valid
+    tokenRef: env://HOOK_SECRET_FOR_TEST
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="FusionFlow identity"):
+        await load_daemon_config(
+            path=str(path),
+            listen="http://127.0.0.1:8765",
+            data_path=str(tmp_path / "events.sqlite3"),
+            appdata="",
+            api_token="",
+        )
+
+
+@pytest.mark.anyio
+async def test_mixed_hooks_require_explicit_manual_subscriptions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOOK_SECRET_FOR_TEST", "secret")
+    path = tmp_path / "eventd.yml"
+    await anyio.Path(path).write_text(
+        """\
+webhookListeners:
+  - id: expense_hook
+    tokenRef: env://HOOK_SECRET_FOR_TEST
+hooks:
+  - id: legacy_orders
+    tokenRef: env://HOOK_SECRET_FOR_TEST
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="requires explicit subscriptions"):
+        await load_daemon_config(
+            path=str(path),
+            listen="http://127.0.0.1:8765",
+            data_path=str(tmp_path / "events.sqlite3"),
+            appdata="",
+            api_token="",
+        )
+
+
+@pytest.mark.anyio
+async def test_webhook_token_must_be_one_url_safe_path_segment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOOK_SECRET_FOR_TEST", "standard/base64==")
+    path = tmp_path / "eventd.yml"
+    await anyio.Path(path).write_text(
+        """\
+webhookListeners:
+  - id: expense_hook
+    tokenRef: env://HOOK_SECRET_FOR_TEST
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="RFC 3986 unreserved"):
+        await load_daemon_config(
+            path=str(path),
+            listen="http://127.0.0.1:8765",
+            data_path=str(tmp_path / "events.sqlite3"),
+            appdata="",
+            api_token="",
+        )
+
+
+@pytest.mark.anyio
 async def test_hook_rejects_literal_or_ambiguous_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOOK_SECRET_FOR_TEST", "secret")
     path = tmp_path / "eventd.yml"

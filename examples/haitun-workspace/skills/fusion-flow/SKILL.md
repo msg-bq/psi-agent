@@ -8,7 +8,7 @@ metadata: { "openclaw": { "emoji": "🐾", "homepage": "https://github.com/fucla
 
 This skill authors, saves, reuses, and runs declarative FusionFlow G4 workflows in psi-agent. The workspace tool compiles G4 source into Core IR, lowers it to a `WorkflowGraph`, generates an execution plan, runs Agent-backed Steps in ephemeral Sessions, runs Program-backed Steps through specialized Program Agents with structured process capture, and pauses Human-backed Steps across conversation turns.
 
-> **Workspace boundary.** Store one-off authored G4 files under the workspace-managed `flows/` directory. Reusable declarations have one canonical location: `flows/workflows/<slug>/<slug>.workflow`. The skill ships no runnable example workflows. Every run persists all materialized Artifacts as Markdown under its workflow bundle's `runs/<run-id>/artifacts/` directory. Human Steps additionally persist private checkpoints under the ignored workspace `.psi/fusion-flow/runs/` directory; non-Human runs remain non-resumable.
+> **Workspace boundary.** Store one-off authored G4 files under the workspace-managed `flows/` directory. Reusable declarations have one canonical location: `flows/workflows/<slug>/<slug>.workflow`. The skill ships no runnable example workflows. Every run persists all materialized Artifacts as Markdown under its workflow bundle's `runs/<run-id>/artifacts/` directory. Human waits and EventD activations additionally persist private checkpoints under the ignored workspace `.psi/fusion-flow/runs/` directory; ordinary non-Human runs remain non-resumable.
 
 > **Explicit reuse command.** `/workflow:<slug>` is the one supported shortcut for running a saved workflow. It accepts no suffix or inline parameters. If inputs are needed, collect them through normal conversation. Do not invent `/flow run`, `/flow show`, or `/flow author` commands.
 
@@ -45,8 +45,9 @@ Do **not** activate this skill for `.prose` files — those belong to OpenProse.
 | `grammar/FusionFlow.g4` + parser | G4 source to Core IR |
 | `fusion_flow.workflow_runner` | Core IR to graph, plan, and checked dispatch |
 | `fusion_flow.workflow_execution` | dependencies, concurrency, timeouts, resources, and validated checkpoints |
-| `fusion_flow.job_store` | private, versioned Human wait/checkpoint state |
+| `fusion_flow.job_store` | private, versioned Human-wait and EventD-run checkpoint state |
 | workspace `run_flow` / `run_flow_resume` tools | file/JSON boundary and ephemeral Session-backed Agent/Human-preparer Steps |
+| workspace `run_flow_event` tool | EventD delivery boundary for event-activated workflows |
 | workspace `clarify` tool | existing user-facing choice or free-text question formatter |
 
 The skill's job is to:
@@ -126,7 +127,7 @@ Only author and run FusionFlow G4 source. If the user points to any non-G4 workf
 Use a workspace-relative `.workflow` path under `flows/`. Never guess, scan for, or execute a path outside the workspace.
 
 One runnable file must contain exactly one `workflow ... {}` block and use
-supported Agent, Human, or Program executors.
+supported Agent, Human, Program, or EventListeningProgram executors.
 
 Pass named workflow inputs through `inputs_json`. Do not rewrite the G4 source just to inject one run's values.
 
@@ -148,11 +149,58 @@ When `run_flow` or `run_flow_resume` returns a sole top-level `$fusion_flow/cont
 
 Never invent, reuse, or guess a run/request ID. A changed workflow source, stale request, or conflicting duplicate response is a stop-and-report error.
 
-## Agent-, Human-, and Program-backed execution
+### Event-activated workflows
+
+`EventListeningProgram` is a declaration marker for a workflow activated by
+EventD. It is not a long-running script and is never launched by `run_flow`.
+The EventD consumer calls `run_flow_event` with its delivery context and the
+runtime injects the complete five-field CloudEvent as the listener Step's sole
+output before executing downstream Steps.
+
+Version 1 permits exactly one listener Step. It must:
+
+- use an executor declared as `Program, EventListeningProgram, Executor`;
+- declare one output Artifact and no inputs, dependencies, resources, or
+  `Human` Steps anywhere in the workflow; and
+- give `program_path` one lowercase logical listener reference, not a file,
+  URL, token, event type, or CloudEvent schema.
+
+The reference must match an EventD `webhookListeners` ID. EventD derives the
+public receiver URL as `{publicBaseUrl}/hooks/{listener_id}/{token}` and wraps
+any finite JSON request body as CloudEvent `data`; neither the URL nor a
+business-event catalog belongs in G4.
+
+```text
+const reimbursement_flow: Workflow;
+const receive_reimbursement: Step;
+const receive_name: StepName;
+const reimbursement_hook: Program, EventListeningProgram, Executor;
+const finance_reimbursement: Path;
+const reimbursement_event: Artifact;
+
+workflow reimbursement_flow {
+  output_workflow(reimbursement_flow) == [reimbursement_event];
+  program_path(reimbursement_hook) == finance_reimbursement;
+  step_name(receive_reimbursement) == receive_name;
+  step_executor(receive_reimbursement) == reimbursement_hook;
+  produces(receive_reimbursement) == [reimbursement_event];
+}
+```
+
+The listener executes no code and therefore has no `step_instruction`.
+
+Event-activated workflows are installed and invoked by the daemon integration,
+not interactively authored and started with `run_flow`. A parent Session must
+not synthesize an EventD delivery context or call `run_flow_event` directly.
+
+## Agent-, Human-, Program-, and listener-backed execution
 
 Before executing a FusionFlow G4 workflow:
 
-1. Ensure every Step executor is declared as exactly one of `Agent`, `Human`, or `Program`. Every Program must declare an explicit workspace-relative `program_path`.
+1. Ensure every Step executor is declared as exactly one of `Agent`, `Human`,
+   ordinary `Program`, or `Program, EventListeningProgram`. Every Program must
+   declare `program_path`: a workspace-relative source file for an ordinary
+   Program, or a logical listener reference for EventListeningProgram.
 2. Internally estimate cost and latency from the number of Agent and Program Steps. Fold that into one plain-language heads-up line.
 3. Say the heads-up line, then run without adding another approval gate unless the user explicitly said "只生成别跑".
 
@@ -168,7 +216,7 @@ independent of the launcher process working directory.
 
 ### Staged execution
 
-Agent/Program-only workflows finish in the initial `run_flow` call. A Human workflow executes to the next Human frontier, persists a checkpoint, releases the current Session turn, and continues only through `run_flow_resume`. Do not call the legacy `.flow.ts` `flow_run(start/status/result)` tool for G4 source, and do not invent polling, PIDs, workers, or a separate approval inbox.
+Agent/Program-only workflows finish in the initial `run_flow` call. A Human workflow executes to the next Human frontier, persists a checkpoint, releases the current Session turn, and continues only through `run_flow_resume`. An EventListeningProgram workflow is activated only by EventD through `run_flow_event`; it is not an interactive wait and must not be polled. Do not call the legacy `.flow.ts` `flow_run(start/status/result)` tool for G4 source, and do not invent polling, PIDs, workers, or a separate approval inbox.
 
 ### Checkpoint integrity and resume safety
 
@@ -411,11 +459,16 @@ Runner-specific typed catalog extensions use the grammar's generic operator-call
 
 #### Executor configuration
 
-Declare every executor as exactly one of `Agent, Executor`, `Human, Executor`, or `Program, Executor`, bind it with `step_executor`, and give each Step a `step_instruction`. `allowed_tool` and `agent_system_prompt` are unsupported residual declarations and must not be emitted.
+Declare every executor as exactly one of `Agent, Executor`, `Human, Executor`,
+`Program, Executor`, or `Program, EventListeningProgram, Executor`; bind it
+with `step_executor`. Ordinary executable Steps need `step_instruction`.
+`allowed_tool` and `agent_system_prompt` are unsupported residual declarations
+and must not be emitted.
 
 A Human Step may request an approval, choose among up to four options, or accept open-ended/structured input. Its dedicated preparation Agent receives the resolved instruction text, consumed Artifacts, and output contract, then emits the arguments for the existing `clarify` tool. It never asks the user itself, and its question text never becomes a produced Artifact. The next user response becomes the Human Step result after `run_flow_resume`. Multiple output Artifacts require a JSON object keyed exactly by those Artifact IDs; a zero-output Human Step acts as a pure gate.
 
-Every Program must declare one explicit workspace-relative script or source path:
+Every ordinary Program must declare one explicit workspace-relative script or
+source path:
 
 ```text
 const worker: Program, Executor;
@@ -423,7 +476,15 @@ const worker: Program, Executor;
 program_path(worker) == "./bin/worker";
 ```
 
-The public workspace runner has no catalog path resolver, so do not use a bare Path identity. `program_path` names one workspace-local regular file, not a shell command: do not append arguments, operators, pipes, or environment assignments. It does not need an executable bit, a shebang, or `chmod`. A specialized Program Agent may inspect the workspace, prepare or install the required language runtime, dependencies, compiler, or toolchain, and interpret or compile the declared file. The runtime supplies one newline-terminated JSON object as the authoritative stdin:
+Except for `EventListeningProgram`, the public workspace runner has no catalog
+path resolver, so do not use a bare Path identity. An ordinary Program
+`program_path` names one workspace-local regular file, not a shell command: do
+not append arguments, operators, pipes, or environment assignments. It does
+not need an executable bit, a shebang, or `chmod`. A specialized Program Agent
+may inspect the workspace, prepare or install the required language runtime,
+dependencies, compiler, or toolchain, and interpret or compile the declared
+file. The runtime supplies one newline-terminated JSON object as the
+authoritative stdin:
 
 ```json
 {
@@ -595,7 +656,8 @@ Before the initial `run_flow` call, inspect the source in order:
 - every identity is declared with a supported concept;
 - assertions use `==`, while formulas use comparison operators;
 - each operator uses the documented arity and supported shape;
-- each Step has a supported Agent, Human, or Program executor, name, instruction, and explicit data/control dependencies;
+- each Step has a supported Agent, Human, Program, or EventListeningProgram
+  executor and the fields required for that kind;
 - no residual or unsupported operator is emitted.
 
 This is a source review, not a second tool or CLI invocation. Actual parsing and compilation occur inside `run_flow`.
@@ -646,11 +708,11 @@ When the user asks what this skill can do ("你能帮我做什么 / 我能用这
   • "把这个保存为 daily-brief"                   → 保存到固定的 workflow 文件夹
   • "/workflow:daily-brief"                       → 按名称加载并全新运行一次
   • "跑一下刚才那个 / 帮我跑这个 workflow"        → 执行 G4 workflow；需要你审批或输入时直接在对话里问
-  • "环境齐不齐 / 能不能跑"                        → 检查 G4、Agent/Human/Program executor 和资源声明
+  • "环境齐不齐 / 能不能跑"                        → 检查 G4、executor 和资源声明
 
 不附带现成可运行示例；你想要什么工作流，直接描述，我会写入 workspace 的 flows/ 目录。
 ```
 
 ## Security + Approvals
 
-Agent Steps run through ephemeral psi Sessions with a filtered workspace tool snapshot; nested workflow launchers and `clarify` are unavailable to them. Program Steps run through separate specialized Sessions with workspace-inspection/environment-preparation tools plus structured `compile_program` and `execute_program`; their declared regular script/source file and working directory must resolve inside the workspace, but the script needs no executable permission. Fidelity-mode interpreted argv is host-built, compiled provenance is hash-bound, and a launched Program is never retried. Human instruction preparers receive only a workspace-confined, read-only `read` tool, so a referenced file cannot escape the workspace through `..`, an absolute path, or a symbolic link. Review user-supplied G4 source before execution, but do not add an approval gate unless the workflow itself declares a Human Step. Human interaction reuses the parent Session's existing `clarify` flow and never creates a separate approval UI. Refuse remote URLs: `run_flow` accepts workspace-local `.workflow` files only. Treat the Program Agent's shell-enabled environment preparation as trusted workspace execution, not as a host sandbox.
+Agent Steps run through ephemeral psi Sessions with a filtered workspace tool snapshot; nested workflow launchers and `clarify` are unavailable to them. Program Steps run through separate specialized Sessions with workspace-inspection/environment-preparation tools plus structured `compile_program` and `execute_program`; their declared regular script/source file and working directory must resolve inside the workspace, but the script needs no executable permission. Fidelity-mode interpreted argv is host-built, compiled provenance is hash-bound, and a launched Program is never retried. EventListeningProgram Steps never execute code; EventD supplies their CloudEvent value through the private `run_flow_event` activation boundary. Human instruction preparers receive only a workspace-confined, read-only `read` tool, so a referenced file cannot escape the workspace through `..`, an absolute path, or a symbolic link. Review user-supplied G4 source before execution, but do not add an approval gate unless the workflow itself declares a Human Step. Human interaction reuses the parent Session's existing `clarify` flow and never creates a separate approval UI. Refuse remote URLs: `run_flow` and `run_flow_event` accept workspace-local `.workflow` files only. Treat the Program Agent's shell-enabled environment preparation as trusted workspace execution, not as a host sandbox.

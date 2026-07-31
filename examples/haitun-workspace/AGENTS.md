@@ -115,9 +115,9 @@ service tools:
 | `write_word` | Build a real `.docx` from structured blocks (headings/paragraphs/tables); sets the East-Asian font (`w:eastAsia`) on every style so Chinese text isn't "字体不齐". |
 | `skill_manage` | CRUD on **agent** `skills/<name>/SKILL.md`（经 `get_agent()`；agent-created skills are mutable）. |
 | `flow_manage` | CRUD + promote on Fusion Flow `.workflow` assets under **workspace** `flows/`. |
-| `run_flow` / `run_flow_resume` | Start the bundled Python G4 Fusion Flow runner and resume only its active Human request. Agent Steps use ephemeral Sessions. Program Steps use a specialized Program Agent that can prepare or install a language runtime/toolchain; the declared workspace script needs no executable bit. In fidelity mode an interpreted launch is host-built exactly as `[interpreter, declared_script, *logical_argv[1:]]`, never an Agent-selected arbitrary argv. Compiled source must pass through structured `compile_program`, which binds the source hash, artifact hashes, and exact launch argv before `execute_program` verifies and starts it. Once the real Program starts, fidelity mode forbids a second attempt and preserves the original result or error. Only the exact standalone instruction line `Program execution policy: successful completion outranks fidelity.` authorizes adaptation. Captured Program execution/format failures become `$fusion_flow/program_error` values on every declared output Artifact; a failing zero-output Program aborts. For a `$fusion_flow/control` wait envelope, pass its nested `request.question/options/recommended/default` fields to `clarify`, show the formatted text returned by `clarify` verbatim, and immediately end the turn; JSON-encode the next user reply into `run_flow_resume`. |
+| `run_flow` / `run_flow_resume` / `run_flow_event` | Start the bundled Python G4 Fusion Flow runner, resume only its active Human request, or activate an EventD-backed listener workflow. Agent Steps use ephemeral Sessions. Program Steps use a specialized Program Agent that can prepare or install a language runtime/toolchain; the declared workspace script needs no executable bit. `EventListeningProgram` is different: it runs no script, its `program_path` is an EventD listener ID, and only EventD may call `run_flow_event` with a validated delivery context. In fidelity mode an interpreted launch is host-built exactly as `[interpreter, declared_script, *logical_argv[1:]]`, never an Agent-selected arbitrary argv. Compiled source must pass through structured `compile_program`, which binds the source hash, artifact hashes, and exact launch argv before `execute_program` verifies and starts it. Once the real Program starts, fidelity mode forbids a second attempt and preserves the original result or error. Only the exact standalone instruction line `Program execution policy: successful completion outranks fidelity.` authorizes adaptation. Captured Program execution/format failures become `$fusion_flow/program_error` values on every declared output Artifact; a failing zero-output Program aborts. For a `$fusion_flow/control` wait envelope, pass its nested `request.question/options/recommended/default` fields to `clarify`, show the formatted text returned by `clarify` verbatim, and immediately end the turn; JSON-encode the next user reply into `run_flow_resume`. |
 | `schedule_manage` | CRUD on **workspace** `schedules/<name>/TASK.md`. **Recurring**: `action=create` + `cron`. **One-shot**: `action=create` + `once_at` (`YYYY-MM-DD HH:MM` local) → writes cron + `run_once: true` (Session deletes TASK.md after first successful fire). **`fire=tool`**: Session calls `tool(**tool_args)` at fire time with no LLM (required for Feishu IM reminders via `feishu_message_send`). `fire=prompt` (default) injects TASK body for an agent turn. Also `visibility` (`display`/`silent`), list/view/patch/delete. |
-| `trigger_manage` | CRUD on **agent** `triggers/<name>/TRIGGER.md`。`event` 名应对齐 agent ``channel_events/`` 已接通能力；Session 不再用 catalog 硬拒。`fire=tool` 命中后直调工具；工具需要当前事件时配置 `event_context_arg` 为其 `str` 参数名，Session 注入含 CloudEvent、routing 和幂等键的确定性 JSON，未配置时仍只传静态 `tool_args`。见 `skills/feishu-event-remind`；事件定义见 ``channel_events/README.md``。 |
+| `trigger_manage` | CRUD on **agent** `triggers/<name>/TRIGGER.md`。`event` 名应对齐 agent ``channel_events/`` 已接通能力；Session 不再用 catalog 硬拒。`routing_filter` 可精确匹配 EventD 的 `subscription_id` 等可信路由元数据，不增加业务事件 catalog。`fire=tool` 命中后直调工具；工具需要当前事件时配置 `event_context_arg` 为其 `str` 参数名，Session 注入含 CloudEvent、routing 和幂等键的确定性 JSON，未配置时仍只传静态 `tool_args`。见 `skills/feishu-event-remind`；事件定义见 ``channel_events/README.md``。 |
 | `memory_add` / `memory_search` / `memory_answer_context` / `memory_health` | Per-Session routed Fusion Memory MCP tools. Authentication comes only from the trusted runtime Session and operator token map. |
 | `haibao_list_datasets` / `haibao_ask` | Bundled Haibao MCP Adapter tools for real business-data queries. They require an operator-provisioned private MCP server; no private server or database onboarding is bundled. |
 | `search` (`search.py` + `_mcp.py`) | Serper web search via MCP. Requires the `mcp` extra and `uvx serper-mcp-server`; tools surface as `serper_*`. |
@@ -183,7 +183,7 @@ service tools:
 - Author one-off G4 files under `flows/<task-slug>/`. A runnable file contains
   exactly one workflow declaration and uses supported Agent, Human, or Program
   executors.
-- A Program `program_path` names one workspace-local regular script/source file, not a
+- An ordinary Program `program_path` names one workspace-local regular script/source file, not a
   shell command. It may be interpreted or compiled by the specialized Program Agent and
   does not need `chmod` or executable permission. Under the default fidelity policy,
   interpreted execution is the host-fixed
@@ -196,6 +196,13 @@ service tools:
   under `$fusion_flow/program_error` are ordinary error-valued Artifacts to report, not
   permission for the parent Session to edit and rerun the workflow; a failing zero-output
   Program aborts because no Artifact can carry its diagnostic.
+- An `EventListeningProgram` is declared as
+  `Program, EventListeningProgram, Executor`. Its `program_path` is a lowercase
+  EventD listener ID, not a file, URL, token, event name, or schema. Version 1
+  permits exactly one listener Step with one output and no inputs,
+  dependencies, resources, or Human Steps. EventD injects its five-field
+  CloudEvent through `run_flow_event`; a parent Session must not call that tool
+  directly.
 - Save reusable declarations with the existing `write`/`edit` file tools. The
   fixed layout is `flows/workflows/<slug>/<slug>.workflow`; no management tool
   or manifest format is introduced.

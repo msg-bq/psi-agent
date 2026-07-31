@@ -97,6 +97,44 @@ async def test_job_store_accepts_a_precomputed_workflow_definition_digest(tmp_pa
 
 
 @pytest.mark.anyio
+async def test_create_or_load_reuses_a_deterministic_event_run(tmp_path: Any) -> None:
+    store = JobStore(tmp_path / "runs")
+    run_id = "a" * 32
+    checkpoint = ExecutionCheckpoint(
+        workflow_id="event_flow",
+        plan_digest=_PLAN_DIGEST,
+        values={
+            "event": {
+                "specversion": "1.0",
+                "id": "event-1",
+                "source": "webhook://eventd/listener/",
+                "type": "external.event.received",
+                "data": {},
+            }
+        },
+        completed_step_ids=("receive_step",),
+    )
+
+    created = await store.create_or_load(
+        run_id=run_id,
+        flow_path="flows/event.workflow",
+        flow_source="workflow source",
+        inputs={},
+        checkpoint=checkpoint,
+    )
+    loaded = await store.create_or_load(
+        run_id=run_id,
+        flow_path="ignored-on-existing.workflow",
+        flow_source="different source is validated by the caller",
+        inputs={"ignored": True},
+    )
+
+    assert created.run_id == run_id
+    assert loaded == created
+    assert await store.load(run_id) == created
+
+
+@pytest.mark.anyio
 async def test_job_store_persists_response_and_completed_outputs(tmp_path: Any) -> None:
     store = JobStore(tmp_path)
     run = await store.create(

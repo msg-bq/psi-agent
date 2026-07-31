@@ -4,7 +4,7 @@ A consolidated psi-agent workspace whose agent is **Haitun (海豚)**. It combin
 
 - a de-branded OpenClaw-style system-prompt engine (all config kept **inside** the workspace),
 - full **Fusion Flow** workflow authoring (bundled Python G4 runtime +
-  `flow_manage` + `run_flow` / `run_flow_resume` + `flows/`), fixed-path
+  `flow_manage` + `run_flow` / `run_flow_resume` / `run_flow_event` + `flows/`), fixed-path
   reusable workflows, and `/workflow:<slug>` frontend routing,
 - the hermes domain skill set + curated skills, and
 - clean async file/shell tools, Serper web search, and environment-configured
@@ -53,6 +53,10 @@ uv run psi-agent channel repl --session-socket /tmp/ch.sock
   `flows/workflows/<slug>/<slug>.workflow`. Reuse one with the exact command
   `/workflow:<slug>`; the agent reads the declaration and collects all declared
   inputs before the initial fresh `run_flow` call.
+- Event-activated workflows use one `EventListeningProgram` Step. Its
+  `program_path` is an EventD listener ID rather than a script or URL. EventD
+  injects the complete CloudEvent through `run_flow_event`; ordinary
+  interactive runs cannot launch this workflow kind.
 - Agent Steps run in ephemeral Sessions. Workspace-local Program Steps run through a
   specialized Program Agent that may inspect or install the runtime, dependencies, and
   toolchain needed for the declared language. In fidelity mode an interpreted launch is fixed

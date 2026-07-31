@@ -141,6 +141,7 @@ def _format_trigger_document(
     description: str,
     content: str,
     filter: dict[str, object],
+    routing_filter: dict[str, object] | None = None,
     source: str = "feishu",
     created_by: str = "agent",
     created_at: str = "",
@@ -167,6 +168,8 @@ def _format_trigger_document(
     }
     if created_at:
         header["created_at"] = created_at
+    if routing_filter:
+        header["routing_filter"] = routing_filter
     platform_raw = raw_event.strip()
     if platform_raw:
         header["raw_event"] = platform_raw
@@ -210,6 +213,7 @@ async def trigger_manage(
     trigger_name: str = "",
     event: str = "",
     filter: str = "",
+    routing_filter: str = "",
     description: str = "",
     content: str = "",
     source: str = "feishu",
@@ -231,6 +235,8 @@ async def trigger_manage(
     **Create** requires ``event`` from the Session catalog (e.g.
     ``feishu.chat.member_added`` for「有人进群」). Optional ``filter`` is a JSON
     object of exact payload matches (e.g. ``{"chat_id":"oc_xxx"}``).
+    ``routing_filter`` exact-matches trusted routing metadata such as an EventD
+    ``subscription_id`` and does not require a business-event catalog.
 
     **Dual match (二者兼得)**: create also writes ``raw_event`` (Feishu native
     type). Session matches normalized ``event``+``filter`` first; if that
@@ -250,6 +256,7 @@ async def trigger_manage(
         trigger_name: Directory/name under triggers/
         event: Catalog event name (required on create)
         filter: JSON object string for payload exact-match filter
+        routing_filter: JSON object string for routing exact-match filter
         description: Short description
         content: Optional body (notes / prompt text)
         source: Envelope source filter (default feishu)
@@ -272,6 +279,10 @@ async def trigger_manage(
     filt, ferr = _parse_filter(filter)
     if ferr or filt is None:
         return f"[Error] {ferr}"
+
+    routing_filt, routing_error = _parse_filter(routing_filter)
+    if routing_error or routing_filt is None:
+        return f"[Error] routing_filter: {routing_error}"
 
     raw_filt, rferr = _parse_filter(raw_filter)
     if rferr or raw_filt is None:
@@ -360,6 +371,7 @@ async def trigger_manage(
                 description=description,
                 content=content,
                 filter=filt,
+                routing_filter=routing_filt or None,
                 source=source,
                 created_at=now,
                 visibility=vis,
@@ -375,7 +387,8 @@ async def trigger_manage(
         raw_note = f" raw_event={resolved_raw!r}" if resolved_raw else ""
         return (
             f"Created trigger {trigger_name!r} event={event.strip()!r}{raw_note} "
-            f"fire={fire_mode!r} filter={json.dumps(filt, ensure_ascii=False)}"
+            f"fire={fire_mode!r} filter={json.dumps(filt, ensure_ascii=False)} "
+            f"routing_filter={json.dumps(routing_filt, ensure_ascii=False)}"
         )
 
     return f"[Error] Unknown action {action!r}: use list|view|create|delete."

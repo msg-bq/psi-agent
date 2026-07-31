@@ -97,6 +97,7 @@ async def test_consumer_claims_dispatches_and_acks(tmp_path: Path) -> None:
     )
     assert received[0]["routing"]["delivery_id"].startswith("delivery_")
     assert received[0]["routing"]["event_id"] == "event-1"
+    assert received[0]["routing"]["subscription_id"] == "orders"
 
 
 @pytest.mark.anyio

@@ -22,12 +22,14 @@ import anyio.lowlevel
 from anyio.abc import ByteReceiveStream, Process
 from loguru import logger
 
+from psi_agent.eventd.schema import CloudEvent, CloudEventError
 from psi_agent.session.agent import SessionAgent, current_tool_ai_socket
 from psi_agent.session.ai_client import AiClient
 from psi_agent.session.conversation import Conversation
 from psi_agent.session.protocol import AgentRunOutcome
 from psi_agent.session.schedule_registry import ScheduleRegistry
 from psi_agent.session.tool_registry import FileEntry, ToolFunction, ToolRegistry
+from psi_agent.session.trigger_registry import current_tool_trigger_event_context
 
 _TOOLS_DIR = Path(__file__).parent
 _AGENT_DIR = _TOOLS_DIR.parent
@@ -102,7 +104,7 @@ _PROGRAM_SYSTEM_PROMPT = (
 _STEP_TOOL_SESSION_ID = f"{__name__}_step"
 _STEP_TOOLS_LOAD_LOCK = anyio.Lock()
 _STEP_TOOLS_SOURCE: ToolRegistry | None = None
-_WORKFLOW_LAUNCHERS = frozenset({"flow_run", "run_flow", "run_flow_resume"})
+_WORKFLOW_LAUNCHERS = frozenset({"flow_run", "run_flow", "run_flow_event", "run_flow_resume"})
 _WORKSPACE_PATH_PARAMETERS = {
     "edit": "file_path",
     "read": "file_path",
@@ -464,6 +466,44 @@ def _json_values_equal(left: object, right: object) -> bool:
     )
 
 
+def _parse_event_context(value: str) -> tuple[CloudEvent, str]:
+    """Extract one trusted EventD routing identity and strict CloudEvent."""
+
+    context = _parse_strict_agent_mapping(value, label="event_context_json")
+    if context.get("source") != "eventd":
+        raise ValueError("event_context_json source must be 'eventd'")
+    try:
+        event = CloudEvent.parse(context.get("cloud_event"))
+    except CloudEventError as error:
+        raise ValueError(f"event_context_json contains an invalid cloud_event: {error}") from error
+    routing = context.get("routing")
+    if not isinstance(routing, dict):
+        raise ValueError("event_context_json routing must be an object")
+    subscription_id = routing.get("subscription_id")
+    if not isinstance(subscription_id, str) or not subscription_id.strip():
+        raise ValueError("event_context_json routing.subscription_id must be a non-empty string")
+    idempotency_key = context.get("idempotency_key")
+    if idempotency_key != event.identity_key():
+        raise ValueError("event_context_json idempotency_key does not match cloud_event identity")
+    return event, subscription_id.strip()
+
+
+def _event_run_id(
+    *,
+    flow_path: str,
+    listener_ref: str,
+    event: CloudEvent,
+) -> str:
+    """Scope EventD's at-least-once identity to one workflow listener."""
+
+    identity = json.dumps(
+        [Path(flow_path).as_posix(), listener_ref, event.source, event.id],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode()).hexdigest()[:32]
+
+
 def _parse_prepared_human_question(value: str) -> _PreparedHumanQuestion:
     payload = _parse_mapping(value, label="Human instruction preparer response")
     expected_keys = {"question", "options", "recommended", "default"}
@@ -586,6 +626,13 @@ async def _new_artifact_store(flow_path: str) -> ArtifactStore:
 async def _read_flow_source(flow_path: str) -> str:
     resolved = await _resolve_flow_path(flow_path)
     return await resolved.read_text(encoding="utf-8")
+
+
+async def _canonical_flow_path(flow_path: str) -> str:
+    """Return one resolved workspace-relative identity for a workflow file."""
+    workspace = await anyio.Path(_workspace_dir()).resolve()
+    resolved = await _resolve_flow_path(flow_path)
+    return Path(str(resolved)).relative_to(Path(str(workspace))).as_posix()
 
 
 async def _resolve_flow_path(flow_path: str) -> anyio.Path:
@@ -2054,7 +2101,12 @@ async def _execute_persisted_run(
                 contextual_complete=complete,
                 resource_capacities=run.resource_capacities,
                 strict_executors=True,
-                supported_executor_kinds=("Agent", "Human", "Program"),
+                supported_executor_kinds=(
+                    "Agent",
+                    "Human",
+                    "Program",
+                    "EventListeningProgram",
+                ),
                 work_dir=_workspace_dir(),
                 run_program=complete_program,
                 contextual_prepare_human_instruction=prepare_human,
@@ -2141,6 +2193,8 @@ async def run_flow(
     inputs = _parse_mapping(inputs_json, label="inputs_json")
     resource_capacities = _parse_resource_capacities(resource_capacities_json)
     compiled = compile_workflow(source, strict_executors=True)
+    if compiled.event_listener is not None:
+        raise ValueError("event workflow must be activated by run_flow_event with EventD context")
     instruction_files = await _materialize_instruction_files(compiled, flow_path)
     initial_checkpoint = create_execution_checkpoint(
         generate_plan(compiled.graph),
@@ -2213,6 +2267,123 @@ async def run_flow(
         checkpoint_observer=observe_checkpoint,
     )
     return json.dumps(outputs, ensure_ascii=False, sort_keys=True)
+
+
+async def run_flow_event(
+    flow_path: str,
+    event_context_json: str,
+    inputs_json: str = "{}",
+    resource_capacities_json: str = "",
+) -> str:
+    """Run one EventD-activated G4 workflow to durable completion.
+
+    Configure a Session ``fire=tool`` Trigger with ``tool=run_flow_event``, a
+    static ``flow_path``, and ``event_context_arg=event_context_json``. EventD's
+    delivery lease remains active until this call returns, so a raised workflow
+    failure causes NACK/retry instead of acknowledging partial work. A
+    ``$fusion_flow/program_error`` output remains an ordinary completed Artifact.
+
+    Args:
+        flow_path: Workspace-relative path to an event-enabled ``.workflow``.
+        event_context_json: Deterministic EventD Session context injected by a Trigger.
+        inputs_json: Optional ordinary workflow inputs in addition to the event.
+        resource_capacities_json: Optional workflow resource capacities.
+
+    Returns:
+        A JSON object keyed by the workflow's output Artifact IDs.
+    """
+
+    ai_socket = current_tool_ai_socket()
+    if ai_socket is None:
+        raise RuntimeError("run_flow_event must be called by a psi-agent Session")
+    if current_tool_trigger_event_context() != event_context_json:
+        raise RuntimeError("run_flow_event is available only during an EventD fire=tool Trigger")
+
+    canonical_flow_path = await _canonical_flow_path(flow_path)
+    source = await _read_flow_source(canonical_flow_path)
+    inputs = _parse_mapping(inputs_json, label="inputs_json")
+    resource_capacities = _parse_resource_capacities(resource_capacities_json)
+    event, subscription_id = _parse_event_context(event_context_json)
+    compiled = compile_workflow(source, strict_executors=True)
+    listener = compiled.event_listener
+    if listener is None:
+        raise ValueError("run_flow_event requires exactly one EventListeningProgram")
+    if listener.listener_ref != subscription_id:
+        raise ValueError(
+            f"EventListeningProgram listener reference does not match EventD subscription {subscription_id!r}"
+        )
+
+    instruction_files = await _materialize_instruction_files(compiled, canonical_flow_path)
+    definition_digest = _workflow_definition_digest(source, instruction_files)
+    checkpoint = create_execution_checkpoint(
+        generate_plan(compiled.graph),
+        compiled.graph,
+        values={
+            **inputs,
+            listener.output_artifact_id: event.to_dict(),
+        },
+        completed_step_ids=(listener.step_id,),
+    )
+    run_id = _event_run_id(
+        flow_path=canonical_flow_path,
+        listener_ref=listener.listener_ref,
+        event=event,
+    )
+    capacities = dict(resource_capacities or {})
+    store = _job_store()
+    await store.create_or_load(
+        run_id=run_id,
+        flow_path=canonical_flow_path,
+        flow_source=source,
+        definition_digest=definition_digest,
+        inputs=inputs,
+        resource_capacities=capacities,
+        checkpoint=checkpoint,
+    )
+
+    async with store.acquire(run_id) as lease:
+        run = await lease.load()
+        if run.flow_path != canonical_flow_path:
+            raise ValueError(f"event run {run_id!r} belongs to a different workflow path")
+        if run.flow_source_digest != definition_digest:
+            raise ValueError(f"workflow definition changed for existing event run {run_id!r}")
+        if not _json_values_equal(run.inputs, inputs):
+            raise ValueError(f"event run {run_id!r} has different workflow inputs")
+        if not _json_values_equal(run.resource_capacities, capacities):
+            raise ValueError(f"event run {run_id!r} has different resource capacities")
+        if run.checkpoint is None:
+            raise ValueError(f"event run {run_id!r} has no execution checkpoint")
+        if listener.step_id not in run.checkpoint.completed_step_ids:
+            raise ValueError(f"event run {run_id!r} has no completed listener activation")
+        if not _json_values_equal(
+            run.checkpoint.values.get(listener.output_artifact_id),
+            event.to_dict(),
+        ):
+            raise ValueError(f"event run {run_id!r} contains a different CloudEvent")
+        if run.status == "completed":
+            if run.outputs is None:
+                raise AssertionError("completed event run has no outputs")
+            return json.dumps(run.outputs, ensure_ascii=False, sort_keys=True)
+        if run.status == "waiting_for_human":
+            raise ValueError("event workflow cannot wait for Human input")
+        if run.status in {"failed", "cancelled"}:
+            run = replace(
+                run,
+                status="running",
+                prepared_request=None,
+                outputs=None,
+                error=None,
+            )
+            with anyio.CancelScope(shield=True):
+                await lease.save(run)
+
+        return await _execute_persisted_run(
+            source,
+            run,
+            lease,
+            ai_socket=ai_socket,
+            instruction_files=instruction_files,
+        )
 
 
 async def run_flow_resume(

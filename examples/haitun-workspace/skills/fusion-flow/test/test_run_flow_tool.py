@@ -302,6 +302,34 @@ workflow status_flow {
 }
 """
 
+_EVENT_WORKFLOW = """
+const expense_flow: Workflow;
+const receive_step: Step;
+const handle_step: Step;
+const receive_name: StepName;
+const handle_name: StepName;
+const listener: Program, EventListeningProgram, Executor;
+const worker: Agent, Executor;
+const expense_hook: Path;
+const event: Artifact;
+const result: Artifact;
+
+workflow expense_flow {
+    output_workflow(expense_flow) == [result];
+    program_path(listener) == expense_hook;
+
+    step_name(receive_step) == receive_name;
+    step_executor(receive_step) == listener;
+    produces(receive_step) == [event];
+
+    step_name(handle_step) == handle_name;
+    step_instruction(handle_step) == "Process the CloudEvent.";
+    step_executor(handle_step) == worker;
+    consumes(handle_step) == [event];
+    produces(handle_step) == [result];
+}
+"""
+
 
 def test_run_flow_exposes_start_and_human_resume_tools() -> None:
     public_async = {
@@ -309,7 +337,7 @@ def test_run_flow_exposes_start_and_human_resume_tools() -> None:
         for name, value in vars(run_flow_tool).items()
         if not name.startswith("_") and inspect.iscoroutinefunction(value)
     }
-    assert public_async == {"run_flow", "run_flow_resume"}
+    assert public_async == {"run_flow", "run_flow_event", "run_flow_resume"}
 
     tool = ToolFunction.from_callable(run_flow_tool.run_flow)
     assert set(tool.parameters["properties"]) == {
@@ -318,6 +346,18 @@ def test_run_flow_exposes_start_and_human_resume_tools() -> None:
         "resource_capacities_json",
     }
     assert tool.parameters["required"] == ["flow_path"]
+
+    event_tool = ToolFunction.from_callable(run_flow_tool.run_flow_event)
+    assert set(event_tool.parameters["properties"]) == {
+        "flow_path",
+        "event_context_json",
+        "inputs_json",
+        "resource_capacities_json",
+    }
+    assert event_tool.parameters["required"] == [
+        "flow_path",
+        "event_context_json",
+    ]
 
     resume_tool = ToolFunction.from_callable(run_flow_tool.run_flow_resume)
     assert set(resume_tool.parameters["properties"]) == {
@@ -1306,6 +1346,218 @@ async def test_run_flow_executes_once_with_dependencies_and_resources(
     assert await (artifacts / "before_result.md").read_text(encoding="utf-8") == "BEFORE"
     assert await (artifacts / "after_result.md").read_text(encoding="utf-8") == "AFTER"
     assert await (artifacts / "selected_result.md").read_text(encoding="utf-8") == "BEFORE"
+
+
+@pytest.mark.anyio
+async def test_run_flow_rejects_event_workflow_without_event_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flows = anyio.Path(tmp_path / "flows")
+    await flows.mkdir()
+    await (flows / "expense.workflow").write_text(
+        _EVENT_WORKFLOW,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(
+        run_flow_tool,
+        "current_tool_ai_socket",
+        lambda: "http://ai.example",
+    )
+
+    with pytest.raises(ValueError, match="run_flow_event"):
+        await run_flow_tool.run_flow("flows/expense.workflow")
+
+
+@pytest.mark.anyio
+async def test_run_flow_event_rejects_non_trigger_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        run_flow_tool,
+        "current_tool_ai_socket",
+        lambda: "http://ai.example",
+    )
+    monkeypatch.setattr(
+        run_flow_tool,
+        "current_tool_trigger_event_context",
+        lambda: None,
+    )
+
+    with pytest.raises(RuntimeError, match="only during an EventD fire=tool Trigger"):
+        await run_flow_tool.run_flow_event("flows/expense.workflow", "{}")
+
+
+@pytest.mark.anyio
+async def test_run_flow_event_injects_cloudevent_and_reuses_completed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flows = anyio.Path(tmp_path / "flows")
+    await flows.mkdir()
+    await (flows / "nested").mkdir()
+    await (flows / "expense.workflow").write_text(
+        _EVENT_WORKFLOW,
+        encoding="utf-8",
+    )
+    event = run_flow_tool.CloudEvent(
+        "1.0",
+        "expense-42",
+        "webhook://eventd/expense_hook/",
+        "external.event.received",
+        ["approved", {"amount": 99}],
+    )
+    event_context = json.dumps(
+        {
+            "source": "eventd",
+            "event": event.type,
+            "payload": {"value": event.data},
+            "idempotency_key": event.identity_key(),
+            "routing": {
+                "subscription_id": "expense_hook",
+                "delivery_id": "delivery-1",
+            },
+            "cloud_event": event.to_dict(),
+        },
+        ensure_ascii=False,
+    )
+    calls = 0
+
+    async def load_step_tools() -> ToolRegistry:
+        return ToolRegistry()
+
+    async def complete_agent_step(
+        prompt: str,
+        context: Any,
+        *,
+        ai_socket: str,
+        tool_registry: ToolRegistry,
+    ) -> dict[str, object]:
+        nonlocal calls
+        del prompt, tool_registry
+        calls += 1
+        assert ai_socket == "http://ai.example"
+        assert context.step_id == "handle_step"
+        assert context.inputs == {"event": event.to_dict()}
+        return {"result": {"handled": event.id}}
+
+    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_flow_tool, "_complete_agent_step", complete_agent_step)
+    monkeypatch.setattr(
+        run_flow_tool,
+        "current_tool_ai_socket",
+        lambda: "http://ai.example",
+    )
+    monkeypatch.setattr(
+        run_flow_tool,
+        "current_tool_trigger_event_context",
+        lambda: event_context,
+    )
+
+    first = await run_flow_tool.run_flow_event(
+        "flows/expense.workflow",
+        event_context,
+    )
+    second = await run_flow_tool.run_flow_event(
+        "flows/nested/../expense.workflow",
+        event_context,
+    )
+
+    assert json.loads(first) == {"result": {"handled": "expense-42"}}
+    assert second == first
+    assert calls == 1
+    run_id = run_flow_tool._event_run_id(
+        flow_path="flows/expense.workflow",
+        listener_ref="expense_hook",
+        event=event,
+    )
+    run = await run_flow_tool._job_store().load(run_id)
+    assert run.status == "completed"
+    assert run.checkpoint is not None
+    assert "receive_step" in run.checkpoint.completed_step_ids
+    artifacts = flows / "runs" / run_id / "artifacts"
+    event_markdown = await (artifacts / "event.md").read_text(encoding="utf-8")
+    assert json.loads(event_markdown.removeprefix("```json\n").removesuffix("\n```\n")) == event.to_dict()
+
+
+@pytest.mark.anyio
+async def test_run_flow_event_retries_failed_downstream_from_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flows = anyio.Path(tmp_path / "flows")
+    await flows.mkdir()
+    await (flows / "expense.workflow").write_text(
+        _EVENT_WORKFLOW,
+        encoding="utf-8",
+    )
+    event = run_flow_tool.CloudEvent(
+        "1.0",
+        "expense-retry",
+        "webhook://eventd/expense_hook/",
+        "external.event.received",
+        {"amount": 100},
+    )
+    event_context = json.dumps(
+        {
+            "source": "eventd",
+            "event": event.type,
+            "payload": event.data,
+            "idempotency_key": event.identity_key(),
+            "routing": {"subscription_id": "expense_hook"},
+            "cloud_event": event.to_dict(),
+        }
+    )
+    attempts = 0
+
+    async def load_step_tools() -> ToolRegistry:
+        return ToolRegistry()
+
+    async def complete_agent_step(
+        prompt: str,
+        context: Any,
+        *,
+        ai_socket: str,
+        tool_registry: ToolRegistry,
+    ) -> dict[str, object]:
+        nonlocal attempts
+        del prompt, context, ai_socket, tool_registry
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary workflow failure")
+        return {"result": "recovered"}
+
+    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_flow_tool, "_complete_agent_step", complete_agent_step)
+    monkeypatch.setattr(
+        run_flow_tool,
+        "current_tool_ai_socket",
+        lambda: "http://ai.example",
+    )
+    monkeypatch.setattr(
+        run_flow_tool,
+        "current_tool_trigger_event_context",
+        lambda: event_context,
+    )
+
+    with pytest.RaisesGroup(pytest.RaisesExc(RuntimeError, match="temporary workflow failure")):
+        await run_flow_tool.run_flow_event(
+            "flows/expense.workflow",
+            event_context,
+        )
+
+    result = await run_flow_tool.run_flow_event(
+        "flows/expense.workflow",
+        event_context,
+    )
+
+    assert json.loads(result) == {"result": "recovered"}
+    assert attempts == 2
 
 
 @pytest.mark.anyio
