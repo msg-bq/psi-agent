@@ -26,6 +26,12 @@ def test_runner_catalog_includes_typed_depends_on() -> None:
     program_path = context.operators["program_path"]
     assert tuple(concept.name for concept in program_path.input_concepts) == ("Program",)
     assert program_path.output_concept == context.concepts["Path"]
+    allowed_tool = context.operators["allowed_tool"]
+    assert tuple(concept.name for concept in allowed_tool.input_concepts) == (
+        "Agent",
+        "Tool",
+    )
+    assert allowed_tool.output_concept == context.concepts["Bool"]
 
 
 def _dispatch_workflow(
@@ -134,6 +140,113 @@ def test_compile_workflow_rejects_duplicate_program_path() -> None:
                 program_path(worker) == "./bin/second";
                 """,
             )
+        )
+
+
+def _agent_workflow_with_tool_policy(configuration: str) -> str:
+    return _dispatch_workflow(
+        "Agent",
+        "do_work",
+        executor_configuration=configuration,
+    ).replace(
+        "const result: Artifact;",
+        "const read: Tool;\nconst write: Tool;\nconst result: Artifact;",
+    )
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        "allowed_tool(worker, read);",
+        "allowed_tool(worker, read) == True;",
+        "true == allowed_tool(worker, read);",
+    ],
+)
+def test_compile_workflow_extracts_allowed_tools(configuration: str) -> None:
+    compiled = run_workflow.compile_workflow(
+        _agent_workflow_with_tool_policy(configuration),
+        strict_executors=True,
+    )
+
+    assert compiled.allowed_tools_by_agent == {"worker": ("read",)}
+
+
+def test_compile_workflow_sorts_multiple_allowed_tools() -> None:
+    compiled = run_workflow.compile_workflow(
+        _agent_workflow_with_tool_policy(
+            """
+            allowed_tool(worker, write);
+            allowed_tool(worker, read);
+            """
+        ),
+        strict_executors=True,
+    )
+
+    assert compiled.allowed_tools_by_agent == {"worker": ("read", "write")}
+
+
+def test_compile_workflow_rejects_false_allowed_tool() -> None:
+    with pytest.raises(ValueError, match="must be the Boolean constant True"):
+        run_workflow.compile_workflow(
+            _agent_workflow_with_tool_policy(
+                "allowed_tool(worker, read) == False;",
+            ),
+            strict_executors=True,
+        )
+
+
+def test_compile_workflow_rejects_duplicate_allowed_tool() -> None:
+    with pytest.raises(ValueError, match="duplicate allowed_tool"):
+        run_workflow.compile_workflow(
+            _agent_workflow_with_tool_policy(
+                """
+                allowed_tool(worker, read);
+                allowed_tool(worker, read);
+                """
+            ),
+            strict_executors=True,
+        )
+
+
+@pytest.mark.anyio
+async def test_allowed_tools_are_passed_to_contextual_completion() -> None:
+    contexts: list[Any] = []
+
+    async def complete(prompt: str, context: Any) -> dict[str, object]:
+        del prompt
+        contexts.append(context)
+        return {"result": "completed"}
+
+    result = await run_workflow.execute_workflow(
+        _agent_workflow_with_tool_policy(
+            """
+            allowed_tool(worker, write);
+            allowed_tool(worker, read);
+            """
+        ),
+        request="Do the work.",
+        contextual_complete=complete,
+        strict_executors=True,
+    )
+
+    assert result == {"result": "completed"}
+    assert len(contexts) == 1
+    assert contexts[0].allowed_tools == ("read", "write")
+
+
+@pytest.mark.anyio
+async def test_allowed_tool_rejects_legacy_completion_before_dispatch() -> None:
+    async def complete(prompt: str) -> str:
+        pytest.fail(f"completion called with {prompt!r}")
+
+    with pytest.raises(ValueError, match="allowed_tool requires contextual_complete"):
+        await run_workflow.execute_workflow(
+            _agent_workflow_with_tool_policy(
+                "allowed_tool(worker, read);",
+            ),
+            request="Do the work.",
+            complete=complete,
+            strict_executors=True,
         )
 
 
@@ -725,6 +838,7 @@ async def test_contextual_completion_receives_resource_lease() -> None:
         context: Any,
     ) -> dict[str, object]:
         assert prompt.startswith("Instruction:\nuse_gpu\n\n")
+        assert context.allowed_tools == ()
         leases.append(context.dispatch.resource_lease.instances("gpu"))
         return {"result": "completed"}
 

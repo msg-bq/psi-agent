@@ -109,6 +109,8 @@ _WORKSPACE_PATH_PARAMETERS = {
     "write": "file_path",
 }
 _NESTED_TURN_TOOLS = frozenset({"clarify"})
+_AGENT_STEP_INTERNAL_TOOLS = frozenset({"submit_step_result"})
+_AGENT_STEP_FORBIDDEN_TOOLS = _WORKFLOW_LAUNCHERS | _NESTED_TURN_TOOLS | _AGENT_STEP_INTERNAL_TOOLS
 _HUMAN_PREPARER_TOOLS = frozenset({"read"})
 _PROGRAM_AGENT_TOOLS = frozenset({"bash", "find_files", "list_dir", "powershell", "read"})
 _HUMAN_CONTROL_KEY = "$fusion_flow/control"
@@ -1636,6 +1638,59 @@ async def _load_step_tools() -> ToolRegistry:
         )
 
 
+def _select_agent_step_tools(
+    source: ToolRegistry,
+    allowed_tools: tuple[str, ...],
+    *,
+    executor_id: str,
+) -> ToolRegistry:
+    """Build one immutable Agent tool snapshot from an exact positive allow-list."""
+
+    requested = frozenset(allowed_tools)
+    forbidden = sorted(requested & _AGENT_STEP_FORBIDDEN_TOOLS)
+    if forbidden:
+        raise ValueError(f"allowed_tool for Agent {executor_id!r} cannot expose reserved tools: {forbidden}")
+
+    source_tools = source.tools
+    selected_tools: dict[str, ToolFunction] = {}
+    selected_funcs: dict[str, Callable[..., Any]] = {}
+    unavailable: list[str] = []
+    for tool_name in sorted(requested):
+        metadata = source_tools.get(tool_name)
+        func = source.get(tool_name)
+        if metadata is None or func is None:
+            unavailable.append(tool_name)
+            continue
+        selected_tools[tool_name] = metadata
+        selected_funcs[tool_name] = func
+    if unavailable:
+        raise ValueError(f"allowed_tool for Agent {executor_id!r} names unavailable tools: {unavailable}")
+
+    return _StepToolRegistry(
+        files={
+            "__fusion_flow_allowed_step_tools__": FileEntry(
+                file_hash="",
+                tools=selected_tools,
+                funcs=selected_funcs,
+            )
+        }
+    )
+
+
+def _preflight_allowed_step_tools(
+    compiled: CompiledWorkflow,
+    source: ToolRegistry,
+) -> None:
+    """Reject every invalid Agent tool policy before workflow state is created."""
+
+    for executor_id, allowed_tools in compiled.allowed_tools_by_agent.items():
+        _select_agent_step_tools(
+            source,
+            allowed_tools,
+            executor_id=executor_id,
+        )
+
+
 def _build_human_preparer_tools(source: ToolRegistry) -> ToolRegistry:
     """Expose only workspace-confined, read-only tools to a Human preparer."""
 
@@ -1757,8 +1812,13 @@ async def _complete_agent_step(
         )
         return "Step result accepted."
 
-    tools = tool_registry.tools
-    funcs = {name: func for name in tools if (func := tool_registry.get(name)) is not None}
+    allowed_registry = _select_agent_step_tools(
+        tool_registry,
+        context.allowed_tools,
+        executor_id=context.executor_id,
+    )
+    tools = allowed_registry.tools
+    funcs = {name: func for name in tools if (func := allowed_registry.get(name)) is not None}
     tools["submit_step_result"] = ToolFunction(
         name="submit_step_result",
         description="Submit this step's final artifacts and stop.",
@@ -1951,6 +2011,13 @@ async def _execute_persisted_run(
         raise ValueError("a Human response must be checkpointed before execution resumes")
     if run.checkpoint is None:
         raise ValueError(f"FusionFlow run {run.run_id!r} has no execution checkpoint")
+    step_tools: ToolRegistry | None = None
+    if instruction_files is None:
+        compiled = compile_workflow(source, strict_executors=True)
+        instruction_files = _legacy_instruction_identities(compiled)
+        if compiled.allowed_tools_by_agent:
+            step_tools = await _load_step_tools()
+            _preflight_allowed_step_tools(compiled, step_tools)
     run_state = run
     artifact_store = await _artifact_store(
         run.flow_path,
@@ -1958,10 +2025,6 @@ async def _execute_persisted_run(
         reuse_existing=True,
     )
     await artifact_store.persist(run.checkpoint.values)
-    if instruction_files is None:
-        compiled = compile_workflow(source, strict_executors=True)
-        instruction_files = _legacy_instruction_identities(compiled)
-    step_tools: ToolRegistry | None = None
     human_tools: ToolRegistry | None = None
     step_tools_lock = anyio.Lock()
     human_gate = anyio.Lock()
@@ -1986,7 +2049,7 @@ async def _execute_persisted_run(
             prompt,
             context,
             ai_socket=ai_socket,
-            tool_registry=await get_step_tools(),
+            tool_registry=await get_step_tools() if context.allowed_tools else ToolRegistry(),
         )
 
     async def complete_program(invocation: ProgramInvocation) -> dict[str, object]:
@@ -2141,6 +2204,10 @@ async def run_flow(
     inputs = _parse_mapping(inputs_json, label="inputs_json")
     resource_capacities = _parse_resource_capacities(resource_capacities_json)
     compiled = compile_workflow(source, strict_executors=True)
+    step_tools: ToolRegistry | None = None
+    if compiled.allowed_tools_by_agent:
+        step_tools = await _load_step_tools()
+        _preflight_allowed_step_tools(compiled, step_tools)
     instruction_files = await _materialize_instruction_files(compiled, flow_path)
     initial_checkpoint = create_execution_checkpoint(
         generate_plan(compiled.graph),
@@ -2167,7 +2234,6 @@ async def run_flow(
                 instruction_files=instruction_files,
             )
 
-    step_tools: ToolRegistry | None = None
     step_tools_lock = anyio.Lock()
 
     async def get_step_tools() -> ToolRegistry:
@@ -2183,7 +2249,7 @@ async def run_flow(
             prompt,
             context,
             ai_socket=ai_socket,
-            tool_registry=await get_step_tools(),
+            tool_registry=await get_step_tools() if context.allowed_tools else ToolRegistry(),
         )
 
     async def complete_program(invocation: ProgramInvocation) -> dict[str, object]:

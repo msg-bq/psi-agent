@@ -411,7 +411,18 @@ Runner-specific typed catalog extensions use the grammar's generic operator-call
 
 #### Executor configuration
 
-Declare every executor as exactly one of `Agent, Executor`, `Human, Executor`, or `Program, Executor`, bind it with `step_executor`, and give each Step a `step_instruction`. `allowed_tool` and `agent_system_prompt` are unsupported residual declarations and must not be emitted.
+Declare every executor as exactly one of `Agent, Executor`, `Human, Executor`, or `Program, Executor`, bind it with `step_executor`, and give each Step a `step_instruction`. Agent Steps receive no workspace tools by default. Grant only the exact registered tool identities that an Agent needs by declaring each one as `Tool` and repeating the positive predicate:
+
+```text
+const researcher: Agent, Executor;
+const read: Tool;
+const search: Tool;
+
+allowed_tool(researcher, read);
+allowed_tool(researcher, search);
+```
+
+`allowed_tool(agent, tool)` is shorthand for `allowed_tool(agent, tool) == True`. Do not emit `== False`, duplicate grants, unknown tool names, workflow launchers (`flow_run`, `run_flow`, `run_flow_resume`), `clarify`, or `submit_step_result`; the runner rejects them before creating execution state. `submit_step_result` is an internal per-Step tool and is always injected separately. `agent_system_prompt` remains unsupported and must not be emitted.
 
 A Human Step may request an approval, choose among up to four options, or accept open-ended/structured input. Its dedicated preparation Agent receives the resolved instruction text, consumed Artifacts, and output contract, then emits the arguments for the existing `clarify` tool. It never asks the user itself, and its question text never becomes a produced Artifact. The next user response becomes the Human Step result after `run_flow_resume`. Multiple output Artifacts require a JSON object keyed exactly by those Artifact IDs; a zero-output Human Step acts as a pure gate.
 
@@ -653,4 +664,4 @@ When the user asks what this skill can do ("你能帮我做什么 / 我能用这
 
 ## Security + Approvals
 
-Agent Steps run through ephemeral psi Sessions with a filtered workspace tool snapshot; nested workflow launchers and `clarify` are unavailable to them. Program Steps run through separate specialized Sessions with workspace-inspection/environment-preparation tools plus structured `compile_program` and `execute_program`; their declared regular script/source file and working directory must resolve inside the workspace, but the script needs no executable permission. Fidelity-mode interpreted argv is host-built, compiled provenance is hash-bound, and a launched Program is never retried. Human instruction preparers receive only a workspace-confined, read-only `read` tool, so a referenced file cannot escape the workspace through `..`, an absolute path, or a symbolic link. Review user-supplied G4 source before execution, but do not add an approval gate unless the workflow itself declares a Human Step. Human interaction reuses the parent Session's existing `clarify` flow and never creates a separate approval UI. Refuse remote URLs: `run_flow` accepts workspace-local `.workflow` files only. Treat the Program Agent's shell-enabled environment preparation as trusted workspace execution, not as a host sandbox.
+Agent Steps run through ephemeral psi Sessions with a per-executor workspace tool snapshot. The snapshot is empty unless tools are explicitly granted by `allowed_tool`; filtering applies to both schemas and callables, while `submit_step_result` is injected independently. Nested workflow launchers and `clarify` can never be granted. Program Steps run through separate specialized Sessions with workspace-inspection/environment-preparation tools plus structured `compile_program` and `execute_program`; their declared regular script/source file and working directory must resolve inside the workspace, but the script needs no executable permission. Fidelity-mode interpreted argv is host-built, compiled provenance is hash-bound, and a launched Program is never retried. Human instruction preparers receive only a workspace-confined, read-only `read` tool, so a referenced file cannot escape the workspace through `..`, an absolute path, or a symbolic link. Review user-supplied G4 source before execution, but do not add an approval gate unless the workflow itself declares a Human Step. Human interaction reuses the parent Session's existing `clarify` flow and never creates a separate approval UI. Refuse remote URLs: `run_flow` accepts workspace-local `.workflow` files only. Treat the Program Agent's shell-enabled environment preparation as trusted workspace execution, not as a host sandbox.

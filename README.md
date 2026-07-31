@@ -35,6 +35,9 @@ Skill、parser/compiler、图结构与执行器均位于
 `examples/haitun-workspace/skills/fusion-flow/`，由 `fusion_flow.workflow_graph`
 和 `fusion_flow.workflow_execution` 提供内部模型与计划执行能力。
 用户仍以自然语言要求创建或运行工作流，不需要了解内部语言或执行器切换。
+Agent Step 默认不获得 workspace 工具；`.workflow` 通过
+`allowed_tool(agent, tool)` 按执行器显式授权，运行器在创建执行状态前校验工具名，
+并同时过滤模型可见的 schema 与实际 callable。
 
 旧 Node/TypeScript `.flow.ts` runtime 不再随 workspace 启用。已有 `.flow.ts`
 需要显式迁移为 `.workflow`，不会被静默执行或自动翻译。历史兼容审计见
