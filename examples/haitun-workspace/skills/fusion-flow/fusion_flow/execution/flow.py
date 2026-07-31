@@ -159,6 +159,8 @@ def _config_payload(config: AgentConfig) -> dict[str, object]:
         "tools": sorted(config.tools),
         "max_turns": config.max_turns,
         "context_schema": list(config.context_schema or ()),
+        "api_base": config.api_base,
+        "reasoning_effort": config.reasoning_effort,
     }
 
 

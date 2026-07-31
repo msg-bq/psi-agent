@@ -297,7 +297,8 @@ Read `grammar/FusionFlow.g4` completely before using these patterns. The grammar
 | Pattern | FusionFlow shape | When to use |
 | --- | --- | --- |
 | **Fan-out + fan-in** | Several Steps each use `consumes(step) == [shared_artifact]`; one final Step uses `consumes(final_step) == [result_a, result_b]`. Set `max_concurrency` on the workflow when needed. | PR review, multi-perspective audit, content moderation. |
-| **Artifact pipeline** | Each Step produces the Artifact consumed by the next Step. Keep `max_attempts` omitted or equal to `1`. | Writing, ETL, and refine-and-check work. |
+| **Artifact pipeline** | Each Step produces the Artifact consumed by the next Step. Use `max_attempts` only when rerunning that individual Step is safe. | Writing, ETL, and refine-and-check work. |
+| **Per-item map** | Bind one List-valued source Artifact with `foreach_item`, declare an aligned `foreach_errors` Artifact, and optionally cap iterations with `foreach_concurrency`. | Parallel processing with ordered results and collected item errors. |
 | **Named Artifact selection** | Keep every candidate result explicit, then bind `selected_artifact == if(formula, artifact_a, artifact_b)` and use `selected_artifact` in ordinary dataflow. For priority selection, chain named intermediate Artifacts. | Eagerly run all candidate producers, then choose one value for downstream Steps. |
 | **Composite workflow** | Combine artifact chains, fan-out/fan-in, explicit bounded Agent Steps, and named Artifact selections. | When one simple pattern does not cover the task. |
 
@@ -375,7 +376,7 @@ workflow code_review {
 ### G4 source of truth
 
 Before authoring, read `grammar/FusionFlow.g4` completely. It is the sole authority for surface syntax, declarations, assertions, formulas, terms, and preset operator signatures. This skill additionally defines which grammar-valid shapes the executable graph backend accepts.
-Runner-specific typed catalog extensions use the grammar's generic operator-call syntax without changing its preset catalog. In particular, `depends_on(Step, Step) -> Bool` is registered by `fusion_flow/workflow_runner.py` and is executable there, but is not one of the grammar's 21 canonical preset operators.
+Runner-specific typed catalog extensions use the grammar's generic operator-call syntax without changing its preset catalog. In particular, `depends_on(Step, Step) -> Bool` is registered by `fusion_flow/workflow_runner.py` and is executable there, but is not one of the grammar's 23 canonical preset operators.
 
 ### Executable graph backend guardrails
 
@@ -398,20 +399,73 @@ Runner-specific typed catalog extensions use the grammar's generic operator-call
 - Emit every explicitly requested relation. Every operand must be a declared grammar term: `_` and `...` are not wildcards. Declare typed constants for required operands, or omit an optional configuration instead of inserting placeholders.
 - Model fan-out by making several steps consume the same artifact.
 - Model fan-in with `consumes(step) == [artifact_a, artifact_b];`.
-- Expand a known, bounded item set into explicit Agent Steps. The current runner does not execute `foreach_item`.
+- Use `foreach_item(step, source_artifact) == item_binding` when a source Artifact contains a finite JSON List. The item binding is local to the expanded Step and is added to that iteration's inputs; do not also declare it as a workflow input.
+- Every executable foreach declares `foreach_errors(step) == errors`. Each normal output and this error Artifact become source-ordered Lists. A failed item contributes `null` to every normal output and a structured record to the aligned error entry; an empty source produces empty Lists.
+- Use `foreach_concurrency(step) == count` to bound active iterations. It composes with workflow `max_concurrency` and resource capacity rather than overriding them.
 - Bind each step to its executor with `step_executor`.
-- Configure concurrency, timeouts, and resources with the corresponding supported operators; keep `max_attempts` omitted or set to `1`.
+- Configure concurrency, timeouts, retries, and resources with the corresponding supported operators. Resources, `step_timeout`, `max_attempts`, and checkpoint progress apply independently to each foreach iteration.
 - Treat `independent(step)` only as a hint. Artifact dependencies and `depends_on` still decide when the Step is ready.
 - Declare resource demand with `resource_requirement(step, resource)`. Resource capacities or concrete IDs come from runner configuration, never from `.workflow` source.
-- The current graph runner supports resource scheduling and explicit `depends_on` ordering but still rejects `foreach_item` execution and `max_attempts` values other than `1`.
+- Agent- and Program-backed foreach Steps are executable. Human-backed foreach is rejected before dispatch until Human requests and responses carry iteration identity.
+- A Program failure inside foreach participates in that Step's `max_attempts` and then becomes a compact aligned error with `null` normal output. Outside foreach, preserve the existing `$fusion_flow/program_error` error-valued Artifact behavior.
+- Ordinary terminal foreach failures are collected without cancelling siblings. Cancellation, workflow timeout, Human suspension, and graph/checkpoint/allocator invariant failures still escape and stop or suspend the run.
 - Unknown or unsupported assertions remain residual and stop execution. Never delete them, comment them out, or bypass residual validation to make a run start.
 - Lower executable `if` as a named Artifact selection: `selected_artifact == if(formula, artifact_a, artifact_b);`, followed by ordinary list dataflow such as `consumes(final_step) == [selected_artifact];`.
 - Variables, quantifiers, rules, implications, biconditionals, query/SAT/optimization requests, local concept declarations, local operator declarations, and imperative blocks are outside this language.
 - Never emit imports, imperative runtime calls, `run(...)`, or invented `parallel`/`pipeline`/`for` blocks.
 
+#### Foreach example
+
+```fusionflow
+const enrich_batch: Workflow;
+const enrich_item: Step;
+const enrich_name: StepName;
+const worker: Agent, Executor;
+const items: Artifact;
+const item: Artifact;
+const enriched_items: Artifact;
+const item_errors: Artifact;
+
+workflow enrich_batch {
+  -- DATA FLOW
+  input_workflow(enrich_batch) == [items];
+  foreach_item(enrich_item, items) == item;
+  produces(enrich_item) == [enriched_items];
+  foreach_errors(enrich_item) == item_errors;
+  output_workflow(enrich_batch) == [enriched_items, item_errors];
+
+  -- EXECUTOR ASSIGNMENT
+  step_executor(enrich_item) == worker;
+
+  -- STEP CONFIGURATION
+  step_name(enrich_item) == enrich_name;
+  step_instruction(enrich_item) == "Enrich the local item input and return the enriched_items value.";
+  step_timeout(enrich_item) == 120;
+  max_attempts(enrich_item) == 2;
+
+  -- SCHEDULING CONFIGURATION
+  foreach_concurrency(enrich_item) == 4;
+
+  -- WORKFLOW CONFIGURATION
+  max_concurrency(enrich_batch) == 8;
+}
+```
+
+At runtime `items` must be a JSON List. `enriched_items[index]` and
+`item_errors[index]` always refer to the same source item, even when iterations
+finish out of order.
+
 #### Executor configuration
 
-Declare every executor as exactly one of `Agent, Executor`, `Human, Executor`, or `Program, Executor`, bind it with `step_executor`, and give each Step a `step_instruction`. `allowed_tool` and `agent_system_prompt` are unsupported residual declarations and must not be emitted.
+Declare every executor as exactly one of `Agent, Executor`, `Human, Executor`, or `Program, Executor`, bind it with `step_executor`, and give each Step a `step_instruction`.
+
+Agent configuration may use `agent_config`, `agent_system_prompt`,
+`allowed_tool`, `max_output_tokens`, `temperature`, `reasoning_effort`, and
+`max_turns`. The declared system prompt augments the fixed Step safety/output
+protocol; it cannot replace it. `allowed_tool` narrows the host-safe tool
+registry and cannot re-enable a denied workflow launcher. The current workspace
+AI socket fixes provider routing, so a non-default `model`, `engine`, or
+`api_base` is rejected explicitly instead of being ignored.
 
 A Human Step may request an approval, choose among up to four options, or accept open-ended/structured input. Its dedicated preparation Agent receives the resolved instruction text, consumed Artifacts, and output contract, then emits the arguments for the existing `clarify` tool. It never asks the user itself, and its question text never becomes a produced Artifact. The next user response becomes the Human Step result after `run_flow_resume`. Multiple output Artifacts require a JSON object keyed exactly by those Artifact IDs; a zero-output Human Step acts as a pure gate.
 

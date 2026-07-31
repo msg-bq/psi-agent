@@ -32,6 +32,8 @@ class StepNodeDict(TypedDict):
     resources: list[ResourceRequirementDict]
     independent: NotRequired[bool]
     depends_on: NotRequired[list[str]]
+    foreach_concurrency: NotRequired[int]
+    foreach_error_artifact_id: NotRequired[str]
 
 
 class ArtifactNodeDict(TypedDict):
@@ -162,6 +164,8 @@ class StepNode:
     resources: tuple[ResourceRequirement, ...] = ()
     independent: bool = False
     depends_on: tuple[str, ...] = ()
+    foreach_concurrency: int | None = None
+    foreach_error_artifact_id: str | None = None
 
     def __post_init__(self) -> None:
         """Reject mutable or malformed nested collections early."""
@@ -181,6 +185,10 @@ class StepNode:
             if predecessor_id in seen_dependencies:
                 raise WorkflowGraphError(f"duplicate depends_on step: {predecessor_id}")
             seen_dependencies.add(predecessor_id)
+        if self.foreach_error_artifact_id is not None and (
+            not isinstance(self.foreach_error_artifact_id, str) or not self.foreach_error_artifact_id
+        ):
+            raise WorkflowGraphError("foreach_error_artifact_id must be a non-empty string")
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,6 +483,11 @@ class WorkflowGraph:
                 allow_none=True,
             )
             self._require_positive(step.max_attempts, "max_attempts")
+            self._require_positive(
+                step.foreach_concurrency,
+                "foreach_concurrency",
+                allow_none=True,
+            )
             if type(step.independent) is not bool:
                 raise WorkflowGraphError("independent must be a boolean")
             if step.step_id in step_ids:
@@ -619,6 +632,29 @@ class WorkflowGraph:
             foreach_steps.add(edge.step_id)
             required_global_artifacts.add(edge.artifact_id)
 
+        # Foreach-only policy is carried by the owning step.  Its error
+        # artifact is produced by the foreach collector rather than by the
+        # dispatcher, so it deliberately has no ordinary ProducesEdge.
+        for step in self.steps:
+            has_foreach = step.step_id in foreach_steps
+            if step.foreach_concurrency is not None and not has_foreach:
+                raise WorkflowGraphError(f"foreach_concurrency requires a foreach step: {step.step_id}")
+            error_artifact_id = step.foreach_error_artifact_id
+            if error_artifact_id is None:
+                continue
+            if not has_foreach:
+                raise WorkflowGraphError(f"foreach_error_artifact_id requires a foreach step: {step.step_id}")
+            if error_artifact_id not in artifact_ids:
+                raise WorkflowGraphError(f"unknown foreach error artifact: {error_artifact_id}")
+            error_artifact = artifacts_by_id[error_artifact_id]
+            if error_artifact.binding_step_id is not None:
+                raise WorkflowGraphError(f"foreach error artifact must be global: {error_artifact_id}")
+            if error_artifact.is_input:
+                raise WorkflowGraphError(f"foreach error artifact cannot be a workflow input: {error_artifact_id}")
+            if error_artifact_id in producers:
+                raise WorkflowGraphError(f"artifact has multiple producers: {error_artifact_id}")
+            producers[error_artifact_id] = step.step_id
+
         # Every local artifact must be materialized by exactly one foreach edge;
         # merely naming a binding owner is insufficient.
         for artifact in self.artifacts:
@@ -703,6 +739,10 @@ class WorkflowGraph:
                 step_payload["independent"] = True
             if step.depends_on:
                 step_payload["depends_on"] = sorted(step.depends_on)
+            if step.foreach_concurrency is not None:
+                step_payload["foreach_concurrency"] = step.foreach_concurrency
+            if step.foreach_error_artifact_id is not None:
+                step_payload["foreach_error_artifact_id"] = step.foreach_error_artifact_id
             step_payloads.append(step_payload)
 
         # Artifacts have one stable identity key.

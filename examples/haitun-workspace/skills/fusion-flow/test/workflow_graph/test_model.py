@@ -691,6 +691,87 @@ def test_owner_step_may_consume_its_local_binding() -> None:
     assert len(graph.edges) == 2
 
 
+def test_foreach_policy_and_error_artifact_serialize_on_step() -> None:
+    graph = WorkflowGraph(
+        "flow",
+        (
+            StepNode(
+                "step",
+                "name",
+                "agent",
+                foreach_concurrency=3,
+                foreach_error_artifact_id="errors",
+            ),
+        ),
+        (
+            ArtifactNode("source", is_input=True),
+            ArtifactNode("item", binding_step_id="step"),
+            ArtifactNode("errors", is_output=True),
+        ),
+        (ForeachEdge("source", "step", "item"),),
+    )
+
+    assert graph.to_dict()["steps"] == [
+        {
+            "step_id": "step",
+            "name_id": "name",
+            "executor_id": "agent",
+            "instruction_id": None,
+            "timeout_seconds": None,
+            "max_attempts": 1,
+            "resources": [],
+            "foreach_concurrency": 3,
+            "foreach_error_artifact_id": "errors",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("step", "artifacts", "edges", "message"),
+    [
+        (
+            StepNode("step", "name", "agent", foreach_concurrency=2),
+            (),
+            (),
+            "foreach_concurrency requires",
+        ),
+        (
+            StepNode(
+                "step",
+                "name",
+                "agent",
+                foreach_error_artifact_id="errors",
+            ),
+            (ArtifactNode("errors"),),
+            (),
+            "foreach_error_artifact_id requires",
+        ),
+        (
+            StepNode(
+                "step",
+                "name",
+                "agent",
+                foreach_error_artifact_id="missing",
+            ),
+            (
+                ArtifactNode("source", is_input=True),
+                ArtifactNode("item", binding_step_id="step"),
+            ),
+            (ForeachEdge("source", "step", "item"),),
+            "unknown foreach error artifact",
+        ),
+    ],
+)
+def test_foreach_policy_requires_valid_foreach_artifacts(
+    step: StepNode,
+    artifacts: tuple[ArtifactNode, ...],
+    edges: tuple[ForeachEdge, ...],
+    message: str,
+) -> None:
+    with pytest.raises(WorkflowGraphError, match=message):
+        WorkflowGraph("flow", (step,), artifacts, edges)
+
+
 def test_local_binding_requires_exactly_one_foreach_edge() -> None:
     with pytest.raises(
         WorkflowGraphError,
@@ -730,6 +811,8 @@ def test_local_binding_cannot_be_referenced_by_multiple_foreach_edges() -> None:
         StepNode("step", "name", "agent", timeout_seconds=True),
         StepNode("step", "name", "agent", max_attempts=0),
         StepNode("step", "name", "agent", max_attempts=True),
+        StepNode("step", "name", "agent", foreach_concurrency=0),
+        StepNode("step", "name", "agent", foreach_concurrency=True),
         StepNode(
             "step",
             "name",
