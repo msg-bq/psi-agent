@@ -36,9 +36,10 @@ conversation before the initial `run_flow` call; never use a call with the
 default empty input object as an input probe. Each initial call starts a fresh
 run. If it reaches a Human Step, only the returned active request may continue
 through `run_flow_resume`. An Agent Step may save a self-contained child
-declaration but must not launch another workflow. Its relative
-`read`/`write`/`edit` paths resolve against the psi workspace root, not the
-launcher process CWD.
+declaration but must not launch another workflow. Agent Steps have no workspace
+tools by default; when `read`/`write`/`edit` is explicitly granted with
+`allowed_tool`, its relative paths resolve against the psi workspace root, not
+the launcher process CWD.
 
 The registry includes three compact executable examples:
 `single-step`, `sequential`, and `parallel-join`. The larger
@@ -105,9 +106,10 @@ Downstream dataflow consumes `[selected]`. Priority selection uses named
 intermediate Artifacts; inline or nested `if` terms fail closed.
 The graph compiler preserves `program_path`, `agent_system_prompt`, and
 `allowed_tool` as residual catalog/dispatcher configuration. The official
-workflow runner consumes and validates `program_path`; `agent_system_prompt`
-and `allowed_tool` remain unsupported residuals and stop execution. Malformed
-supported relations and unsupported recursive terms fail explicitly. An
+workflow runner consumes and validates `program_path` and positive
+`allowed_tool(Agent, Tool)` declarations; `agent_system_prompt` remains an
+unsupported residual and stops execution. Malformed supported relations and
+unsupported recursive terms fail explicitly. An
 official execution entry point must reject any final residual rather than skip
 or delete it. The graph is serializable, but the compilation is not a
 replacement for the original Core IR.
@@ -137,9 +139,14 @@ or Program instructions remain errors. Materialized text is included in the
 durable workflow-definition digest used across Human wait/resume turns. Short
 inline Instruction text bypasses file resolution.
 
-Each Agent Step receives a `submit_step_result` tool whose schema requires its
-exact output Artifact IDs; a valid submission supplies the Step result, and the
-ephemeral agent turn closes after the current tool-call batch. Plain text remains
+Each Agent Step receives no workspace tools unless its executor has explicit
+positive `allowed_tool` declarations using exact registered tool names. Unknown
+tools, duplicate or false declarations, workflow launchers, `clarify`, and the
+reserved `submit_step_result` identity fail before execution state is created.
+The runtime filters both schemas and callables. It then injects a
+`submit_step_result` tool whose schema requires the Step's exact output Artifact
+IDs; a valid submission supplies the Step result, and the ephemeral agent turn
+closes after the current tool-call batch. Plain text remains
 a compatibility path only after a normally completed agent turn: the adapter
 accepts one strict JSON object or one standalone, line-delimited `json` fence.
 If parsing still fails and the Step has exactly one output, the original response

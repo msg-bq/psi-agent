@@ -1272,13 +1272,16 @@ async def test_run_flow_executes_once_with_dependencies_and_resources(
         tool_registry: ToolRegistry,
     ) -> tuple[FakeAgent, FakeConversation]:
         assert ai_socket == "http://ai.example"
-        assert "run_flow" not in tool_registry.tools
+        assert set(tool_registry.tools) == {"submit_step_result"}
         conversation = FakeConversation()
         agent = FakeAgent(conversation)
         agents.append(agent)
         return agent, conversation
 
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
+    async def load_step_tools() -> ToolRegistry:
+        pytest.fail("workspace tools loaded without an allowed_tool declaration")
+
+    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
     monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
     monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
 
@@ -2218,11 +2221,15 @@ async def test_step_agent_uses_in_memory_history_and_explicit_system_prompt(
     assert conversation._path is None
 
 
-def _agent_completion_context(*output_ids: str) -> Any:
+def _agent_completion_context(
+    *output_ids: str,
+    allowed_tools: tuple[str, ...] = (),
+) -> Any:
     return SimpleNamespace(
         step_id="draft",
         executor_id="writer",
         output_ids=output_ids,
+        allowed_tools=allowed_tools,
         dispatch=SimpleNamespace(
             resource_lease=SimpleNamespace(grants=()),
         ),
@@ -2341,12 +2348,66 @@ async def test_agent_step_stops_on_submitted_result(
 
     assert result == {"result": {"answer": 42}}
     assert captured_registry is not None
+    assert set(captured_registry.tools) == {"submit_step_result"}
     assert captured_registry.tools["submit_step_result"].parameters == {
         "type": "object",
         "properties": {"result": {}},
         "required": ["result"],
         "additionalProperties": False,
     }
+
+
+@pytest.mark.anyio
+async def test_agent_step_exposes_only_declared_tools_and_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_registry: ToolRegistry | None = None
+    conversation = SimpleNamespace(messages=[])
+
+    async def read(file_path: str) -> str:
+        return file_path
+
+    async def write(file_path: str, content: str) -> str:
+        return f"{file_path}:{content}"
+
+    class FakeAgent:
+        async def run(
+            self,
+            message: dict[str, Any],
+            *,
+            outcome: Any | None = None,
+        ) -> Any:
+            del outcome
+            del message
+            assert captured_registry is not None
+            submit = captured_registry.get("submit_step_result")
+            assert submit is not None
+            await submit(result="done")
+            yield None
+
+    async def create_step_agent(
+        ai_socket: str,
+        tool_registry: ToolRegistry,
+    ) -> tuple[Any, Any]:
+        nonlocal captured_registry
+        assert ai_socket == "http://ai.example"
+        captured_registry = tool_registry
+        return FakeAgent(), conversation
+
+    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+
+    result = await run_flow_tool._complete_agent_step(
+        "Read the input.",
+        _agent_completion_context("result", allowed_tools=("read",)),
+        ai_socket="http://ai.example",
+        tool_registry=_tool_registry(read, write),
+    )
+
+    assert result == {"result": "done"}
+    assert captured_registry is not None
+    assert set(captured_registry.tools) == {"read", "submit_step_result"}
+    assert captured_registry.get("read") is read
+    assert captured_registry.get("write") is None
 
 
 @pytest.mark.anyio
@@ -3062,6 +3123,100 @@ async def test_step_tool_snapshot_filters_run_flow(
     assert set(refreshed_snapshot.tools) == {"echo"}
     assert loads == 1
     assert refreshes == 1
+
+
+def test_agent_step_tool_selection_uses_exact_allow_list() -> None:
+    async def read(file_path: str) -> str:
+        return file_path
+
+    async def write(file_path: str, content: str) -> str:
+        return f"{file_path}:{content}"
+
+    selected = run_flow_tool._select_agent_step_tools(
+        _tool_registry(read, write),
+        ("read",),
+        executor_id="worker",
+    )
+
+    assert set(selected.tools) == {"read"}
+    assert selected.get("read") is read
+    assert selected.get("write") is None
+
+
+def test_agent_step_tool_selection_rejects_unavailable_tool() -> None:
+    with pytest.raises(ValueError, match=r"Agent 'worker'.*unavailable tools"):
+        run_flow_tool._select_agent_step_tools(
+            ToolRegistry(),
+            ("missing",),
+            executor_id="worker",
+        )
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "clarify",
+        "flow_run",
+        "run_flow",
+        "run_flow_resume",
+        "submit_step_result",
+    ],
+)
+def test_agent_step_tool_selection_rejects_reserved_tool(tool_name: str) -> None:
+    with pytest.raises(ValueError, match=r"cannot expose reserved tools"):
+        run_flow_tool._select_agent_step_tools(
+            ToolRegistry(),
+            (tool_name,),
+            executor_id="worker",
+        )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool_name", "message"),
+    [
+        ("missing", "unavailable tools"),
+        ("run_flow", "reserved tools"),
+    ],
+)
+async def test_run_flow_rejects_invalid_tool_policy_before_creating_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    message: str,
+) -> None:
+    flows = anyio.Path(tmp_path / "flows")
+    await flows.mkdir()
+    source = _ORDERED_RESOURCE_WORKFLOW.replace(
+        "const request: Artifact;",
+        f"const {tool_name}: Tool;\nconst request: Artifact;",
+    ).replace(
+        "workflow ordered {",
+        f"workflow ordered {{\n    allowed_tool(worker, {tool_name});",
+    )
+    await (flows / "invalid-tool.workflow").write_text(source, encoding="utf-8")
+
+    async def load_step_tools() -> ToolRegistry:
+        return ToolRegistry()
+
+    async def new_artifact_store(flow_path: str) -> Any:
+        pytest.fail(f"artifact store created for {flow_path!r}")
+
+    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_flow_tool, "_new_artifact_store", new_artifact_store)
+    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+
+    with (
+        path_scope(workspace=str(tmp_path), agent=str(_WORKSPACE_DIR)),
+        pytest.raises(ValueError, match=message),
+    ):
+        await run_flow_tool.run_flow(
+            "flows/invalid-tool.workflow",
+            '{"request": "go"}',
+            '{"gpu": ["cuda:0"]}',
+        )
+
+    assert not await (flows / "runs").exists()
 
 
 @pytest.mark.anyio

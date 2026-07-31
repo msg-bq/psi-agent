@@ -40,6 +40,7 @@ class CompiledWorkflow:
     graph: WorkflowGraph
     executor_kinds: Mapping[str, ExecutorKind]
     program_paths: Mapping[str, str] = field(default_factory=dict)
+    allowed_tools_by_agent: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,7 @@ class CompletionContext:
     inputs: Mapping[str, object]
     output_ids: tuple[str, ...]
     dispatch: DispatchContext
+    allowed_tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +105,7 @@ _CONCEPT_NAMES = (
     "Resource",
     "Step",
     "StepName",
+    "Tool",
     "Workflow",
 )
 # This is an explicit catalog, not a source-code name discovery mechanism.
@@ -113,6 +116,7 @@ _OPERATOR_SIGNATURES: Mapping[
     tuple[tuple[str, ...], str | None],
 ] = {
     "agent_config": (("Agent", "Model", "Engine", "ApiBase"), "Bool"),
+    "allowed_tool": (("Agent", "Tool"), "Bool"),
     "comparison_gt_op": ((), None),
     "comparison_gte_op": ((), None),
     "comparison_lt_op": ((), None),
@@ -218,6 +222,56 @@ def _extract_program_paths(
     return program_paths, tuple(residual)
 
 
+def _extract_allowed_tools(
+    assertions: tuple[Assertion, ...],
+) -> tuple[dict[str, tuple[str, ...]], tuple[Assertion, ...]]:
+    """Consume positive Agent tool allow-list declarations from graph residuals."""
+
+    allowed_tools: dict[str, set[str]] = {}
+    residual: list[Assertion] = []
+    for assertion in assertions:
+        candidates = tuple(
+            (term, value)
+            for term, value in (
+                (assertion.lhs, assertion.rhs),
+                (assertion.rhs, assertion.lhs),
+            )
+            if isinstance(term, CompoundTerm) and term.operator.name == "allowed_tool"
+        )
+        if not candidates:
+            residual.append(assertion)
+            continue
+        if len(candidates) != 1:
+            raise ValueError("one equality cannot configure multiple Agent tools")
+
+        call, value = candidates[0]
+        if len(call.arguments) != 2:
+            raise ValueError(f"allowed_tool expects 2 arguments, got {len(call.arguments)}")
+        executor = _typed_constant(
+            call.arguments[0],
+            "Agent",
+            "allowed_tool Agent argument",
+        )
+        tool = _typed_constant(
+            call.arguments[1],
+            "Tool",
+            "allowed_tool Tool argument",
+        )
+        enabled = _typed_constant(value, "Bool", "allowed_tool value")
+        if enabled.symbol != "True":
+            raise ValueError("allowed_tool value must be the Boolean constant True")
+
+        executor_tools = allowed_tools.setdefault(executor.symbol, set())
+        if tool.symbol in executor_tools:
+            raise ValueError(f"duplicate allowed_tool for Agent {executor.symbol!r} and Tool {tool.symbol!r}")
+        executor_tools.add(tool.symbol)
+
+    return (
+        {executor_id: tuple(sorted(tool_names)) for executor_id, tool_names in sorted(allowed_tools.items())},
+        tuple(residual),
+    )
+
+
 def compile_workflow(
     source: str,
     *,
@@ -254,6 +308,7 @@ def compile_workflow(
         raise ValueError("workflow runner expects exactly one workflow")
     compilation = compilations[0]
     program_paths, residual_assertions = _extract_program_paths(compilation.residual_assertions)
+    allowed_tools_by_agent, residual_assertions = _extract_allowed_tools(residual_assertions)
     if residual_assertions:
         counts = _residual_operator_counts(residual_assertions)
         details = ", ".join(f"{operator_name}={count}" for operator_name, count in sorted(counts.items()))
@@ -284,6 +339,7 @@ def compile_workflow(
         graph=compilation.graph,
         executor_kinds=executor_kinds,
         program_paths=program_paths,
+        allowed_tools_by_agent=allowed_tools_by_agent,
     )
 
 
@@ -458,6 +514,7 @@ def _build_dispatch(
             inputs=dict(inputs),
             output_ids=output_ids,
             dispatch=dispatch_context,
+            allowed_tools=compiled.allowed_tools_by_agent.get(step.executor_id, ()),
         )
         if executor_kind == "Human":
             has_legacy_callbacks = prepare_human_instruction is not None and request_human is not None
@@ -626,6 +683,8 @@ async def execute_workflow(
         context=parse_context,
         strict_executors=strict_executors,
     )
+    if compiled.allowed_tools_by_agent and contextual_complete is None:
+        raise ValueError("allowed_tool requires contextual_complete so its tool policy can be enforced")
     if supported_executor_kinds is not None:
         supported = frozenset(supported_executor_kinds)
         unsupported = sorted(
