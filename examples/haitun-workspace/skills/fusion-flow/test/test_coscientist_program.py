@@ -37,7 +37,7 @@ def test_short_workflow_compiles_with_current_executor_contract(
 ) -> None:
     source = (_WORKSPACE_DIR / "flows" / "workflows" / slug / f"{slug}.workflow").read_text(encoding="utf-8")
 
-    compiled = compile_workflow(source, strict_executors=True)
+    compiled = compile_workflow(source)
 
     assert len(compiled.graph.steps) == step_count
     assert set(compiled.executor_kinds.values()) == {"Agent"}
@@ -51,7 +51,7 @@ def _load_program() -> dict[str, Any]:
 def test_workflow_compiles_with_local_instruction_and_program_assets() -> None:
     source = (_WORKFLOW_DIR / "coscientist-ows.workflow").read_text(encoding="utf-8")
 
-    compiled = compile_workflow(source, strict_executors=True)
+    compiled = compile_workflow(source)
 
     assert len(compiled.graph.steps) == 12
     assert set(compiled.executor_kinds.values()) == {"Agent", "Program"}
@@ -72,7 +72,7 @@ def test_saved_workflow_has_public_distribution_assets() -> None:
     scheduler_source = (
         _WORKSPACE_DIR / "skills" / "coscientist-ows-entry" / "scripts" / "run_ows_streaming_scheduler.py"
     ).read_text(encoding="utf-8")
-    compiled = compile_workflow(source, strict_executors=True)
+    compiled = compile_workflow(source)
 
     assert (_WORKFLOW_DIR / "README.md").is_file()
     assert "/public/home/" not in scheduler_source

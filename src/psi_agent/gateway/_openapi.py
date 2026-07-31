@@ -639,7 +639,7 @@ OPENAPI_SPEC = {
                     },
                     "path": {
                         "type": "string",
-                        "pattern": "^flows/workflows/[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}\\.workflow$",
+                        "pattern": ("^flows/workflows/[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}\\.(workflow|g4)$"),
                     },
                 },
             },

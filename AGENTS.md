@@ -74,7 +74,7 @@ FusionFlow 的命名选择 `selected == if(condition, artifact_a, artifact_b)` �
 `independent` 只是非约束 metadata，不能覆盖数据依赖或显式 `depends_on`。
 
 **WorkflowGraph 的资源调度边界是什么？**
-`.workflow` 只通过 `resource_requirement` 声明 Step 所需的资源种类和数量；容量或
+`.workflow` / `.g4` 只通过 `resource_requirement` 声明 Step 所需的资源种类和数量；容量或
 具体实例 ID 由 runner 外部配置。执行器在同一个 admission 临界区中同时检查
 `max_concurrency` 和全部资源需求，原子取出实例，并在成功、失败、超时或取消后
 shielded release。`DispatchContext.resource_lease` 负责把具体实例传给 dispatcher，
@@ -108,22 +108,22 @@ Markdown，其他 finite JSON 值用 fenced `json` 表示。该目录是用户�
 落到用户可见历史，不能只存在于该 journal。
 
 **FusionFlow 的跨语言兼容边界是什么？**
-运行结果与核心行为优先兼容，包括同一运行时内的 binding 恢复、配对的 `node_start` / `node_end` progress 事件、分组 token 汇总、程序快照和 `exec()` 截断标记。真实 TypeScript `inputHash` 与 Python `cache_key` 的输入、provider 身份和长度不同，因此两种运行目录不保证直接互相命中缓存；camelCase metadata 别名只保证字段可读。graph、meta 和 trace 使用各自语言的数据结构：Python 命名 trace 是通用 `ExecutionTrace`，不是 TypeScript 的扁平 provider/model/prompt 对象；只有 `progress.jsonl` 保持共享格式。单节点 trace / progress 写入是 best-effort，最终 graph/meta 才是权威产物，不追随 TypeScript 的诊断写失败即中止。`flow.output()` / `ctx.save()` 写入带 metadata 的单赋值 binding，不额外创建 output graph node。
+运行结果与核心行为优先对齐，包括同一 Python 运行时内的 binding 恢复、配对的 `node_start` / `node_end` progress 事件、分组 token 汇总、程序快照和 `exec()` 截断标记。Python 运行目录只写 snake_case metadata，不读取 TypeScript `inputHash` 等 camelCase 字段，也不承诺与 TypeScript 运行目录互相命中缓存。graph、meta 和 trace 使用各自语言的数据结构：Python 命名 trace 是通用 `ExecutionTrace`，不是 TypeScript 的扁平 provider/model/prompt 对象；只有 `progress.jsonl` 保持共享格式。单节点 trace / progress 写入是 best-effort，最终 graph/meta 才是权威产物，不追随 TypeScript 的诊断写失败即中止。`flow.output()` / `ctx.save()` 写入带 metadata 的单赋值 binding，不额外创建 output graph node。
 
-Python API 保持 snake_case，并由显式 `SessionRunner` 承担 provider 调用；不复制 TypeScript 的 camelCase 配置、环境变量配置、内嵌 provider 选择或 evaluator 的 provider JSON Schema 通道。字符串/编译后的 `RegexRule` 使用原生 Python `re`；需要与 JavaScript `RegExp` 的 ASCII 字符类一致时由调用方显式选择 flags。实际 runner 实现身份不能自动进入 cache key，runner 行为变更时调用方必须同步更新 `AgentConfig.engine`、model 或其他版本字段。自动 GC 通过 `run(keep_count=..., keep_days=...)` 配置，两者同时为 `0` 表示禁用清理。未知 token 保持为 `None`。旧式 `Agent` 的独立诊断 trace 在 resume 时不会覆盖同名旧文件；跳过的文件序号会占入它与 `session()` / `evaluate()` 共享的调用序号，实际序号同时写入 trace metadata，而 `session_calls` 仍只统计本次执行成功或缓存命中的调用。这些都是仓库有意保留的安全适配。
+Python API 保持 snake_case，并由显式 `SessionRunner` 承担 provider 调用；不复制 TypeScript 的 camelCase 配置、环境变量配置、内嵌 provider 选择或 evaluator 的 provider JSON Schema 通道。字符串/编译后的 `RegexRule` 使用原生 Python `re`；需要与 JavaScript `RegExp` 的 ASCII 字符类一致时由调用方显式选择 flags。实际 runner 实现身份不能自动进入 cache key，runner 行为变更时调用方必须同步更新 `AgentConfig.engine`、model 或其他版本字段。自动 GC 通过 `run(keep_count=..., keep_days=...)` 配置，两者同时为 `0` 表示禁用清理。未知 token 保持为 `None`。
 
 **为什么 `AgentConfig` 的 token / temperature 默认值先保留为 `None`？**
-TypeScript 对同一份省略字段的配置按调用位置解析：普通 `session()` 与旧 `Agent` 使用 `8192 / 1`，自定义 evaluator 使用 `256 / 0`。Python 只有把“未填写”保留到实际调用边界，才能区分省略与用户显式传入 `8192 / 1`；交给 `SessionRunner` 前始终会解析成具体数值。
+同一份省略字段的配置按调用位置解析：普通 `session()` 使用 `8192 / 1`，自定义 evaluator 使用 `256 / 0`。Python 只有把“未填写”保留到实际调用边界，才能区分省略与用户显式传入 `8192 / 1`；交给 `SessionRunner` 前始终会解析成具体数值。
 
 **为什么 G4 使用 `agent_system_prompt`，Python 也只保留 `AgentConfig.system_prompt`？**
 这里表示 Agent 长期稳定的系统提示词；Step 当次任务仍由 `step_instruction` 映射到
 `AgentInvocation.prompt`。旧 `AgentConfig.system` 和含义重复的
 `AgentConfig.prompt` 不保留兼容入口，避免把两层 prompt 再次混淆。配置 payload
-字段随之改名，旧运行缓存可能因 hash 变化而重新执行。
+与 cache identity 统一使用 `system_prompt`。
 
 **为什么 Agent Step 的单输出与多输出 fallback 不同？**
 每个 Agent Step 优先通过按 output Artifact ID 生成精确 schema 的
-`submit_step_result` 提交结果，只有正常结束的最终文本才保留为兼容路径，并接受
+`submit_step_result` 提交结果，只有正常结束的最终文本才进入 fallback，并接受
 一个精确 object 或独立行包围的单个 `json` fence。若 Step 恰好声明一个 output，
 无法解析为精确 object 的原始回复会直接、完整地绑定到唯一 Artifact，并记录不含
 原文正文的结构化 warning。若声明多个 output，则先允许两次结果修复，仍无效时把
@@ -251,7 +251,7 @@ src/
 - **Workflow Graph**: `docs/architecture/workflow/2026-07-23-workflow-graph-design.zh.md` — 允许有环的声明式 Step–Artifact 图及待讨论语义；具体 Core IR 后端位于 `examples/haitun-workspace/skills/fusion-flow/fusion_flow/graph_compiler.py`
 - **Workflow Execution**: `docs/architecture/workflow/2026-07-25-workflow-execution-plan-design.zh.md` — 无环 Fiber/Await/Invoke 基础计划、全量异步启动、dispatcher 与 validated checkpoint 边界
 - **FusionFlow durable Agent / foreach**: `examples/haitun-workspace/skills/fusion-flow/DESIGN.md` — `flow.agent` / `flow.session` leaf 复用、共享无上下文 retry/parallel helper、动态 foreach StepInstance、逐项 resource/checkpoint 与 eager Select 边界
-- **FusionFlow Python execution**: `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/` — 示例 Skill 内的 Python `flow.*` API、旧 TypeScript 行为兼容面及无 `RunContext` 共享执行 kernel；不属于 `psi_agent` wheel，G4 不把公开 combinator 当图 bytecode，但 Agent leaf 与通用 retry/foreach 机制会复用这里
+- **FusionFlow Python execution**: `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/` — 示例 Skill 内正式的 Python `flow.*` API 及无 `RunContext` 共享执行 kernel；不属于 `psi_agent` wheel，G4 不把公开 combinator 当图 bytecode，但 Agent leaf 与通用 retry/foreach 机制会复用这里
 
 ## 核心通信协议
 
@@ -343,7 +343,7 @@ SSE 流中的特殊字段：
 
 18. **`WorkflowEdge` 是封闭 union**：`WorkflowGraph` 只接受 `ConsumesEdge`、`ProducesEdge`、`ForeachEdge` 的精确类型，不接受子类。子类会破坏 dataclass 基于精确类型的相等性去重，也能覆盖序列化使用的 `kind`。新增边类型时应显式更新 union、校验和序列化。
 
-19. **WorkflowGraph 可保存有环，但 durable plan 不执行环**：`workflow_execution.generate_plan()` 把 producer/consumer 数据前驱与 `StepNode.depends_on` 显式顺序前驱合并为 `Await`，并同时启动所有静态 Fiber。`ForeachEdge` 在 Invoke 时动态展开为稳定的 `step[index]` 实例；G4 复用 `fusion_flow.execution.flow` 的 `_retry_operation` 与 `_run_parallel_tasks`，解释器仍负责 Artifact/checkpoint/resume、global admission、资源与 timeout。foreach 默认并行，只受 workflow `max_concurrency` 与资源容量限制；资源、timeout、`max_attempts` 和成功 checkpoint 均按实例处理。普通 iteration 失败不会取消同组任务，全部结束后作为聚合异常抛出而不是写入 Artifact；成功 iteration 可在恢复时跳过。非 foreach Program 仍保留 `$fusion_flow/program_error` 错误值兼容，Program foreach 的失败则进入同一聚合异常。Human-backed foreach 在 runner 预检阶段拒绝，不能让多个 suspension 竞态。input+producer 和 circular await 仍在计划阶段报错，不能静默忽略或留到运行期死锁。资源需求由执行器的 allocator 在 dispatch 前处理，不再由 planner 拒绝。
+19. **WorkflowGraph 可保存有环，但 durable plan 不执行环**：`workflow_execution.generate_plan()` 把 producer/consumer 数据前驱与 `StepNode.depends_on` 显式顺序前驱合并为 `Await`，并同时启动所有静态 Fiber。`ForeachEdge` 在 Invoke 时动态展开为稳定的 `step[index]` 实例；G4 复用 `fusion_flow.execution.flow` 的 `_retry_operation` 与 `_run_parallel_tasks`，解释器仍负责 Artifact/checkpoint/resume、global admission、资源与 timeout。foreach 默认并行，只受 workflow `max_concurrency` 与资源容量限制；资源、timeout、`max_attempts` 和成功 checkpoint 均按实例处理。普通 iteration 失败不会取消同组任务，全部结束后作为聚合异常抛出而不是写入 Artifact；成功 iteration 可在恢复时跳过。非 foreach Program 使用 `$fusion_flow/program_error` 错误值合同，Program foreach 的失败则进入同一聚合异常。Human-backed foreach 在 runner 预检阶段拒绝，不能让多个 suspension 竞态。input+producer 和 circular await 仍在计划阶段报错，不能静默忽略或留到运行期死锁。资源需求由执行器的 allocator 在 dispatch 前处理，不再由 planner 拒绝。
 
 20. **Windows 上裸路径地址直接拒绝（刻意为之，勿"修掉"）**：`_sockets.py` 的 `resolve_connector_and_endpoint` / `create_site` 在 `sys.platform == "win32"` 且地址落到 Unix 分支时**主动 `raise ValueError`**。因为 Windows 的 asyncio 没有 `create_unix_connection` / `create_unix_server`，若继续走 `UnixConnector` / `UnixSite`，aiohttp 会在 connect/listen 深处抛一个**不带任何上下文的 `NotImplementedError`**，极难定位（曾导致飞书 channel 每条消息崩、只显示 `generation interrupted`）。真实诱因：`channel feishu --session-socket \\.\pipe\...` 经 POSIX shell 传参时反斜杠被吞成单反斜杠 `\.\pipe\...`，匹配不上命名管道前缀而落到裸路径分支。**这是 fail-fast 前置校验，不是可删的多余检查**——非 Windows（POSIX）行为完全不变，Unix socket 照常工作。Windows/bash 下传管道地址需用四反斜杠 `'\\\\.\\pipe\\...'` 才能让程序收到两根反斜杠开头的 `\\.\pipe\...`。反方向同样门控：非 Windows 上传 `\\.\pipe\name` 也**主动 `raise ValueError`**，因为命名管道要 `ProactorEventLoop`，而 asyncio 在非 win32 平台根本不导出 `ProactorEventLoop`（`asyncio/__init__.py` 只在 `sys.platform == 'win32'` 时 `from .windows_events import *`），aiohttp 那句 `isinstance(loop, asyncio.ProactorEventLoop)` 门控自己会先抛裸 `AttributeError`。两个方向都是 fail-fast 前置校验。
 

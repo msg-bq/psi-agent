@@ -201,7 +201,7 @@ def test_compile_workflow_consumes_every_agent_setting() -> None:
     }
 
 
-def test_compile_workflow_supplies_empty_overlay_for_legacy_agent() -> None:
+def test_compile_workflow_supplies_empty_overlay_for_unconfigured_agent() -> None:
     compiled = run_workflow.compile_workflow(_dispatch_workflow("Agent", "do_work"))
 
     assert compiled.agent_configs == {"worker": run_workflow.CompiledAgentConfig(name="worker")}
@@ -339,13 +339,14 @@ async def test_in_memory_workflow_compiles_and_executes() -> None:
     prompts: list[str] = []
     instruction = "Explain the request, identify the key trade-offs, and return a concise recommendation."
 
-    async def complete(prompt: str) -> str:
+    async def complete(prompt: str, context: Any) -> dict[str, object]:
         prompts.append(prompt)
-        return "completed"
+        assert context.output_ids == ("result",)
+        return {"result": "completed"}
 
     result = await run_workflow.execute_workflow(
         _dispatch_workflow("Agent", instruction),
-        request="Explain structured concurrency.",
+        inputs={"request": "Explain structured concurrency."},
         complete=complete,
     )
 
@@ -373,20 +374,21 @@ def test_runner_compiles_ordered_select_condition() -> None:
 async def test_named_select_executes_both_candidates_and_feeds_final_step() -> None:
     prompts: dict[str, str] = {}
 
-    async def complete(prompt: str) -> str:
+    async def complete(prompt: str, context: Any) -> dict[str, object]:
         instruction = prompt.split("\n\n", 1)[0].removeprefix("Instruction:\n")
         prompts[instruction] = prompt
         if instruction == "produce_primary":
-            return "PRIMARY"
+            return {"primary_result": "PRIMARY"}
         if instruction == "produce_fallback":
-            return "FALLBACK"
+            return {"fallback_result": "FALLBACK"}
         assert instruction == "consume_selected"
         assert 'Inputs: {"selected_result": "PRIMARY"}' in prompt
-        return "FINAL"
+        assert context.output_ids == ("final_result",)
+        return {"final_result": "FINAL"}
 
     result = await run_workflow.execute_workflow(
         _select_workflow('request = "primary"'),
-        request="primary",
+        inputs={"request": "primary"},
         complete=complete,
     )
 
@@ -405,13 +407,14 @@ async def test_named_select_executes_both_candidates_and_feeds_final_step() -> N
 async def test_instruction_path_requires_a_resolver_before_dispatch() -> None:
     instruction = "./instructions/missing-agent.md"
 
-    async def complete(prompt: str) -> str:
+    async def complete(prompt: str, context: Any) -> dict[str, object]:
+        del context
         pytest.fail(f"completion called with {prompt!r}")
 
     with pytest.raises(ValueError, match="instruction path but no instruction resolver"):
         await run_workflow.execute_workflow(
             _dispatch_workflow("Agent", instruction),
-            request="Do the work.",
+            inputs={"request": "Do the work."},
             complete=complete,
         )
 
@@ -430,13 +433,14 @@ async def test_agent_executor_receives_resolved_instruction_text() -> None:
         references.append(value)
         return instruction
 
-    async def complete(prompt: str) -> str:
+    async def complete(prompt: str, context: Any) -> dict[str, object]:
+        del context
         prompts.append(prompt)
-        return "completed"
+        return {"result": "completed"}
 
     result = await run_workflow.execute_workflow(
         _dispatch_workflow("Agent", reference),
-        request="Survey semantic parsing.",
+        inputs={"request": "Survey semantic parsing."},
         complete=complete,
         resolve_instruction=resolve_instruction,
     )
@@ -453,13 +457,14 @@ async def test_instruction_resolver_must_return_non_empty_text() -> None:
         assert reference == "./instructions/empty.md"
         return " \n"
 
-    async def complete(prompt: str) -> str:
+    async def complete(prompt: str, context: Any) -> dict[str, object]:
+        del context
         pytest.fail(f"completion called with {prompt!r}")
 
     with pytest.raises(ValueError, match="instruction resolved to no text"):
         await run_workflow.execute_workflow(
             _dispatch_workflow("Agent", "./instructions/empty.md"),
-            request="Do the work.",
+            inputs={"request": "Do the work."},
             complete=complete,
             resolve_instruction=resolve_instruction,
         )
@@ -489,8 +494,8 @@ async def test_instruction_files_are_materialized_once_before_dispatch() -> None
 
     result = await run_workflow.execute_workflow(
         source,
-        request="primary",
-        contextual_complete=complete,
+        inputs={"request": "primary"},
+        complete=complete,
         resolve_instruction=resolve_instruction,
     )
 
@@ -598,7 +603,7 @@ async def test_program_runner_mapping_uses_exact_output_ids(
 
     result = await run_workflow.execute_workflow(
         _program_workflow_with_two_outputs(),
-        request="Do the work.",
+        inputs={"request": "Do the work."},
         work_dir=tmp_path,
         run_program=execute_program,
     )
@@ -639,7 +644,7 @@ async def test_program_runner_mapping_rejects_non_exact_output_ids(
     with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="must match exactly")):
         await run_workflow.execute_workflow(
             _program_workflow_with_two_outputs(),
-            request="Do the work.",
+            inputs={"request": "Do the work."},
             work_dir=tmp_path,
             run_program=execute_program,
         )
@@ -689,7 +694,7 @@ async def test_program_multiple_outputs_are_read_from_json_stdout(
 
     result = await run_workflow.execute_workflow(
         _program_workflow_with_two_outputs(),
-        request="Do the work.",
+        inputs={"request": "Do the work."},
         work_dir=tmp_path,
         run_program=execute_program,
     )
@@ -723,7 +728,7 @@ async def test_program_multiple_outputs_reject_non_finite_json(
     with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="strict JSON object")):
         await run_workflow.execute_workflow(
             _program_workflow_with_two_outputs(),
-            request="Do the work.",
+            inputs={"request": "Do the work."},
             work_dir=tmp_path,
             run_program=execute_program,
         )
@@ -741,21 +746,8 @@ async def test_relative_program_path_requires_work_dir() -> None:
                 "do_work",
                 executor_configuration='program_path(worker) == "./bin/worker";',
             ),
-            request="Do the work.",
+            inputs={"request": "Do the work."},
         )
-
-
-def test_untyped_executor_defaults_to_agent_for_compatibility() -> None:
-    compiled = run_workflow.compile_workflow(_dispatch_workflow(None, "./instructions/untyped-agent.txt"))
-
-    assert compiled.executor_kinds == {"worker": "Agent"}
-    assert [(item.severity, item.message) for item in compiled.diagnostics] == [
-        (
-            "warning",
-            "executor 'worker' for step 'dispatch_step' has no explicit "
-            "Agent, Human, or Program type; legacy execution defaults it to Agent",
-        )
-    ]
 
 
 def test_compile_workflow_accepts_untyped_graph_values() -> None:
@@ -784,54 +776,11 @@ def test_compile_workflow_reuses_graph_compilation(monkeypatch: pytest.MonkeyPat
     assert compile_calls == 1
 
 
-def test_strict_runner_rejects_untyped_executor() -> None:
-    with pytest.raises(ValueError, match="must be declared as exactly one"):
+def test_compile_workflow_rejects_untyped_executor() -> None:
+    with pytest.raises(ValueError, match="step_executor must belong to exactly one"):
         run_workflow.compile_workflow(
             _dispatch_workflow(None, "./instructions/untyped-agent.txt"),
-            strict_executors=True,
         )
-
-
-def test_strict_runner_reports_untyped_warning_before_rejection() -> None:
-    diagnostics: list[Any] = []
-
-    with pytest.raises(ValueError, match="must be declared as exactly one"):
-        run_workflow.compile_workflow(
-            _dispatch_workflow(None, "./instructions/untyped-agent.txt"),
-            strict_executors=True,
-            diagnostic_callback=diagnostics.append,
-        )
-
-    assert [(item.severity, item.message) for item in diagnostics] == [
-        (
-            "warning",
-            "executor 'worker' for step 'dispatch_step' has no explicit "
-            "Agent, Human, or Program type; legacy execution defaults it to Agent",
-        )
-    ]
-
-
-def test_graph_error_reports_untyped_warning_before_rejection() -> None:
-    diagnostics: list[Any] = []
-    source = _dispatch_workflow(None, "do_work").replace(
-        '    step_name(dispatch_step) == "Dispatch";\n',
-        "",
-    )
-
-    with pytest.raises(ValueError, match="step 'dispatch_step' has no step_name"):
-        run_workflow.compile_workflow(
-            source,
-            strict_executors=True,
-            diagnostic_callback=diagnostics.append,
-        )
-
-    assert [(item.severity, item.message) for item in diagnostics] == [
-        (
-            "warning",
-            "executor 'worker' for step 'dispatch_step' has no explicit "
-            "Agent, Human, or Program type; legacy execution defaults it to Agent",
-        )
-    ]
 
 
 @pytest.mark.anyio
@@ -839,21 +788,19 @@ async def test_human_instruction_is_prepared_by_agent_before_request() -> None:
     preparation_prompts: list[str] = []
     human_prompts: list[str] = []
 
-    async def complete(prompt: str) -> str:
-        pytest.fail(f"ordinary completion called with {prompt!r}")
-
-    async def prepare_human_instruction(prompt: str) -> str:
+    async def prepare_human_instruction(prompt: str, context: Any) -> str:
+        assert context.executor_kind == "Human"
         preparation_prompts.append(prompt)
         return "Review the supplied proposal and answer approve or reject."
 
-    async def request_human(prompt: str) -> object:
+    async def request_human(prompt: str, context: Any) -> object:
+        assert context.output_ids == ("result",)
         human_prompts.append(prompt)
         return {"decision": "approve"}
 
     result = await run_workflow.execute_workflow(
         _dispatch_workflow("Human", "Ask the reviewer to approve the proposal or request concrete edits."),
-        request="proposal-v2",
-        complete=complete,
+        inputs={"request": "proposal-v2"},
         prepare_human_instruction=prepare_human_instruction,
         request_human=request_human,
     )
@@ -872,7 +819,7 @@ async def test_human_instruction_is_prepared_by_agent_before_request() -> None:
 
 
 @pytest.mark.anyio
-async def test_contextual_human_callbacks_receive_step_contract() -> None:
+async def test_human_callbacks_receive_step_contract() -> None:
     contexts: list[Any] = []
 
     async def prepare_human_instruction(prompt: str, context: Any) -> str:
@@ -887,9 +834,9 @@ async def test_contextual_human_callbacks_receive_step_contract() -> None:
 
     result = await run_workflow.execute_workflow(
         _dispatch_workflow("Human", "review_reference"),
-        request="proposal-v2",
-        contextual_prepare_human_instruction=prepare_human_instruction,
-        contextual_request_human=request_human,
+        inputs={"request": "proposal-v2"},
+        prepare_human_instruction=prepare_human_instruction,
+        request_human=request_human,
     )
 
     assert result == {"result": "Tighten the conclusion."}
@@ -904,21 +851,18 @@ async def test_contextual_human_callbacks_receive_step_contract() -> None:
 
 @pytest.mark.anyio
 async def test_human_preparation_failure_does_not_request_human() -> None:
-    async def complete(prompt: str) -> str:
-        pytest.fail(f"ordinary completion called with {prompt!r}")
-
-    async def prepare_human_instruction(prompt: str) -> str:
-        del prompt
+    async def prepare_human_instruction(prompt: str, context: Any) -> str:
+        del prompt, context
         raise PermissionError("resource access was not approved")
 
-    async def request_human(prompt: str) -> str:
+    async def request_human(prompt: str, context: Any) -> str:
+        del context
         pytest.fail(f"human called with {prompt!r}")
 
     with pytest.RaisesGroup(pytest.RaisesExc(PermissionError, match="not approved")):
         await run_workflow.execute_workflow(
             _dispatch_workflow("Human", "Prepare a review question from the supplied request."),
-            request="review",
-            complete=complete,
+            inputs={"request": "review"},
             prepare_human_instruction=prepare_human_instruction,
             request_human=request_human,
         )
@@ -926,21 +870,18 @@ async def test_human_preparation_failure_does_not_request_human() -> None:
 
 @pytest.mark.anyio
 async def test_human_preparation_must_return_text() -> None:
-    async def complete(prompt: str) -> str:
-        pytest.fail(f"ordinary completion called with {prompt!r}")
-
-    async def prepare_human_instruction(prompt: str) -> str:
-        del prompt
+    async def prepare_human_instruction(prompt: str, context: Any) -> str:
+        del prompt, context
         return "  "
 
-    async def request_human(prompt: str) -> str:
+    async def request_human(prompt: str, context: Any) -> str:
+        del context
         pytest.fail(f"human called with {prompt!r}")
 
     with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="preparation returned no text")):
         await run_workflow.execute_workflow(
             _dispatch_workflow("Human", "review_reference"),
-            request="review",
-            complete=complete,
+            inputs={"request": "review"},
             prepare_human_instruction=prepare_human_instruction,
             request_human=request_human,
         )
@@ -948,14 +889,10 @@ async def test_human_preparation_must_return_text() -> None:
 
 @pytest.mark.anyio
 async def test_human_step_requires_preparer_and_requester() -> None:
-    async def complete(prompt: str) -> str:
-        pytest.fail(f"ordinary completion called with {prompt!r}")
-
     with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="requires prepare_human_instruction and request_human")):
         await run_workflow.execute_workflow(
             _dispatch_workflow("Human", "review_reference"),
-            request="review",
-            complete=complete,
+            inputs={"request": "review"},
         )
 
 
@@ -1006,8 +943,8 @@ workflow human_foreach {
         await run_workflow.execute_workflow(
             source,
             inputs={"items": ["a", "b"]},
-            contextual_prepare_human_instruction=prepare_human,
-            contextual_request_human=request_human,
+            prepare_human_instruction=prepare_human,
+            request_human=request_human,
         )
 
     assert calls == []
@@ -1047,7 +984,7 @@ def test_agent_setting_allowlist_does_not_hide_mixed_unknown_equality() -> None:
 
 
 @pytest.mark.anyio
-async def test_contextual_completion_receives_resource_lease() -> None:
+async def test_completion_receives_resource_lease() -> None:
     source = (
         _dispatch_workflow("Agent", "use_gpu")
         .replace(
@@ -1061,7 +998,7 @@ async def test_contextual_completion_receives_resource_lease() -> None:
     )
     leases: list[tuple[str, ...]] = []
 
-    async def contextual_complete(
+    async def complete(
         prompt: str,
         context: Any,
     ) -> dict[str, object]:
@@ -1071,8 +1008,8 @@ async def test_contextual_completion_receives_resource_lease() -> None:
 
     result = await run_workflow.execute_workflow(
         source,
-        request="Do the work.",
-        contextual_complete=contextual_complete,
+        inputs={"request": "Do the work."},
+        complete=complete,
         resource_capacities={"gpu": ("cuda:0",)},
     )
 
@@ -1081,10 +1018,10 @@ async def test_contextual_completion_receives_resource_lease() -> None:
 
 
 @pytest.mark.anyio
-async def test_contextual_completion_receives_resolved_agent_config() -> None:
+async def test_completion_receives_resolved_agent_config() -> None:
     received: list[Any] = []
 
-    async def contextual_complete(
+    async def complete(
         prompt: str,
         context: Any,
     ) -> dict[str, object]:
@@ -1099,8 +1036,8 @@ async def test_contextual_completion_receives_resolved_agent_config() -> None:
             allowed_tool(worker, read_tool);
             """
         ),
-        request="Do the work.",
-        contextual_complete=contextual_complete,
+        inputs={"request": "Do the work."},
+        complete=complete,
     )
 
     assert result == {"result": "completed"}
@@ -1145,19 +1082,21 @@ workflow explicit_order {
 """
     before_finished = False
 
-    async def complete(prompt: str) -> str:
+    async def complete(prompt: str, context: Any) -> dict[str, object]:
         nonlocal before_finished
         instruction = prompt.split("\n\n", 1)[0].removeprefix("Instruction:\n")
         if instruction == "before":
             before_finished = True
-            return "BEFORE"
+            assert context.output_ids == ("before_result",)
+            return {"before_result": "BEFORE"}
         assert instruction == "after"
         assert before_finished
-        return "AFTER"
+        assert context.output_ids == ("after_result",)
+        return {"after_result": "AFTER"}
 
     result = await run_workflow.execute_workflow(
         source,
-        request="run",
+        inputs={"request": "run"},
         complete=complete,
     )
 
@@ -1168,7 +1107,7 @@ workflow explicit_order {
 
 
 @pytest.mark.anyio
-async def test_legacy_completion_can_return_multiple_named_outputs() -> None:
+async def test_completion_can_return_multiple_named_outputs() -> None:
     source = (
         _dispatch_workflow("Agent", "produce_two")
         .replace(
@@ -1185,29 +1124,15 @@ async def test_legacy_completion_can_return_multiple_named_outputs() -> None:
         )
     )
 
-    async def complete(prompt: str) -> dict[str, object]:
+    async def complete(prompt: str, context: Any) -> dict[str, object]:
         del prompt
+        assert context.output_ids == ("extra", "result")
         return {"result": "first", "extra": "second"}
 
     result = await run_workflow.execute_workflow(
         source,
-        request="Do the work.",
+        inputs={"request": "Do the work."},
         complete=complete,
     )
 
     assert result == {"extra": "second", "result": "first"}
-
-
-@pytest.mark.anyio
-async def test_legacy_single_output_preserves_same_named_mapping_artifact() -> None:
-    async def complete(prompt: str) -> dict[str, object]:
-        del prompt
-        return {"result": "mapping artifact"}
-
-    result = await run_workflow.execute_workflow(
-        _dispatch_workflow("Agent", "return_mapping"),
-        request="Do the work.",
-        complete=complete,
-    )
-
-    assert result == {"result": {"result": "mapping artifact"}}

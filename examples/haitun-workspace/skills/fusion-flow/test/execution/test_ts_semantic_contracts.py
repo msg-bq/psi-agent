@@ -37,7 +37,7 @@ async def _binding_metadata(run_dir: str, name: str) -> dict[str, object]:
 
 
 @pytest.mark.anyio
-async def test_binding_metadata_includes_typescript_aliases(tmp_path) -> None:
+async def test_binding_metadata_uses_python_schema(tmp_path) -> None:
     config = AgentConfig(name="writer", system_prompt="Write.")
     agent = flow.agent(config)
 
@@ -50,100 +50,14 @@ async def test_binding_metadata_includes_typescript_aliases(tmp_path) -> None:
     result = await run(
         program,
         runs_dir=tmp_path,
-        run_id="typescript-metadata-aliases",
+        run_id="python-metadata",
         runner=runner,
         throw_on_error=True,
     )
     metadata = await _binding_metadata(result.run_dir, "writer")
 
-    assert metadata["producedBy"] == metadata["produced_by"]
-    assert metadata["producedAt"] == metadata["produced_at"]
-    assert metadata["sourceNode"] == metadata["source_node"]
-    assert metadata["inputHash"] == metadata["cache_key"]
-
-
-@pytest.mark.anyio
-async def test_resume_accepts_camel_case_metadata_with_python_cache_key(
-    tmp_path,
-) -> None:
-    calls = 0
-    config = AgentConfig(name="worker", system_prompt="Work.")
-    agent = flow.agent(config)
-
-    async def runner(_: AgentConfig, __: AgentInvocation) -> str:
-        nonlocal calls
-        calls += 1
-        return "fresh"
-
-    async def program(_: RunContext) -> None:
-        await flow.session(agent, "same")
-
-    result = await run(
-        program,
-        runs_dir=tmp_path,
-        run_id="typescript-resume-metadata",
-        runner=runner,
-        throw_on_error=True,
-    )
-    metadata = await _binding_metadata(result.run_dir, "worker")
-    camel_case_metadata = {
-        "name": "worker",
-        "producedBy": metadata["produced_by"],
-        "producedAt": metadata["produced_at"],
-        "sourceNode": metadata["source_node"],
-        # Field spelling is shared; the hash value remains Python-native.
-        "inputHash": metadata["cache_key"],
-    }
-    await anyio.Path(
-        result.run_dir,
-        "bindings",
-        "worker.meta.json",
-    ).write_text(json.dumps(camel_case_metadata))
-    calls = 0
-
-    await run(
-        program,
-        runs_dir=tmp_path,
-        resume_from_run_id="typescript-resume-metadata",
-        runner=runner,
-        throw_on_error=True,
-    )
-
-    assert calls == 0
-
-    camel_case_metadata["inputHash"] = "mismatched"
-    await anyio.Path(
-        result.run_dir,
-        "bindings",
-        "worker.meta.json",
-    ).write_text(json.dumps(camel_case_metadata))
-    await run(
-        program,
-        runs_dir=tmp_path,
-        resume_from_run_id="typescript-resume-metadata",
-        runner=runner,
-        throw_on_error=True,
-    )
-
-    assert calls == 1
-
-    camel_case_metadata["inputHash"] = metadata["cache_key"]
-    camel_case_metadata["operation"] = "call"
-    await anyio.Path(
-        result.run_dir,
-        "bindings",
-        "worker.meta.json",
-    ).write_text(json.dumps(camel_case_metadata))
-    calls = 0
-    await run(
-        program,
-        runs_dir=tmp_path,
-        resume_from_run_id="typescript-resume-metadata",
-        runner=runner,
-        throw_on_error=True,
-    )
-
-    assert calls == 1
+    assert metadata["cache_key"]
+    assert {"producedBy", "producedAt", "sourceNode", "inputHash", "input_hash"}.isdisjoint(metadata)
 
 
 @pytest.mark.anyio
