@@ -53,13 +53,24 @@ async def _atomic_write(path: anyio.Path, content: str) -> None:
 
 async def _find_task_flow(flows_dir: anyio.Path, flow_name: str) -> anyio.Path | None:
     task_dir = flows_dir / flow_name
-    preferred = task_dir / f"{flow_name}.workflow"
-    if await preferred.exists():
-        return preferred
     if not await task_dir.is_dir():
         return None
-    async for candidate in task_dir.glob("*.workflow"):
-        return candidate
+    for filename in (f"{flow_name}.workflow", f"{flow_name}.g4"):
+        preferred = task_dir / filename
+        if await preferred.exists():
+            return preferred
+    for pattern in ("*.workflow", "*.g4"):
+        async for candidate in task_dir.glob(pattern):
+            return candidate
+    return None
+
+
+async def _find_adhoc_flow(flows_dir: anyio.Path, flow_name: str) -> anyio.Path | None:
+    adhoc_dir = flows_dir / "adhoc" / flow_name
+    for filename in ("flow.workflow", "flow.g4"):
+        candidate = adhoc_dir / filename
+        if await candidate.exists():
+            return candidate
     return None
 
 
@@ -155,9 +166,11 @@ async def flow_manage(
             adhoc_entries: list[str] = []
             if await adhoc_dir.exists():
                 async for entry in adhoc_dir.iterdir():
-                    flow_file = entry / "flow.workflow"
-                    if await entry.is_dir() and not entry.name.startswith(".") and await flow_file.exists():
-                        adhoc_entries.append(f"  - {entry.name}: flow.workflow")
+                    if not await entry.is_dir() or entry.name.startswith("."):
+                        continue
+                    flow_file = await _find_adhoc_flow(flows_dir, entry.name)
+                    if flow_file is not None:
+                        adhoc_entries.append(f"  - {entry.name}: {flow_file.name}")
             if adhoc_entries:
                 lines.append("adhoc/")
                 lines.extend(sorted(adhoc_entries))
@@ -179,8 +192,8 @@ async def flow_manage(
                 return await task_flow.read_text(encoding="utf-8", errors="replace")
 
         if target in {"adhoc", "all"}:
-            adhoc_flow = flows_dir / "adhoc" / flow_name / "flow.workflow"
-            if await adhoc_flow.exists():
+            adhoc_flow = await _find_adhoc_flow(flows_dir, flow_name)
+            if adhoc_flow is not None:
                 return await adhoc_flow.read_text(encoding="utf-8", errors="replace")
 
         return f"[Error] Flow not found: {flow_name!r}"
@@ -193,7 +206,7 @@ async def flow_manage(
 
         if target == "adhoc":
             flow_path = flows_dir / "adhoc" / flow_name / "flow.workflow"
-            if await flow_path.exists():
+            if await _find_adhoc_flow(flows_dir, flow_name) is not None:
                 return f"[Error] Adhoc flow already exists: {flow_name!r}"
             await _atomic_write(flow_path, flow_source.strip() + "\n")
             return f"Adhoc flow created: {flow_name!r}"
@@ -249,10 +262,10 @@ async def flow_manage(
         source_path = await _find_task_flow(flows_dir, flow_name)
         source_label = f"flows/{flow_name}"
         if source_path is None:
-            adhoc_path = flows_dir / "adhoc" / flow_name / "flow.workflow"
-            if await adhoc_path.exists():
+            adhoc_path = await _find_adhoc_flow(flows_dir, flow_name)
+            if adhoc_path is not None:
                 source_path = adhoc_path
-                source_label = f"flows/adhoc/{flow_name}/flow.workflow"
+                source_label = f"flows/adhoc/{flow_name}/{adhoc_path.name}"
 
         if source_path is None:
             return f"[Error] No task or adhoc flow found for: {flow_name!r}"

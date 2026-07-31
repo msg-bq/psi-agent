@@ -582,13 +582,21 @@ async def _build_flows_index(flows_dir: anyio.Path) -> str:
                 or task_dir.name in {"curated", "adhoc", "workflows"}
             ):
                 continue
-            preferred = task_dir / f"{task_dir.name}.workflow"
-            if await preferred.exists():
-                task_lines.append(f"    - {task_dir.name}: {preferred.name}")
-                continue
-            async for flow_file in task_dir.glob("*.workflow"):
-                task_lines.append(f"    - {task_dir.name}: {flow_file.name}")
-                break
+            selected: anyio.Path | None = None
+            for filename in (f"{task_dir.name}.workflow", f"{task_dir.name}.g4"):
+                candidate = task_dir / filename
+                if await candidate.exists():
+                    selected = candidate
+                    break
+            if selected is None:
+                for pattern in ("*.workflow", "*.g4"):
+                    async for candidate in task_dir.glob(pattern):
+                        selected = candidate
+                        break
+                    if selected is not None:
+                        break
+            if selected is not None:
+                task_lines.append(f"    - {task_dir.name}: {selected.name}")
 
     if not curated_lines and not task_lines:
         return "No reusable flows configured."
@@ -919,8 +927,8 @@ For this command:
 1. Read the full instructions at:
    {fusion_skill_md}
    Relative path: skills/fusion-flow/SKILL.md
-2. Map the slug to the fixed workspace-relative path
-   `flows/workflows/<slug>/<slug>.workflow`.
+2. Resolve the slug under `flows/workflows/<slug>/`: prefer
+   `<slug>.workflow`, otherwise use `<slug>.g4`; fail if neither file exists.
 3. Read that declaration before execution and inspect its `input_workflow(...)`
    assertion to identify every required input Artifact.
 4. Resolve every required input from the conversation. If any value is missing,
@@ -949,7 +957,7 @@ there but must not launch it.
 
 ### Natural-language activation
 When the user describes a workflow-shaped task - multi-agent collaboration, parallel review,
-fan-out/fan-in, pipelines, multi-step research or scoring, or running a `.workflow` file -
+fan-out/fan-in, pipelines, multi-step research or scoring, or running a `.workflow` or `.g4` file -
 activate the Fusion Flow skill.
 
 **Multi-agent simulation is workflow-shaped - build a flow, do NOT role-play it yourself.**
@@ -958,7 +966,7 @@ a debate among N sides (三方辩论), a role-play conversation or roundtable (�
 a negotiation (谈判), red-team vs blue-team (红蓝对抗), a panel of experts / multi-expert
 review (多专家会诊/多角度评审), interviewer-vs-candidate, or any "let a few AIs each play a
 role and interact" request. When you recognize one, your DEFAULT action is to enter the Fusion
-Flow skill's Authoring Mode and build a `.workflow` where each role is its own Agent Step.
+Flow skill's Authoring Mode and build one G4 source where each role is its own Agent Step.
 Use explicit Artifacts and dependencies for parallel stances, finite turn-taking, and a final
 synthesizer or judge - the runtime spawns and drives those role agents. Do NOT play the roles
 yourself in a single reply, and do NOT offer "I'll just do it manually this once" as the default.
@@ -971,7 +979,7 @@ To activate:
 2. Keep the skill itself immutable. Author generated task files under:
    {flows_dir}/<task-slug>/
    Layout:
-   - {flows_dir}/<task-slug>/<task-slug>.workflow
+   - {flows_dir}/<task-slug>/<task-slug>.workflow (or `<task-slug>.g4`)
 3. Review the source against `skills/fusion-flow/grammar/FusionFlow.g4`.
 4. Start it exactly once with the workspace `run_flow` tool, passing all declared inputs through
    `inputs_json` and any declared resource pools through `resource_capacities_json`.
@@ -1001,7 +1009,7 @@ Rules:
 2. Treat skills without `created_by: agent` as read-only.
 3. New learned procedures -> `skills/<skill-name>/SKILL.md` via `skill_manage(action="create")`.
 4. Reusable workflow templates -> `flows/curated/<flow-name>/FLOW.md` via `flow_manage`.
-5. Saved command workflows -> `flows/workflows/<slug>/<slug>.workflow` via existing file tools.
+5. Saved command workflows -> `flows/workflows/<slug>/<slug>.workflow` or `<slug>.g4` via existing file tools.
 6. One-off task executions -> `flows/<task-slug>/`.
 
 ### Agent execution
@@ -1010,7 +1018,7 @@ start an external engine CLI, create a second execution workspace, or invoke `ru
 Step. A Step may save a generated declaration but only the parent Session may launch it. The
 Step adapter resolves relative `read`/`write`/`edit` paths against this workspace root, independent
 of the Gateway or Session process working directory. The workflow source contains instructions and
-graph declarations only; never write API keys into the workspace or generated `.workflow` files."""
+graph declarations only; never write API keys into the workspace or generated `.workflow`/`.g4` files."""
 
     async def build_system_prompt(self, model: str | None = None, tool_names: list[str] | None = None) -> str:
         # Capability root (skills/tools/SOUL) vs user open-folder (file IO guidance).

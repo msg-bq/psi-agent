@@ -37,7 +37,6 @@ FLOW_METHODS = {
 }
 
 PACKAGE_EXPORTS = {
-    "Agent",
     "AgentConfig",
     "AgentHandle",
     "AgentInvocation",

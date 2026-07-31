@@ -31,6 +31,10 @@ flow_manage_tool = _load_module(
     "fusion_flow_workspace_flow_manage",
     _WORKSPACE_DIR / "tools" / "flow_manage.py",
 )
+run_flow_tool = _load_module(
+    "fusion_flow_workspace_run_flow",
+    _WORKSPACE_DIR / "tools" / "run_flow.py",
+)
 system_module = _load_module(
     "fusion_flow_workspace_system",
     _WORKSPACE_DIR / "systems" / "system.py",
@@ -62,6 +66,7 @@ async def test_prompt_keeps_natural_language_ux_and_uses_python_runner(tmp_path:
     assert "skills/fusion-flow/SKILL.md" in section
     assert "run_flow" in section
     assert ".workflow" in section
+    assert ".g4" in section
     assert "npx tsx" not in section
     assert "session_shim" not in section
     assert "flow_run(action=" not in section
@@ -105,3 +110,62 @@ async def test_flow_manage_creates_and_promotes_workflow_source(
 
     assert patched == "Curated flow patched: 'demo'"
     assert "max_concurrency(demo) == 1" in curated.read_text(encoding="utf-8")
+
+
+@pytest.mark.anyio
+async def test_flow_manage_prefers_workflow_and_falls_back_to_g4(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = anyio.Path(tmp_path)
+    flows = workspace / "flows"
+    dual = flows / "dual"
+    g4_only = flows / "g4-only"
+    adhoc = flows / "adhoc" / "adhoc-g4"
+    await dual.mkdir(parents=True)
+    await g4_only.mkdir(parents=True)
+    await adhoc.mkdir(parents=True)
+    await (dual / "dual.g4").write_text("g4 fallback", encoding="utf-8")
+    await (dual / "dual.workflow").write_text("workflow preferred", encoding="utf-8")
+    await (g4_only / "g4-only.g4").write_text("g4 task", encoding="utf-8")
+    await (adhoc / "flow.g4").write_text("g4 adhoc", encoding="utf-8")
+    monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path))
+
+    assert await flow_manage_tool.flow_manage("view", "dual", target="tasks") == "workflow preferred"
+    assert await flow_manage_tool.flow_manage("view", "g4-only", target="tasks") == "g4 task"
+    assert await flow_manage_tool.flow_manage("view", "adhoc-g4", target="adhoc") == "g4 adhoc"
+
+    listing = await flow_manage_tool.flow_manage("list", target="all")
+    assert "dual: dual.workflow" in listing
+    assert "g4-only: g4-only.g4" in listing
+    assert "adhoc-g4: flow.g4" in listing
+
+    duplicate = await flow_manage_tool.flow_manage(
+        "create",
+        "adhoc-g4",
+        target="adhoc",
+        flow_source="workflow replacement {}",
+    )
+    assert duplicate == "[Error] Adhoc flow already exists: 'adhoc-g4'"
+    assert not await (adhoc / "flow.workflow").exists()
+
+
+@pytest.mark.anyio
+async def test_run_flow_accepts_workflow_and_g4_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flows = anyio.Path(tmp_path) / "flows"
+    await flows.mkdir()
+    await (flows / "first.workflow").write_text("workflow first {}", encoding="utf-8")
+    await (flows / "second.g4").write_text("workflow second {}", encoding="utf-8")
+    await (flows / "unsupported.txt").write_text("workflow third {}", encoding="utf-8")
+    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
+
+    workflow_path = await run_flow_tool._resolve_flow_path("flows/first.workflow")
+    g4_path = await run_flow_tool._resolve_flow_path("flows/second.g4")
+
+    assert workflow_path.name == "first.workflow"
+    assert g4_path.name == "second.g4"
+    with pytest.raises(ValueError, match=r"\.workflow or \.g4"):
+        await run_flow_tool._resolve_flow_path("flows/unsupported.txt")

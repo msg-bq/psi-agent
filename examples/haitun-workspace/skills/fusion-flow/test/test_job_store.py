@@ -26,6 +26,7 @@ from fusion_flow.workflow_execution import (
 
 _WORKFLOW_ID = "review_workflow"
 _PLAN_DIGEST = "c" * 64
+_DEFINITION_DIGEST = "d" * 64
 
 
 @pytest.mark.anyio
@@ -33,7 +34,7 @@ async def test_job_store_round_trips_waiting_human_state(tmp_path: Any) -> None:
     store = JobStore(tmp_path / "runs")
     run = await store.create(
         flow_path="flows/review.workflow",
-        flow_source="const review: Workflow;",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={"proposal": {"version": 2}},
         resource_capacities={"gpu": ("gpu-a", "gpu-b"), "browser": 1},
     )
@@ -72,7 +73,9 @@ async def test_job_store_round_trips_waiting_human_state(tmp_path: Any) -> None:
 
     state_path = anyio.Path(tmp_path / "runs" / f"{run.run_id}.json")
     payload = json.loads(await state_path.read_text(encoding="utf-8"))
-    assert payload["version"] == 2
+    assert payload["version"] == 3
+    assert payload["definition_digest"] == _DEFINITION_DIGEST
+    assert "flow_source_digest" not in payload
     assert payload["prepared_request"]["request_id"] == request.request_id
     assert payload["checkpoint"] == {
         "workflow_id": _WORKFLOW_ID,
@@ -108,7 +111,7 @@ async def test_job_store_round_trips_partial_foreach_iterations(tmp_path: Any) -
     )
     run = await store.create(
         flow_path="foreach.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={"items": [1, 2, 3]},
         checkpoint=checkpoint,
     )
@@ -130,13 +133,12 @@ async def test_job_store_accepts_a_precomputed_workflow_definition_digest(tmp_pa
 
     run = await store.create(
         flow_path="flows/review.workflow",
-        flow_source="workflow source",
         definition_digest=definition_digest,
         inputs={},
     )
 
-    assert run.flow_source_digest == definition_digest
-    assert (await store.load(run.run_id)).flow_source_digest == definition_digest
+    assert run.definition_digest == definition_digest
+    assert (await store.load(run.run_id)).definition_digest == definition_digest
 
 
 @pytest.mark.anyio
@@ -144,7 +146,7 @@ async def test_job_store_persists_response_and_completed_outputs(tmp_path: Any) 
     store = JobStore(tmp_path)
     run = await store.create(
         flow_path="review.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={"request": "review"},
         checkpoint=ExecutionCheckpoint(
             workflow_id=_WORKFLOW_ID,
@@ -191,7 +193,7 @@ async def test_acquire_rejects_duplicate_active_run_and_releases_after_error(
     store = JobStore(tmp_path)
     run = await store.create(
         flow_path="flow.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={},
     )
 
@@ -220,7 +222,7 @@ async def test_process_guard_rejects_duplicate_when_os_backend_is_permissive(
     second_store = JobStore(os.path.join(str(root), "."))
     run = await first_store.create(
         flow_path="flow.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={},
     )
     backend_calls = 0
@@ -253,7 +255,7 @@ async def test_acquire_releases_lock_when_holder_is_cancelled(tmp_path: Any) -> 
     store = JobStore(tmp_path)
     run = await store.create(
         flow_path="flow.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={},
     )
     acquired = anyio.Event()
@@ -279,7 +281,7 @@ async def test_advisory_lock_is_released_after_holder_process_crashes(
     store = JobStore(tmp_path / "runs")
     run = await store.create(
         flow_path="flow.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={},
     )
     ready_path = anyio.Path(tmp_path / "child-holds-lock")
@@ -339,7 +341,7 @@ async def test_acquire_ignores_pre_advisory_lock_directory(tmp_path: Any) -> Non
     store = JobStore(tmp_path)
     run = await store.create(
         flow_path="flow.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={},
     )
     legacy_lock_dir = anyio.Path(tmp_path / "locks" / f"{run.run_id}.lock")
@@ -358,7 +360,7 @@ async def test_load_strictly_rejects_unknown_fields_and_filename_mismatch(
     store = JobStore(tmp_path)
     run = await store.create(
         flow_path="flow.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={},
     )
     state_path = anyio.Path(tmp_path / f"{run.run_id}.json")
@@ -371,7 +373,7 @@ async def test_load_strictly_rejects_unknown_fields_and_filename_mismatch(
 
 
 @pytest.mark.anyio
-async def test_load_rejects_legacy_unbound_checkpoint_schema(tmp_path: Any) -> None:
+async def test_load_rejects_pre_v3_state(tmp_path: Any) -> None:
     store = JobStore(tmp_path)
     checkpoint = ExecutionCheckpoint(
         workflow_id=_WORKFLOW_ID,
@@ -380,18 +382,38 @@ async def test_load_rejects_legacy_unbound_checkpoint_schema(tmp_path: Any) -> N
     )
     run = await store.create(
         flow_path="flow.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={},
         checkpoint=checkpoint,
     )
     state_path = anyio.Path(tmp_path / f"{run.run_id}.json")
     payload = json.loads(await state_path.read_text(encoding="utf-8"))
-    payload["version"] = 1
-    del payload["checkpoint"]["workflow_id"]
-    del payload["checkpoint"]["plan_digest"]
+    payload["version"] = 2
     await state_path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(InvalidRunStateError, match="unsupported run state version"):
+        await store.load(run.run_id)
+
+
+@pytest.mark.anyio
+async def test_load_rejects_checkpoint_without_foreach_iterations(tmp_path: Any) -> None:
+    store = JobStore(tmp_path)
+    run = await store.create(
+        flow_path="flow.workflow",
+        definition_digest=_DEFINITION_DIGEST,
+        inputs={},
+        checkpoint=ExecutionCheckpoint(
+            workflow_id=_WORKFLOW_ID,
+            plan_digest=_PLAN_DIGEST,
+            values={},
+        ),
+    )
+    state_path = anyio.Path(tmp_path / f"{run.run_id}.json")
+    payload = json.loads(await state_path.read_text(encoding="utf-8"))
+    del payload["checkpoint"]["foreach_iterations"]
+    await state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(InvalidRunStateError, match="checkpoint fields do not match schema"):
         await store.load(run.run_id)
 
 
@@ -404,7 +426,7 @@ async def test_load_rejects_non_integer_state_version(
     store = JobStore(tmp_path)
     run = await store.create(
         flow_path="flow.workflow",
-        flow_source="workflow",
+        definition_digest=_DEFINITION_DIGEST,
         inputs={},
     )
     state_path = anyio.Path(tmp_path / f"{run.run_id}.json")
@@ -430,7 +452,7 @@ def test_run_state_rejects_non_json_values_and_invalid_clarify_spec() -> None:
             run_id="a" * 32,
             status="running",
             flow_path="flow.workflow",
-            flow_source_digest="b" * 64,
+            definition_digest="b" * 64,
             inputs={"bad": float("nan")},
             resource_capacities={},
         )

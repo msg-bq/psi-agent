@@ -86,7 +86,7 @@ def test_cycle_is_valid_and_serialization_is_deterministic() -> None:
     ]
 
 
-def test_default_catalog_fields_preserve_the_exact_legacy_payload() -> None:
+def test_default_catalog_fields_have_one_canonical_payload() -> None:
     graph = WorkflowGraph(
         "legacy",
         (
@@ -122,6 +122,8 @@ def test_default_catalog_fields_preserve_the_exact_legacy_payload() -> None:
                 "timeout_seconds": 30,
                 "max_attempts": 2,
                 "resources": [{"resource_id": "cpu", "amount": 2}],
+                "independent": False,
+                "depends_on": [],
             }
         ],
         "artifacts": [
@@ -782,6 +784,7 @@ def test_explicit_step_dependencies_validate_and_round_trip_through_json() -> No
             "timeout_seconds": None,
             "max_attempts": 1,
             "resources": [],
+            "independent": False,
             "depends_on": ["first", "third"],
         },
         {
@@ -792,6 +795,8 @@ def test_explicit_step_dependencies_validate_and_round_trip_through_json() -> No
             "timeout_seconds": None,
             "max_attempts": 1,
             "resources": [],
+            "independent": False,
+            "depends_on": [],
         },
         {
             "step_id": "third",
@@ -801,6 +806,7 @@ def test_explicit_step_dependencies_validate_and_round_trip_through_json() -> No
             "timeout_seconds": None,
             "max_attempts": 1,
             "resources": [],
+            "independent": False,
             "depends_on": ["first", "second"],
         },
     ]

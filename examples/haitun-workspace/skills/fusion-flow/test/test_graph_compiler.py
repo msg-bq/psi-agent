@@ -128,6 +128,8 @@ def test_compiles_all_graph_operators() -> None:
                         "amount": 3,
                     }
                 ],
+                "independent": False,
+                "depends_on": [],
             }
         ],
         "artifacts": [

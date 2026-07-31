@@ -22,6 +22,7 @@ _WINDOWS_RESERVED_WORKFLOW_NAMES = {
     *(f"lpt{number}" for number in range(1, 10)),
 }
 _MAX_WORKFLOW_SOURCE_BYTES = 8 * 1024 * 1024
+_WORKFLOW_SOURCE_SUFFIXES = (".workflow", ".g4")
 
 
 class WorkflowSummary(TypedDict):
@@ -153,7 +154,7 @@ class WorkspaceManager:
         }
 
     async def list_workflows(self, workspace_path: str) -> list[WorkflowSummary]:
-        """List canonical reusable workflow declarations from one workspace."""
+        """List reusable workflow declarations, preferring ``.workflow`` over ``.g4``."""
 
         raw_workspace = workspace_path.strip() or str(Path.cwd())
         workspace = anyio.Path(raw_workspace)
@@ -201,23 +202,31 @@ class WorkspaceManager:
                     logger.warning(f"Skipping workflow directory outside registry: {entry!r}")
                     continue
 
-                source = resolved_entry / f"{name}.workflow"
-                if not await source.exists() or not await source.is_file() or await source.is_symlink():
+                source: anyio.Path | None = None
+                for suffix in _WORKFLOW_SOURCE_SUFFIXES:
+                    candidate = resolved_entry / f"{name}{suffix}"
+                    if not await candidate.exists():
+                        continue
+                    if not await candidate.is_file() or await candidate.is_symlink():
+                        logger.warning(f"Skipping invalid workflow source candidate: {candidate!r}")
+                        continue
+                    resolved_candidate = await candidate.resolve()
+                    if not Path(str(resolved_candidate)).is_relative_to(entry_native):
+                        logger.warning(f"Skipping workflow source outside its registry entry: {candidate!r}")
+                        continue
+                    if (await resolved_candidate.stat()).st_size > _MAX_WORKFLOW_SOURCE_BYTES:
+                        logger.warning(f"Skipping oversized workflow source: {candidate!r}")
+                        continue
+                    source = resolved_candidate
+                    break
+                if source is None:
                     logger.warning(f"Skipping incomplete workflow entry: {name!r}")
-                    continue
-
-                resolved_source = await source.resolve()
-                if not Path(str(resolved_source)).is_relative_to(entry_native):
-                    logger.warning(f"Skipping workflow entry with escaped files: {name!r}")
-                    continue
-                if (await resolved_source.stat()).st_size > _MAX_WORKFLOW_SOURCE_BYTES:
-                    logger.warning(f"Skipping oversized workflow source: {name!r}")
                     continue
 
                 workflows.append(
                     {
                         "name": name,
-                        "path": f"flows/workflows/{name}/{name}.workflow",
+                        "path": f"flows/workflows/{name}/{source.name}",
                     }
                 )
             except OSError as e:

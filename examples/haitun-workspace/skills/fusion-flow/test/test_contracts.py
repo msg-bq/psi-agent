@@ -85,7 +85,7 @@ def test_checker_reports_missing_instruction() -> None:
     assert any(item.severity == "error" and "has no step_instruction" in item.message for item in result.diagnostics)
 
 
-def test_checker_preserves_untyped_warning_when_graph_compilation_fails() -> None:
+def test_checker_rejects_untyped_executor_when_graph_compilation_fails() -> None:
     result = _check(
         """
         const output: Artifact;
@@ -102,11 +102,9 @@ def test_checker_preserves_untyped_warning_when_graph_compilation_fails() -> Non
 
     assert [(item.severity, item.message) for item in result.diagnostics] == [
         (
-            "warning",
-            "executor 'worker' for step 'work' has no explicit Agent, Human, or Program type; "
-            "legacy execution defaults it to Agent",
+            "error",
+            "step_executor must belong to exactly one of Human, Agent, or Program",
         ),
-        ("error", "step 'work' has no step_name"),
     ]
 
 

@@ -171,7 +171,7 @@ def test_skill_examples_compile_for_the_one_shot_runner() -> None:
 
     assert examples
     for index, source in enumerate(examples, start=1):
-        compiled = compile_workflow(source, strict_executors=True)
+        compiled = compile_workflow(source)
         assert set(compiled.executor_kinds.values()) == {"Agent"}, f"FusionFlow example {index}"
 
 

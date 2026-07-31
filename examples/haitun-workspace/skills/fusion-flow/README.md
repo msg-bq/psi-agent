@@ -25,10 +25,11 @@ state under `.psi/fusion-flow/runs/`.
 
 ## Workspace integration
 
-Reusable declarations use the fixed path
-`flows/workflows/<slug>/<slug>.workflow`. Saving, listing, and loading are
-upper-layer instructions implemented with existing file tools; this feature
-does not add a workflow-management operator or manifest protocol.
+Reusable declarations use `flows/workflows/<slug>/`. The canonical source is
+`<slug>.workflow`, falling back to `<slug>.g4` when the former is absent.
+Saving, listing, and loading are upper-layer instructions implemented with
+existing file tools; this feature does not add a workflow-management operator
+or manifest protocol.
 
 The frontend reuse command is exactly:
 
@@ -67,9 +68,9 @@ and script assets without resource requirements.
 - `fusion_flow/graph_compiler.py`: concrete `CoreIRCompiler` backend that builds `fusion_flow.workflow_graph` models.
 - `fusion_flow/workflow_runner.py`: fail-closed compile/plan/execute entry point with Agent, Human, Program, and checkpoint injection boundaries.
 - `fusion_flow/artifact_store.py`: atomic, workflow-local Markdown persistence for every materialized G4 Artifact.
-- `fusion_flow/job_store.py`: strict v2 JSON state plus non-blocking, OS-released advisory leases and an in-process guard for G4 runs waiting on Human input.
+- `fusion_flow/job_store.py`: strict v3 JSON state plus non-blocking, OS-released advisory leases and an in-process guard for G4 runs waiting on Human input.
 - `fusion_flow/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
-- `fusion_flow/execution/`: Python `flow.*` runtime, historical compatibility surface, and private `RunContext`-free retry/parallel helpers. Public Flow combinators and the G4 interpreter share them, while the workspace adapter reuses `run`/`agent`/`session` for G4 Agent leaves; immediate control combinators are not G4 graph bytecode.
+- `fusion_flow/execution/`: shared Python `flow.*` runtime and private `RunContext`-free retry/parallel helpers. Public Flow combinators and the G4 interpreter share them, while the workspace adapter reuses `run`/`agent`/`session` for G4 Agent leaves; immediate control combinators are not G4 graph bytecode.
 - `test/test_graph_compiler.py`: real Core IR to WorkflowGraph compiler contract checks.
 - `test/test_workflow_runner.py`: compile, plan, dependency, resource, and dispatch checks.
 - `test/execution/`: parity and shared Agent-session runtime regression tests.
@@ -143,7 +144,7 @@ The runner materializes every `./...` Step instruction through one injected
 instruction resolver before dispatching any Step, caches shared references, and
 passes the resulting text consistently to Agent, Human, and Program executors.
 The public workspace adapter accepts UTF-8 Markdown files relative to the
-containing `.workflow` file and rejects bundle escapes. If a validated
+containing `.workflow` or `.g4` file and rejects bundle escapes. If a validated
 Agent-only file cannot be read, the adapter delegates its normalized
 workspace-relative reference through that Agent's Step prompt; unreadable Human
 or Program instructions remain errors. Materialized text is included in the
@@ -153,7 +154,7 @@ inline Instruction text bypasses file resolution.
 Each Agent Step receives a `submit_step_result` tool whose schema requires its
 exact output Artifact IDs; a valid submission supplies the Step result, and the
 ephemeral agent turn closes after the current tool-call batch. Plain text remains
-a compatibility path only after a normally completed agent turn: the adapter
+a fallback path only after a normally completed agent turn: the adapter
 accepts one strict JSON object or one standalone, line-delimited `json` fence.
 If parsing still fails and the Step has exactly one output, the original response
 is bound to that Artifact verbatim and a structured warning is emitted without
@@ -287,9 +288,8 @@ types and compare recursively without Python coercions such as `True == 1`.
 Resume also validates known and unique operation IDs, dependency closure, and
 the exact materialized-value set. The public workspace resume boundary
 separately hashes the current workflow definition, including resolved Markdown
-instructions for new bundle-aware runs, and rejects a run when that digest
-differs from its persisted definition digest. Legacy source-only state-v2 runs
-resume with their original path-identity instruction semantics.
+instructions, and rejects a run when that digest differs from its persisted
+definition digest.
 
 Checkpoint observers publish state before releasing dependent operations.
 Human waits release resource leases and Session ownership; workflow and Step
@@ -299,12 +299,9 @@ uncheckpointed side-effecting Step can run again after resume; workflows should
 not place such a Step concurrently with a Human frontier when exactly-once
 effects matter.
 
-Persisted Human-run documents use the strict state-v2 schema, including the
-workflow/plan-bound checkpoint fields; incompatible versions and unknown or
-missing fields fail closed. The one compatibility exception is a state-v2
-checkpoint written before per-iteration state existed: an omitted
-`foreach_iterations` field is read as an empty tuple and is written explicitly
-on the next save.
+Persisted Human-run documents use the strict state-v3 schema, including the
+workflow/plan-bound checkpoint and per-iteration fields. Older versions and
+unknown or missing fields fail closed.
 
 Each run resume keeps an advisory lock file handle open for its lease. Lock-file
 existence is not ownership: the kernel releases the lock when the holder closes
@@ -334,7 +331,7 @@ G4 Artifacts. Successful iteration checkpoints are reused on resume.
 Human-backed foreach is rejected before dispatch until Human requests and
 responses carry iteration identity.
 Non-foreach Program Steps retain their existing `$fusion_flow/program_error`
-error-valued Artifact compatibility. In foreach, that reserved Program failure
+error-valued Artifact contract. In foreach, that reserved Program failure
 instead participates in per-item retry and then joins the aggregate exception.
 Feedback/input-plus-producer graphs and circular Artifact or explicit control
 awaits remain fail-closed execution-plan boundaries.
@@ -348,7 +345,7 @@ all tests from this directory so `fusion_flow` is on the runtime import path:
 uv run python -m pytest -q
 ```
 
-Resource pools stay outside `.workflow` source and are supplied by the
+Resource pools stay outside `.workflow`/`.g4` source and are supplied by the
 embedding tool or application as counts or concrete instance IDs.
 
 Variables, quantifiers, truth formulas, theories, rules, and query/SAT/optimization requests are intentionally absent because the reviewed workflow surface does not use them. Operator execution, concept registries and matching, validation, parsing, backend compilation, and Haitun activation remain separate workstreams.
@@ -379,16 +376,16 @@ their suspend/resume protocol remains graph-owned.
 `AgentConfig.system_prompt` is the only Python field for an Agent's stable
 system prompt. `AgentInvocation.prompt` remains the per-call prompt. The removed
 `AgentConfig.system` / `AgentConfig.prompt` constructor spellings are not
-compatibility aliases. Because the serialized config key changes to
-`system_prompt`, an old cached Agent call may execute again after this migration.
+compatibility aliases. Serialized Agent configs and cache identities use
+`system_prompt` directly.
 
 The workspace activation path now points at this directory. `skills/fusion-flow/`
 is the source of truth; the former Node/TypeScript Skill and `.flow.ts` runner
 are no longer shipped.
 
 `/workflow:<slug>` has explicit priority and resolves to
-`flows/workflows/<slug>/<slug>.workflow`. It is an upper-layer command, not a
-new operator.
+`flows/workflows/<slug>/<slug>.workflow`, falling back to `<slug>.g4`. It is an
+upper-layer command, not a new operator.
 
 ## Regenerating the Python parser
 
@@ -410,6 +407,6 @@ Commit only `FusionFlowLexer.py` and `FusionFlowParser.py`; the generated `.inte
 6. **Workflow Graph backend** owns `fusion_flow/graph_compiler.py`: compile real Core IR through the shared hooks into the `fusion_flow.workflow_graph` model while retaining residual assertions.
 7. **Planning warnings** owns `fusion_flow/planning.py`: after Haitun lists planned steps and before it authors the DSL, check their declared syntax mappings and warn about missing or unavailable names. Each item is already at `Step` granularity; this phase does not introduce a higher-level requirement model and cannot detect steps that Haitun failed to list.
 8. **Haitun integration** keeps the prompt, `run_flow`, and `flow_manage` entry points aligned with the G4 runtime.
-9. **Compatibility** preserves the external `flow` Skill identity and natural-language UX while failing closed on legacy `.flow.ts` input.
+9. **External identity** preserves the `flow` Skill name and natural-language UX while failing closed on `.flow.ts` input.
 
 Dependency order: 1 + 2 -> 3 -> 4 -> 5 -> 6; 2 -> 7; 4 + 5 + 7 -> 8. Workstream 9 runs throughout and gates activation.

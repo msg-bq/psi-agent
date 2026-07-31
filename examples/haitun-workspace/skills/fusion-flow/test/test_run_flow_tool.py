@@ -47,7 +47,7 @@ ForeachIterationCheckpoint = __import__(
 
 
 @pytest.mark.anyio
-async def test_run_flow_logs_untyped_warning_before_strict_rejection(
+async def test_run_flow_rejects_untyped_executor_without_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -64,7 +64,7 @@ async def test_run_flow_logs_untyped_warning_before_strict_rejection(
         filter=lambda record: record["extra"].get("event") == "fusion_flow.preflight_warning",
     )
     try:
-        with pytest.raises(ValueError, match="must be declared as exactly one"):
+        with pytest.raises(ValueError, match="step_executor must belong to exactly one"):
             await run_flow_tool.run_flow(
                 "flows/untyped.workflow",
                 '{"request": "report"}',
@@ -72,45 +72,7 @@ async def test_run_flow_logs_untyped_warning_before_strict_rejection(
     finally:
         run_flow_tool.logger.remove(handler_id)
 
-    assert [record["message"] for record in records] == [
-        "FusionFlow preflight warning: executor 'worker' for step 'status_step' has no explicit "
-        "Agent, Human, or Program type; legacy execution defaults it to Agent"
-    ]
-
-
-@pytest.mark.anyio
-async def test_run_flow_logs_untyped_warning_before_graph_rejection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _STATUS_ARTIFACT_WORKFLOW.replace("const worker: Agent;\n", "").replace(
-        '    step_name(status_step) == "Status";\n',
-        "",
-    )
-    flow_path = anyio.Path(tmp_path / "flows" / "untyped-invalid.workflow")
-    await flow_path.parent.mkdir(parents=True)
-    await flow_path.write_text(source, encoding="utf-8")
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
-
-    records: list[Any] = []
-    handler_id = run_flow_tool.logger.add(
-        lambda message: records.append(message.record),
-        filter=lambda record: record["extra"].get("event") == "fusion_flow.preflight_warning",
-    )
-    try:
-        with pytest.raises(ValueError, match="step 'status_step' has no step_name"):
-            await run_flow_tool.run_flow(
-                "flows/untyped-invalid.workflow",
-                '{"request": "report"}',
-            )
-    finally:
-        run_flow_tool.logger.remove(handler_id)
-
-    assert [record["message"] for record in records] == [
-        "FusionFlow preflight warning: executor 'worker' for step 'status_step' has no explicit "
-        "Agent, Human, or Program type; legacy execution defaults it to Agent"
-    ]
+    assert records == []
 
 
 class _FakeSendStream:
@@ -190,6 +152,22 @@ def _test_checkpoint(
         completed_step_ids=completed_step_ids,
         completed_selection_ids=completed_selection_ids,
     )
+
+
+def _install_definition_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    compiled = object()
+
+    def compile_workflow(source: str, *, flow_path: str) -> object:
+        del source, flow_path
+        return compiled
+
+    async def materialize_instruction_files(value: object, flow_path: str) -> dict[str, str]:
+        assert value is compiled
+        del flow_path
+        return {}
+
+    monkeypatch.setattr(run_flow_tool, "_compile_workflow_for_run", compile_workflow)
+    monkeypatch.setattr(run_flow_tool, "_materialize_instruction_files", materialize_instruction_files)
 
 
 def _program_invocation(
@@ -2104,70 +2082,6 @@ async def test_human_resume_rejects_changed_instruction_file(
     assert failed.error == "workflow definition changed after the Human request was prepared"
 
 
-@pytest.mark.anyio
-async def test_human_resume_preserves_legacy_source_digest_instruction_identity(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    legacy_source = _HUMAN_WORKFLOW.replace(
-        "./instructions/review.md",
-        "./instructions/review.txt",
-    )
-    flow_path = anyio.Path(tmp_path / "flows" / "review.workflow")
-    await flow_path.parent.mkdir(parents=True)
-    await flow_path.write_text(legacy_source, encoding="utf-8")
-    compiled = run_flow_tool.compile_workflow(legacy_source, strict_executors=True)
-    checkpoint = run_flow_tool.create_execution_checkpoint(
-        run_flow_tool.generate_plan(compiled.graph),
-        compiled.graph,
-        values={
-            "request": "write a launch plan",
-            "draft": "proposal-v1",
-        },
-        completed_step_ids=("draft_step",),
-    )
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    store = run_flow_tool._job_store()
-    run = await store.create(
-        flow_path="flows/review.workflow",
-        flow_source=legacy_source,
-        inputs={"request": "write a launch plan"},
-        checkpoint=checkpoint,
-    )
-    request = run_flow_tool.HumanRequestSpec.create(
-        step_id="review_step",
-        question="Approve?",
-        output_artifact_ids=("decision",),
-    )
-    waiting = replace(
-        run,
-        status="waiting_for_human",
-        prepared_request=request,
-    )
-    async with store.acquire(run.run_id) as lease:
-        await lease.save(waiting)
-
-    captured: list[str] = []
-
-    async def execute_workflow(source: str, **kwargs: Any) -> dict[str, object]:
-        assert source == legacy_source
-        resolver = kwargs["resolve_instruction"]
-        captured.append(await resolver("./instructions/review.txt"))
-        return {"result": "resumed"}
-
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
-    monkeypatch.setattr(run_flow_tool, "_execute_workflow", execute_workflow)
-
-    result = await run_flow_tool.run_flow_resume(
-        run.run_id,
-        request.request_id,
-        '"Approve"',
-    )
-
-    assert json.loads(result) == {"result": "resumed"}
-    assert captured == ["./instructions/review.txt"]
-
-
 def test_human_response_checkpoint_supports_zero_and_multiple_outputs() -> None:
     iteration = ForeachIterationCheckpoint(
         step_id="prior_map",
@@ -2221,10 +2135,11 @@ async def test_invalid_multi_output_human_response_remains_correctable(
     await flow_path.write_text(source, encoding="utf-8")
     monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
     monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    _install_definition_loader(monkeypatch)
     store = run_flow_tool._job_store()
     run = await store.create(
         flow_path="flows/review.workflow",
-        flow_source=source,
+        definition_digest=run_flow_tool._workflow_definition_digest(source, {}),
         inputs={"request": "review"},
         checkpoint=_test_checkpoint({"request": "review"}),
     )
@@ -2305,10 +2220,11 @@ async def test_retrying_previous_human_response_replays_current_request(
     await flow_path.write_text(source, encoding="utf-8")
     monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
     monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    _install_definition_loader(monkeypatch)
     store = run_flow_tool._job_store()
     run = await store.create(
         flow_path="flows/review.workflow",
-        flow_source=source,
+        definition_digest=run_flow_tool._workflow_definition_digest(source, {}),
         inputs={"request": "review"},
         checkpoint=_test_checkpoint(
             {"request": "review", "first_decision": True},
@@ -2369,7 +2285,7 @@ async def test_cancelled_resume_keeps_checkpoint_recoverable(
     store = run_flow_tool._job_store()
     run = await store.create(
         flow_path="flows/review.workflow",
-        flow_source=source,
+        definition_digest=run_flow_tool._workflow_definition_digest(source, {}),
         inputs={"request": "review"},
         checkpoint=_test_checkpoint(
             {"request": "review", "decision": "Approve"},
@@ -2434,7 +2350,7 @@ async def test_checkpoint_observer_commits_foreach_iteration_when_cancelled(
     store = run_flow_tool._job_store()
     run = await store.create(
         flow_path="flows/parallel.workflow",
-        flow_source=source,
+        definition_digest=run_flow_tool._workflow_definition_digest(source, {}),
         inputs={"items": ["a", "b"]},
         checkpoint=_test_checkpoint({"items": ["a", "b"]}),
     )
@@ -2516,7 +2432,7 @@ async def test_human_resume_rejects_changed_workflow_source(
     store = run_flow_tool._job_store()
     run = await store.create(
         flow_path="flows/changed.workflow",
-        flow_source=original_source,
+        definition_digest=run_flow_tool._workflow_definition_digest(original_source, {}),
         inputs={"request": "review"},
         checkpoint=_test_checkpoint({"request": "review"}),
     )

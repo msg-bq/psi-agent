@@ -42,6 +42,11 @@ from fusion_flow.workflow_graph import (
 )
 
 
+def test_workflow_control_signal_has_one_public_runtime_name() -> None:
+    assert WorkflowControlSignal.__name__ == "WorkflowControlSignal"
+    assert WorkflowControlSignal.__qualname__ == "WorkflowControlSignal"
+
+
 def _diamond_graph() -> WorkflowGraph:
     return WorkflowGraph(
         workflow_id="article",
@@ -114,8 +119,9 @@ def _select_graph(
 async def _unexpected_dispatch(
     step: StepNode,
     inputs: Mapping[str, object],
+    context: DispatchContext,
 ) -> Mapping[str, object]:
-    raise AssertionError((step, inputs))
+    raise AssertionError((step, inputs, context))
 
 
 def test_generate_plan_lowers_artifact_dependencies_to_awaits() -> None:
@@ -348,7 +354,7 @@ async def test_foreach_aggregates_by_input_order() -> None:
         generate_plan(graph),
         graph,
         inputs={"items": [1, 2, 3]},
-        contextual_dispatch=dispatch,
+        dispatch=dispatch,
     )
 
     assert outputs == {"result": [10, 20, 30]}
@@ -370,6 +376,7 @@ async def test_foreach_collects_failures_after_all_iterations_finish() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         del step
         item = cast(int, inputs["item"])
@@ -432,6 +439,7 @@ async def test_foreach_empty_input_materializes_empty_lists() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         nonlocal dispatch_count
         del step, inputs
@@ -460,6 +468,7 @@ async def test_foreach_parallelism_is_bounded_by_workflow() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         nonlocal active, maximum
         del step
@@ -501,6 +510,7 @@ async def test_foreach_is_parallel_when_concurrency_limits_are_omitted() -> None
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         nonlocal active, maximum
         del step
@@ -563,7 +573,7 @@ async def test_foreach_resources_and_retries_are_per_iteration() -> None:
             generate_plan(graph),
             graph,
             inputs={"items": [1, 2]},
-            contextual_dispatch=dispatch,
+            dispatch=dispatch,
             resource_capacities={"gpu": ("gpu-a",)},
         )
     assert attempts == {1: 2, 2: 2}
@@ -598,6 +608,7 @@ async def test_foreach_resumes_only_missing_iterations() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         del step
         item = cast(int, inputs["item"])
@@ -721,6 +732,7 @@ async def test_foreach_checkpoints_each_terminal_iteration_before_collection() -
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         del step
         return {"result": cast(int, inputs["item"]) * 10}
@@ -757,6 +769,7 @@ async def test_foreach_does_not_collect_workflow_control_signals() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         del step, inputs
         raise WorkflowControlSignal("pause")
@@ -779,6 +792,7 @@ async def test_foreach_does_not_collect_execution_invariant_errors() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         del step, inputs
         raise ExecutionPlanError("broken invariant")
@@ -822,6 +836,7 @@ async def test_foreach_does_not_retry_or_collect_allocator_invariants() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         nonlocal dispatch_count
         del step, inputs
@@ -905,7 +920,7 @@ async def test_plain_step_retry_releases_and_reacquires_lease_per_attempt() -> N
             generate_plan(graph),
             graph,
             inputs={},
-            contextual_dispatch=dispatch,
+            dispatch=dispatch,
             resource_capacities={"gpu": ("gpu-a",)},
         )
 
@@ -925,6 +940,7 @@ async def test_execute_plan_starts_ready_steps_in_parallel() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         if step.step_id == "research":
             return {"notes": inputs["topic"]}
@@ -964,6 +980,7 @@ async def test_execute_plan_enforces_explicit_dependency_without_data_edge() -> 
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         nonlocal prepare_completed
         assert inputs == {}
@@ -1000,6 +1017,7 @@ async def test_execute_plan_does_not_invoke_explicit_dependent_after_predecessor
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         assert inputs == {}
         invoked.append(step.step_id)
@@ -1033,6 +1051,7 @@ async def test_execute_plan_rejects_missing_plan_dependency() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         raise AssertionError((step, inputs))
 
@@ -1083,6 +1102,7 @@ async def test_execute_plan_rejects_circular_plan_awaits() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         raise AssertionError((step, inputs))
 
@@ -1103,6 +1123,7 @@ async def test_execute_plan_rejects_non_mapping_dispatcher_output() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> object:
         return [step.step_id, inputs]
 
@@ -1154,6 +1175,7 @@ async def test_execute_plan_eagerly_selects_named_artifact(
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         invoked.append(step.step_id)
         if step.step_id == "primary":
@@ -1235,6 +1257,7 @@ async def test_execute_plan_supports_chained_selects() -> None:
     async def dispatch(
         step: StepNode,
         inputs: Mapping[str, object],
+        _context: DispatchContext,
     ) -> Mapping[str, object]:
         if step.step_id == "consumer":
             return {"result": inputs["second_selected"]}
@@ -1517,7 +1540,11 @@ async def _assert_max_active(
     reached = anyio.Event()
     release = anyio.Event()
 
-    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         nonlocal active, maximum
         del step, inputs
         active += 1
@@ -1642,7 +1669,11 @@ async def test_resource_preflight_errors_dispatch_nothing(
     )
     dispatch_count = 0
 
-    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         nonlocal dispatch_count
         del step, inputs
         dispatch_count += 1
@@ -1673,7 +1704,11 @@ async def test_requirement_over_capacity_dispatches_nothing() -> None:
     )
     dispatch_count = 0
 
-    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         nonlocal dispatch_count
         del step, inputs
         dispatch_count += 1
@@ -1717,7 +1752,7 @@ async def test_context_contains_resource_lease() -> None:
         generate_plan(graph),
         graph,
         inputs={},
-        contextual_dispatch=dispatch,
+        dispatch=dispatch,
         resource_capacities={"gpu_device": 1},
     )
 
@@ -1752,7 +1787,7 @@ async def test_explicit_resource_instance_ids_are_preserved() -> None:
         generate_plan(graph),
         graph,
         inputs={},
-        contextual_dispatch=dispatch,
+        dispatch=dispatch,
         resource_capacities={"gpu_device": ("cuda:3",)},
     )
     assert instance_ids == ("cuda:3",)
@@ -1787,7 +1822,11 @@ async def test_resource_waiter_does_not_hold_global_slot() -> None:
     cpu_started = anyio.Event()
     release = anyio.Event()
 
-    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         del inputs
         started.add(step.step_id)
         if step.step_id == "a-gpu-holder":
@@ -1829,7 +1868,11 @@ async def test_resource_is_released_after_failure_timeout_and_cancel() -> None:
         )
     )
 
-    async def fail(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def fail(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         del step, inputs
         raise RuntimeError("failed")
 
@@ -1848,7 +1891,11 @@ async def test_resource_is_released_after_failure_timeout_and_cancel() -> None:
         )
     )
 
-    async def hang(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def hang(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         del step, inputs
         await anyio.sleep_forever()
         raise AssertionError("unreachable")
@@ -1858,7 +1905,11 @@ async def test_resource_is_released_after_failure_timeout_and_cancel() -> None:
 
     entered = anyio.Event()
 
-    async def cancellable(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def cancellable(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         del step, inputs
         entered.set()
         await anyio.sleep_forever()
@@ -1878,7 +1929,11 @@ async def test_resource_is_released_after_failure_timeout_and_cancel() -> None:
         await entered.wait()
         task_group.cancel_scope.cancel()
 
-    async def succeed(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def succeed(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         del step, inputs
         return {}
 
@@ -1892,7 +1947,11 @@ async def test_execute_plan_resumes_from_dependency_closed_checkpoint() -> None:
     plan = generate_plan(graph)
     invoked: list[str] = []
 
-    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         invoked.append(step.step_id)
         if step.step_id == "draft":
             return {"draft_text": inputs["notes"]}
@@ -2204,7 +2263,11 @@ async def test_checkpoint_observer_finishes_before_dependent_is_released() -> No
     publish_entered = anyio.Event()
     checkpoints: list[ExecutionCheckpoint] = []
 
-    async def dispatch(step: StepNode, inputs: Mapping[str, object]) -> Mapping[str, object]:
+    async def dispatch(
+        step: StepNode,
+        inputs: Mapping[str, object],
+        _context: DispatchContext,
+    ) -> Mapping[str, object]:
         assert inputs == {}
         if step.step_id == "publish":
             publish_entered.set()

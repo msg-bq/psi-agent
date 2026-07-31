@@ -27,8 +27,8 @@ For developers: start components independently, mix and match for debugging and 
 
 ## FusionFlow Python execution layer
 
-The legacy TypeScript-compatible execution primitives belong to the example
-Skill, not the `psi_agent` core package. Their source lives under
+The shared Python execution primitives belong to the example Skill, not the
+`psi_agent` core package. Their source lives under
 `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/`
 and is available as `fusion_flow.execution` when Python is run from that
 Skill directory:
@@ -52,8 +52,8 @@ async def main() -> None:
 anyio.run(main)
 ```
 
-Inject Agent calls with `run(..., runner=...)`, or call
-`Agent(config, runner=...)` independently outside a run. The `RunContext`
+Inject Agent calls with `run(..., runner=...)`, declare handles with
+`flow.agent(...)`, and invoke them with `flow.session(...)`. The `RunContext`
 passed to a program also exposes `ctx.flow`. Execute commands with
 `flow.exec(name, argv, ...)`. Configure automatic cleanup with
 `run(..., keep_count=50, keep_days=7)`; setting both values to `0` disables it.
@@ -65,9 +65,9 @@ other's resume cache. See the
 for the current alignment results and the
 [open questions](docs/architecture/workflow/2026-07-23-fusion-flow-python-runtime-open-questions.zh.md)
 for the historical design decisions.
-This compatibility layer is isolated beside the G4 parser/compiler. It is not
-yet connected to the G4 `WorkflowGraph` execution entry point and is not
-exported in the `psi_agent` wheel.
+This runtime is shared with the G4 interpreter for retry/parallel mechanics and
+for Agent leaves through `run`/`flow.agent`/`flow.session`. It is not exported
+in the `psi_agent` wheel.
 
 ## Quick Start
 
