@@ -8,6 +8,9 @@ Layout (per channel name, e.g. ``feishu``)::
             map.py       # required for kind=platform_map: map_event(raw) -> list[dict]
             produce.py   # required for kind=synthetic: async produce(ctx) -> None
 
+``kind=durable`` declares an event delivered by Event Daemon. It has no
+Channel-side executable and is retained as the agent package's event catalog.
+
 Session only receives envelopes via ``POST /events``. Business event
 registry lives here (agent package), not in ``session/event_protocol``.
 
@@ -44,12 +47,13 @@ class ChannelEventDef:
     dir_name: str
     name: str
     source: str
-    kind: str  # platform_map | synthetic
+    kind: str  # platform_map | synthetic | durable
     platform_event: str
     description: str
     map_fn: MapEventFn | None
     produce_fn: ProduceFn | None
     path: Path
+    cloudevent_type: str = ""
 
 
 async def load_channel_event_defs(agent_root: Path, channel: str) -> list[ChannelEventDef]:
@@ -84,6 +88,7 @@ async def load_channel_event_defs(agent_root: Path, channel: str) -> list[Channe
             kind = str(header.get("kind") or "platform_map").strip().casefold()
             platform_event = str(header.get("platform_event") or "").strip()
             description = str(header.get("description") or "").strip()
+            cloudevent_type = str(header.get("cloudevent_type") or "").strip()
             map_fn: MapEventFn | None = None
             produce_fn: ProduceFn | None = None
             map_file = entry / "map.py"
@@ -105,6 +110,10 @@ async def load_channel_event_defs(agent_root: Path, channel: str) -> list[Channe
                 produce_fn = await _load_produce_fn(Path(str(produce_file)), name)
                 if produce_fn is None:
                     continue
+            elif kind == "durable":
+                if not cloudevent_type:
+                    logger.error(f"{entry}: durable requires cloudevent_type")
+                    continue
             else:
                 logger.warning(f"{entry}: unknown kind {kind!r}; skipping")
                 continue
@@ -119,6 +128,7 @@ async def load_channel_event_defs(agent_root: Path, channel: str) -> list[Channe
                     map_fn=map_fn,
                     produce_fn=produce_fn,
                     path=Path(str(entry)),
+                    cloudevent_type=cloudevent_type,
                 )
             )
             logger.info(

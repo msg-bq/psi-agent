@@ -159,12 +159,17 @@ psi-agent
 ├── ai                        # 统一 AI 后端（支持 50+ provider）
 ├── gateway                   # 生命周期管理 + REST API + Web Console
 ├── session                    # Session + workspace 管理
+├── eventd                     # 独立事件监听、SQLite 持久化与租约队列
+├── event-consumer             # claim 事件并同步投递到 Session /events
 └── channel
     ├── repl                   # 交互式 REPL
     ├── cli                    # 单次消息
     ├── telegram               # Telegram bot
     └── feishu                 # 飞书 bot
 ```
+
+飞书审批的可靠监听见 [`docs/eventd.md`](docs/eventd.md)。`eventd` 必须作为独立
+OS 进程运行，不要把它加入与 AI、Session、Channel 同生共死的 `psi-agent run`。
 
 ## 传输协议
 
@@ -206,6 +211,8 @@ AI 和 Session 组件无需关心通信介质——由 `_sockets.py` 统一处�
 | `PSI_TELEGRAM_PROXY` | Telegram SOCKS5 代理 |
 | `PSI_FEISHU_APP_ID` | 飞书 app ID |
 | `PSI_FEISHU_APP_SECRET` | 飞书 app secret |
+| `PSI_EVENTD_TOKEN` | Event Daemon 本地消费 API bearer token |
+| `PSI_APPDATA` | Event Daemon SQLite、Session history 等 AppData 根 |
 
 CLI 参数优先于环境变量。AI 参数（provider、model、api_key、base_url）及 channel 认证参数均可选，未传时回退到环境变量。Socket 路径参数（--session-socket、--channel-socket、--ai-socket）为必填。
 

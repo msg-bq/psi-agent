@@ -60,6 +60,9 @@ class ChannelFeishu:
     respond_to_comments: bool = True
     """Doc comments: reply when the bot is @-mentioned in a comment. False disables comment subscription."""
 
+    respond_to_approvals: bool = True
+    """Legacy in-Channel approval DM push. Set False when independent Event Daemon owns approval ingress."""
+
     verbose: bool = False
     """Enable DEBUG-level logging."""
 
@@ -89,4 +92,5 @@ class ChannelFeishu:
             gateway_url=self.gateway_url,
             appdata=self.appdata,
             agent_root=agent_root,
+            respond_to_approvals=self.respond_to_approvals,
         )

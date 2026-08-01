@@ -333,3 +333,12 @@ async def compact_history(
 ### peek_pending / clear_pending 安全机制
 
 `Conversation.peek_pending()` 返回 pending chunks 的副本但**不清空** buffer——调用方在 yield 全部成功后显式调用 `clear_pending()`。这保证 channel 断开时 pending schedule chunks 不会永久丢失，下次请求会重新 push。
+
+## Event Daemon ACK 契约
+
+`POST /events` 除旧有 `matched` / `fired` 外返回 `failed` 和 `duplicate`。持久 Consumer
+只在全部匹配 Trigger 成功，或 Session 明确认出已成功处理的重复事件时 ACK；无
+Trigger、工具缺失、工具异常和 Agent turn 异常均 NACK。TriggerRegistry 按
+`idempotency_key + trigger.name` 记住本进程内已完成的单个 Trigger，部分成功重试时
+只重跑失败项；全部成功后再提交整事件 key。该内存记录只是消费端重复抑制，可靠
+队列和跨重启去重仍以 Event Daemon SQLite 为准。
