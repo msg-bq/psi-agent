@@ -258,7 +258,7 @@ AI 的 tool_calls 通过 SSE 流式传输——多个 chunk 中的 `delta.tool_c
 | 角色 | 位置 | 说明 |
 |------|------|------|
 | **统一接收** | ``session/server.py`` ``POST /events`` → ``SessionAgent.handle_event`` | 与 ``POST /chat/completions`` 并列；官方映射与合成事件**同一入口** |
-| **薄信封** | ``session/event_protocol.py`` | 校验形状（``source``/``event``/``payload``…），**无**业务事件 catalog 硬门槛 |
+| **薄信封** | ``session/event_protocol.py`` | 校验形状（``source``/``event``/``payload``…）；可选 ``cloud_event`` 必须是严格五字段 CloudEvent，**无**业务事件 catalog 硬门槛 |
 | **发放（挂钩）** | ``session/trigger_registry.py`` | 匹配 TRIGGER → ``fire`` |
 
 事件从哪来、叫什么业务名：见 agent 包 ``channel_events/`` + Channel 加载（接入说明在 ``examples/haitun-workspace/channel_events/README.md``）。
@@ -266,10 +266,26 @@ AI 的 tool_calls 通过 SSE 流式传输——多个 chunk 中的 `delta.tool_c
 | 概念 | 说明 |
 |------|------|
 | **channel_events** | Agent 包内按 Channel 维护的事件定义（≈ 加 tool）；含官方 ``platform_map`` 与预留 ``synthetic`` |
-| **信封** | ``event`` + ``payload``；可选 ``raw_event`` / ``raw_payload`` |
+| **信封** | ``event`` + object ``payload``；可选 ``raw_event`` / ``raw_payload`` / 严格五字段 ``cloud_event``。EventD 对非 object ``data`` 只在 ``payload`` 包为 ``{"value": ...}``，原类型由 ``cloud_event.data`` 完整保留 |
 | **匹配（刻意为之）** | 先 ``event``+``filter``；未命中再 ``raw_event``+``raw_filter`` |
 | **落盘挂钩** | ``{Session.agent}/triggers/``；haitun ``trigger_manage`` |
 | **kind** | ``trigger.silent`` / ``trigger.display`` |
+
+Trigger 的动态事件上下文合同：
+
+- ``fire=prompt``：即使 ``TRIGGER.md`` 有静态正文，也会在其后追加完整
+  ``EventEnvelope.context_json()``。JSON 放在 ``<psi_event_context>`` 分隔符中，
+  明确标为不可信数据；内容中的 ``<`` / ``>`` / ``&`` 会转义，不能提前闭合分隔符。
+  这只保护结构边界，不能消除语义 prompt injection；事件字段一律按攻击者可控处理，
+  不可逆副作用应交给会做 schema 与授权校验的工具。
+- ``fire=tool``：旧 Trigger 不变，仍只传静态 ``tool_args``。需要本次事件时显式配置
+  ``event_context_arg: event_json``，Session 将完整、确定性 JSON 字符串注入工具的
+  ``event_json: str`` 参数。参数名必须是合法 Python 标识符、工具必须声明该参数，
+  且禁止与静态 ``tool_args`` 同名，避免静态值伪造或覆盖动态事件。完整动态 JSON
+  不写入日志或持久 conversation history。
+- 上下文同时含 ``cloud_event``、``routing`` 和 ``idempotency_key``。EventD 的
+  ``idempotency_key`` 是 CloudEvent ``(source, id)`` 的确定性、无分隔符碰撞摘要；
+  业务副作用应使用它或原始 ``cloud_event.source + cloud_event.id`` 做幂等。
 
 无 TRIGGER 时事件仍可进门，matched/fired 为空（能力开、钩子关）。
 
@@ -333,3 +349,14 @@ async def compact_history(
 ### peek_pending / clear_pending 安全机制
 
 `Conversation.peek_pending()` 返回 pending chunks 的副本但**不清空** buffer——调用方在 yield 全部成功后显式调用 `clear_pending()`。这保证 channel 断开时 pending schedule chunks 不会永久丢失，下次请求会重新 push。
+
+## Event Daemon ACK 契约
+
+`POST /events` 除旧有 `matched` / `fired` 外返回 `failed` 和 `duplicate`。持久 Consumer
+只在全部匹配 Trigger 成功，或 Session 明确认出已成功处理的重复事件时 ACK；无
+Trigger、工具缺失、工具异常和 Agent turn 异常均 NACK。TriggerRegistry 按
+`idempotency_key + trigger.name` 记住已完成的单个 Trigger，部分成功重试时只重跑
+失败项；全部成功后再提交整事件 key。记录追加到 AppData
+`event_idempotency/{session_id}.jsonl`，普通 Session 重启后仍可识别已完成事件。
+这只能缩小「副作用完成、ACK 响应丢失」的重复窗口；严格幂等仍须由业务工具使用
+CloudEvent 或 delivery identity 保证。
