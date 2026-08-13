@@ -151,9 +151,7 @@ class _CoreIRVisitor:
     def visit_const_decl(self, context: Any) -> Constant:
         symbol = self._strip_quotes(context.constantName().getText())
         concepts = self._context.expand_concepts(
-            tuple(
-                dict.fromkeys(concept.getText() for concept in context.conceptNameList().conceptName())
-            )
+            tuple(dict.fromkeys(concept.getText() for concept in context.conceptNameList().conceptName()))
         )
         existing = self._constants.get(symbol)
         if existing is not None:

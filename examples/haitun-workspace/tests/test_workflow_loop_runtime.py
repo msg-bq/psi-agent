@@ -6,6 +6,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import anyio
 import pytest
@@ -151,10 +152,7 @@ async def test_loop_records_each_epoch_and_retry_attempt_timing() -> None:
     graph, plan = _counter_graph()
     graph = WorkflowGraph(
         workflow_id=graph.workflow_id,
-        steps=tuple(
-            replace(step, max_attempts=2) if step.step_id == "propose" else step
-            for step in graph.steps
-        ),
+        steps=tuple(replace(step, max_attempts=2) if step.step_id == "propose" else step for step in graph.steps),
         artifacts=graph.artifacts,
         edges=graph.edges,
         policy=graph.policy,
@@ -233,10 +231,7 @@ async def test_loop_epoch_plan_must_await_non_feedback_dependency() -> None:
         step_ids=loop.step_ids,
         terminal_step_id=loop.terminal_step_id,
         terminal_output_artifact_id=loop.terminal_output_artifact_id,
-        fibers=tuple(
-            Fiber(step_id, (Invoke(step_id),))
-            for step_id in ("propose", "advance", "terminal")
-        ),
+        fibers=tuple(Fiber(step_id, (Invoke(step_id),)) for step_id in ("propose", "advance", "terminal")),
     )
     invalid_plan = ExecutionPlan(
         workflow_id=plan.workflow_id,
@@ -486,11 +481,7 @@ async def test_loop_checkpoint_rejects_forged_completed_top_step() -> None:
         workflow_id=graph.workflow_id,
         steps=graph.steps,
         artifacts=graph.artifacts,
-        edges=tuple(
-            edge
-            for edge in graph.edges
-            if not (isinstance(edge, ConsumesEdge) and edge.step_id == "outside")
-        ),
+        edges=tuple(edge for edge in graph.edges if not (isinstance(edge, ConsumesEdge) and edge.step_id == "outside")),
         policy=graph.policy,
         selectors=graph.selectors,
     )
@@ -760,8 +751,8 @@ def test_job_store_round_trips_loop_checkpoint_and_reads_legacy_checkpoint() -> 
     assert decoded.checkpoint == checkpoint
 
     legacy = _run_to_json(run)
-    assert isinstance(legacy["checkpoint"], dict)
-    legacy["checkpoint"].pop("loops")
+    legacy_checkpoint = cast(dict[str, object], legacy["checkpoint"])
+    legacy_checkpoint.pop("loops")
     legacy_decoded = _run_from_json(legacy)
     assert legacy_decoded.checkpoint is not None
     assert legacy_decoded.checkpoint.loops == ()

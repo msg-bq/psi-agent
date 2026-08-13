@@ -628,8 +628,7 @@ def _normalize_terminal_output(
         value = result
     if type(value) is not bool:
         raise ValueError(
-            f"TerminalStep {step_id!r} must return strict Boolean true or false, "
-            f"got {type(value).__name__}"
+            f"TerminalStep {step_id!r} must return strict Boolean true or false, got {type(value).__name__}"
         )
     return {output_ids[0]: value}
 

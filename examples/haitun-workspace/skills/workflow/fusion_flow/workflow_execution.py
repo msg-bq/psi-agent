@@ -766,9 +766,7 @@ def _discover_feedback_loop(graph: WorkflowGraph) -> _FeedbackLoopDraft | None:
 
     step_ids = {step.step_id for step in graph.steps}
     artifact_by_id = {artifact.artifact_id: artifact for artifact in graph.artifacts}
-    producer_by_artifact = {
-        edge.artifact_id: edge.step_id for edge in graph.edges if isinstance(edge, ProducesEdge)
-    }
+    producer_by_artifact = {edge.artifact_id: edge.step_id for edge in graph.edges if isinstance(edge, ProducesEdge)}
     consumers_by_artifact: dict[str, set[str]] = {}
     foreach_steps: set[str] = set()
     for edge in graph.edges:
@@ -796,15 +794,11 @@ def _discover_feedback_loop(graph: WorkflowGraph) -> _FeedbackLoopDraft | None:
 
     if not cyclic_components:
         if terminals:
-            raise ExecutionPlanError(
-                f"TERMINAL_LOOP_NOT_FOUND: TerminalStep has no feedback component: {terminals}"
-            )
+            raise ExecutionPlanError(f"TERMINAL_LOOP_NOT_FOUND: TerminalStep has no feedback component: {terminals}")
         return None
     if len(cyclic_components) != 1:
         formatted = [sorted(component) for component in cyclic_components]
-        raise ExecutionPlanError(
-            f"MULTIPLE_FEEDBACK_COMPONENTS: only one feedback component is supported: {formatted}"
-        )
+        raise ExecutionPlanError(f"MULTIPLE_FEEDBACK_COMPONENTS: only one feedback component is supported: {formatted}")
     if len(terminals) != 1:
         code = "MISSING_TERMINAL_STEP" if not terminals else "MULTIPLE_TERMINAL_STEPS"
         raise ExecutionPlanError(f"{code}: feedback component requires exactly one TerminalStep: {terminals}")
@@ -839,9 +833,7 @@ def _discover_feedback_loop(graph: WorkflowGraph) -> _FeedbackLoopDraft | None:
         )
     )
     if not feedback_ids:
-        raise ExecutionPlanError(
-            "MISSING_INITIAL_STATE: cycle has no feedback Artifact initialized by input_workflow"
-        )
+        raise ExecutionPlanError("MISSING_INITIAL_STATE: cycle has no feedback Artifact initialized by input_workflow")
     produced_inputs = {
         artifact.artifact_id
         for artifact in graph.artifacts
@@ -877,9 +869,7 @@ def _discover_feedback_loop(graph: WorkflowGraph) -> _FeedbackLoopDraft | None:
     # the remaining same-epoch dependency and hide a residual cycle.
     feedback_set = set(feedback_ids)
     epoch_dependencies: dict[str, set[str]] = {
-        step.step_id: set(step.depends_on) & loop_steps
-        for step in graph.steps
-        if step.step_id in loop_steps
+        step.step_id: set(step.depends_on) & loop_steps for step in graph.steps if step.step_id in loop_steps
     }
     for artifact_id, consumers in consumers_by_artifact.items():
         if artifact_id in feedback_set:
@@ -914,9 +904,7 @@ def _generate_feedback_plan(graph: WorkflowGraph, loop: _FeedbackLoopDraft) -> E
 
     loop_steps = set(loop.step_ids)
     feedback_ids = set(loop.feedback_artifact_ids)
-    producer_by_artifact = {
-        edge.artifact_id: edge.step_id for edge in graph.edges if isinstance(edge, ProducesEdge)
-    }
+    producer_by_artifact = {edge.artifact_id: edge.step_id for edge in graph.edges if isinstance(edge, ProducesEdge)}
     consumed_by_step: dict[str, set[str]] = {step.step_id: set() for step in graph.steps}
     for edge in graph.edges:
         if isinstance(edge, ConsumesEdge | ForeachEdge):
@@ -1851,9 +1839,7 @@ async def _execute_plan_with_loops(
         elif isinstance(edge, ProducesEdge):
             produced[edge.step_id].append(edge.artifact_id)
     producer_by_artifact = {
-        artifact_id: step_id
-        for step_id, artifact_ids in produced.items()
-        for artifact_id in artifact_ids
+        artifact_id: step_id for step_id, artifact_ids in produced.items() for artifact_id in artifact_ids
     }
 
     loop_by_id: dict[str, LoopRegionPlan] = {}
@@ -1871,25 +1857,18 @@ async def _execute_plan_with_loops(
         if unknown_steps:
             raise ExecutionPlanError(f"loop {loop.loop_id!r} contains unknown steps: {sorted(unknown_steps)}")
         if loop.terminal_step_id not in loop_steps:
-            raise ExecutionPlanError(
-                f"loop {loop.loop_id!r} terminal step is not a member: {loop.terminal_step_id}"
-            )
+            raise ExecutionPlanError(f"loop {loop.loop_id!r} terminal step is not a member: {loop.terminal_step_id}")
         terminal = steps[loop.terminal_step_id]
         if getattr(terminal, "step_type", "Step") != "TerminalStep":
-            raise ExecutionPlanError(
-                f"loop {loop.loop_id!r} terminal {loop.terminal_step_id!r} must be a TerminalStep"
-            )
+            raise ExecutionPlanError(f"loop {loop.loop_id!r} terminal {loop.terminal_step_id!r} must be a TerminalStep")
         terminal_outputs = produced[loop.terminal_step_id]
         if terminal_outputs != [loop.terminal_output_artifact_id]:
             raise ExecutionPlanError(
-                f"TerminalStep {loop.terminal_step_id!r} must produce exactly "
-                f"{loop.terminal_output_artifact_id!r}"
+                f"TerminalStep {loop.terminal_step_id!r} must produce exactly {loop.terminal_output_artifact_id!r}"
             )
         terminal_artifact = artifacts.get(loop.terminal_output_artifact_id)
         if terminal_artifact is None or getattr(terminal_artifact, "artifact_type", "Artifact") != "BoolArtifact":
-            raise ExecutionPlanError(
-                f"TerminalStep {loop.terminal_step_id!r} output must be a BoolArtifact"
-            )
+            raise ExecutionPlanError(f"TerminalStep {loop.terminal_step_id!r} output must be a BoolArtifact")
         feedback_ids = set(loop.feedback_artifact_ids)
         if not feedback_ids:
             raise ExecutionPlanError(f"loop {loop.loop_id!r} has no feedback artifacts")
@@ -1924,9 +1903,7 @@ async def _execute_plan_with_loops(
     if sorted(top_invoked) != sorted(expected_top_steps):
         raise ExecutionPlanError("top-level plan must invoke every non-loop step exactly once")
 
-    plan_dependencies: dict[OperationId, set[OperationId]] = {
-        ("step", step_id): set() for step_id in steps
-    }
+    plan_dependencies: dict[OperationId, set[OperationId]] = {("step", step_id): set() for step_id in steps}
 
     def validate_dependency_coverage(
         fibers: Sequence[Fiber],
@@ -1943,9 +1920,7 @@ async def _execute_plan_with_loops(
                 if isinstance(instruction, Await):
                     unknown_steps = set(instruction.step_ids) - steps.keys()
                     if unknown_steps:
-                        raise ExecutionPlanError(
-                            f"{scope} awaits unknown steps: {sorted(unknown_steps)}"
-                        )
+                        raise ExecutionPlanError(f"{scope} awaits unknown steps: {sorted(unknown_steps)}")
                     awaited_steps.update(instruction.step_ids)
                     continue
                 if not isinstance(instruction, Invoke):
@@ -1956,11 +1931,7 @@ async def _execute_plan_with_loops(
                     producer_id = producer_by_artifact.get(artifact_id)
                     if producer_id is None:
                         continue
-                    if (
-                        loop is not None
-                        and artifact_id in feedback_ids
-                        and producer_id in loop_steps
-                    ):
+                    if loop is not None and artifact_id in feedback_ids and producer_id in loop_steps:
                         # Feedback reads are A_n snapshot reads.  Their loop
                         # producer stages A_(n+1), so it is not a same-epoch
                         # prerequisite and must not require an Await.
@@ -1969,8 +1940,7 @@ async def _execute_plan_with_loops(
                 missing_steps = required_steps - satisfied_steps
                 if missing_steps:
                     raise ExecutionPlanError(
-                        f"{scope} is missing dependencies for {instruction.step_id}: "
-                        f"{sorted(missing_steps)}"
+                        f"{scope} is missing dependencies for {instruction.step_id}: {sorted(missing_steps)}"
                     )
                 plan_dependencies[("step", instruction.step_id)].update(
                     ("step", step_id) for step_id in satisfied_steps
@@ -1982,19 +1952,13 @@ async def _execute_plan_with_loops(
         validate_dependency_coverage(loop.fibers, loop=loop)
     _reject_cycles(plan_dependencies)
 
-    checkpoint_dependencies: dict[str, set[str]] = {
-        step.step_id: set(step.depends_on) for step in graph.steps
-    }
+    checkpoint_dependencies: dict[str, set[str]] = {step.step_id: set(step.depends_on) for step in graph.steps}
     for step_id, artifact_ids in consumed.items():
         checkpoint_dependencies[step_id].update(
-            producer_by_artifact[artifact_id]
-            for artifact_id in artifact_ids
-            if artifact_id in producer_by_artifact
+            producer_by_artifact[artifact_id] for artifact_id in artifact_ids if artifact_id in producer_by_artifact
         )
     for (_, step_id), dependencies in plan_dependencies.items():
-        checkpoint_dependencies[step_id].update(
-            dependency_id for _, dependency_id in dependencies
-        )
+        checkpoint_dependencies[step_id].update(dependency_id for _, dependency_id in dependencies)
 
     completed_step_ids: set[str] = set()
     loop_checkpoints: dict[str, LoopExecutionCheckpoint] = {}
@@ -2031,9 +1995,7 @@ async def _execute_plan_with_loops(
                 )
             saved = loop_checkpoints.get(loop.loop_id)
             if completed_loop_steps and saved is None:
-                raise ExecutionPlanError(
-                    f"completed checkpoint loop {loop.loop_id!r} has no committed loop state"
-                )
+                raise ExecutionPlanError(f"completed checkpoint loop {loop.loop_id!r} has no committed loop state")
             if saved is None:
                 continue
             feedback_ids = set(loop.feedback_artifact_ids)
@@ -2052,9 +2014,7 @@ async def _execute_plan_with_loops(
                     "or inflight completed steps"
                 )
             required_external_steps = {
-                dependency
-                for step_id in loop.step_ids
-                for dependency in checkpoint_dependencies[step_id] - loop_steps
+                dependency for step_id in loop.step_ids for dependency in checkpoint_dependencies[step_id] - loop_steps
             }
             missing_external_steps = required_external_steps - completed_step_ids
             if missing_external_steps:
@@ -2075,30 +2035,24 @@ async def _execute_plan_with_loops(
                 terminal_value = values.get(loop.terminal_output_artifact_id)
                 if terminal_value is not True:
                     raise ExecutionPlanError(
-                        f"completed checkpoint loop {loop.loop_id!r} must materialize a true "
-                        "TerminalStep result"
+                        f"completed checkpoint loop {loop.loop_id!r} must materialize a true TerminalStep result"
                     )
 
         for step_id in sorted(completed_step_ids):
             missing_dependencies = checkpoint_dependencies[step_id] - completed_step_ids
             if missing_dependencies:
                 raise ExecutionPlanError(
-                    f"loop checkpoint is not dependency-closed for {step_id}: "
-                    f"missing {sorted(missing_dependencies)}"
+                    f"loop checkpoint is not dependency-closed for {step_id}: missing {sorted(missing_dependencies)}"
                 )
 
         expected_checkpoint_values = set(expected_inputs)
         expected_checkpoint_values.update(
-            artifact_id
-            for step_id in completed_step_ids - loop_by_step.keys()
-            for artifact_id in produced[step_id]
+            artifact_id for step_id in completed_step_ids - loop_by_step.keys() for artifact_id in produced[step_id]
         )
         for loop in plan.loops:
             if set(loop.step_ids) <= completed_step_ids:
                 expected_checkpoint_values.update(
-                    artifact_id
-                    for step_id in loop.step_ids
-                    for artifact_id in produced[step_id]
+                    artifact_id for step_id in loop.step_ids for artifact_id in produced[step_id]
                 )
             elif loop.loop_id in loop_checkpoints:
                 expected_checkpoint_values.update(loop.feedback_artifact_ids)
@@ -2123,11 +2077,7 @@ async def _execute_plan_with_loops(
     if allocator is None:
         allocator = ResourceAllocator(resource_capacities or {})
     await allocator.preflight(
-        {
-            step.step_id: step.resources
-            for step in graph.steps
-            if step.step_id not in completed_step_ids
-        }
+        {step.step_id: step.resources for step in graph.steps if step.step_id not in completed_step_ids}
     )
     admission_state = _AdmissionState(max_concurrency=graph.policy.max_concurrency)
     completed_steps = {step_id: anyio.Event() for step_id in steps}
@@ -2169,10 +2119,7 @@ async def _execute_plan_with_loops(
 
         async def run_attempt(attempt: int) -> dict[str, object]:
             async with allocator._admit(step.resources, state=admission_state) as resource_lease:
-                logger.debug(
-                    f"Dispatching workflow step: {invocation_id} "
-                    f"(attempt {attempt}/{step.max_attempts})"
-                )
+                logger.debug(f"Dispatching workflow step: {invocation_id} (attempt {attempt}/{step.max_attempts})")
                 context = DispatchContext(
                     resource_lease=resource_lease,
                     invocation_id=invocation_id,
@@ -2211,17 +2158,19 @@ async def _execute_plan_with_loops(
                 return validated
 
         try:
-            result = (await _retry_operation(
-                run_attempt,
-                max_attempts=step.max_attempts,
-                initial_delay=0,
-                backoff_factor=1,
-                max_delay=0,
-                should_retry=lambda error, attempt: _is_ordinary_step_error(error),
-                on_retry=lambda error, attempt: logger.warning(
-                    f"Retrying workflow step {invocation_id} after {type(error).__name__}: {error}"
-                ),
-            ))[0]
+            result = (
+                await _retry_operation(
+                    run_attempt,
+                    max_attempts=step.max_attempts,
+                    initial_delay=0,
+                    backoff_factor=1,
+                    max_delay=0,
+                    should_retry=lambda error, attempt: _is_ordinary_step_error(error),
+                    on_retry=lambda error, attempt: logger.warning(
+                        f"Retrying workflow step {invocation_id} after {type(error).__name__}: {error}"
+                    ),
+                )
+            )[0]
         except BaseException as error:
             if metadata is not None:
                 _record_step_timing(
@@ -2277,9 +2226,7 @@ async def _execute_plan_with_loops(
             try:
                 step_inputs = {artifact_id: values[artifact_id] for artifact_id in consumed[step_id]}
             except KeyError as error:
-                raise ExecutionPlanError(
-                    f"step {step_id!r} input artifact is unavailable: {error.args[0]!r}"
-                ) from None
+                raise ExecutionPlanError(f"step {step_id!r} input artifact is unavailable: {error.args[0]!r}") from None
             outputs = await invoke(step, step_inputs)
             async with commit_lock:
                 candidate_values = {**values, **outputs}
@@ -2305,8 +2252,7 @@ async def _execute_plan_with_loops(
                 initializer_id = producer_by_artifact.get(artifact_id)
                 if initializer_id is None or initializer_id in loop_by_step:
                     raise ExecutionPlanError(
-                        f"loop {loop.loop_id!r} has no independent initial value for "
-                        f"feedback artifact {artifact_id!r}"
+                        f"loop {loop.loop_id!r} has no independent initial value for feedback artifact {artifact_id!r}"
                     )
                 await completed_steps[initializer_id].wait()
             try:
@@ -2360,9 +2306,7 @@ async def _execute_plan_with_loops(
                         )
                     step_id = instruction.step_id
                     if step_id not in completed_events:
-                        raise ExecutionPlanError(
-                            f"loop {loop.loop_id!r} epoch invokes non-member step: {step_id}"
-                        )
+                        raise ExecutionPlanError(f"loop {loop.loop_id!r} epoch invokes non-member step: {step_id}")
                     step_inputs: dict[str, object] = {}
                     async with staged_lock:
                         for artifact_id in consumed[step_id]:
@@ -2401,8 +2345,7 @@ async def _execute_plan_with_loops(
             missing_feedback = feedback_ids - epoch_values.keys()
             if missing_feedback:
                 raise ExecutionPlanError(
-                    f"loop {loop.loop_id!r} did not stage every next state in epoch {epoch}: "
-                    f"{sorted(missing_feedback)}"
+                    f"loop {loop.loop_id!r} did not stage every next state in epoch {epoch}: {sorted(missing_feedback)}"
                 )
             try:
                 terminal_value = epoch_values[loop.terminal_output_artifact_id]

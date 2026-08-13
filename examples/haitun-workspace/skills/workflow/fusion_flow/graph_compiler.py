@@ -578,9 +578,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             if step_draft.step_type != "TerminalStep":
                 continue
             terminal_outputs = sorted(
-                edge.artifact_id
-                for edge in edges
-                if isinstance(edge, ProducesEdge) and edge.step_id == step_id
+                edge.artifact_id for edge in edges if isinstance(edge, ProducesEdge) and edge.step_id == step_id
             )
             if step_draft.produces_declarations == 0:
                 implicit_id = f"$fusion_flow/terminal/{step_id}/done"
@@ -595,15 +593,12 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 edges.add(ProducesEdge(step_id=step_id, artifact_id=implicit_id))
                 terminal_outputs = [implicit_id]
             elif step_draft.produces_declarations != 1 or len(terminal_outputs) != 1:
-                raise WorkflowGraphCompilationError(
-                    f"TerminalStep {step_id!r} must produce exactly one BoolArtifact"
-                )
+                raise WorkflowGraphCompilationError(f"TerminalStep {step_id!r} must produce exactly one BoolArtifact")
 
             terminal_output = artifacts[terminal_outputs[0]]
             if terminal_output.artifact_type != "BoolArtifact":
                 raise WorkflowGraphCompilationError(
-                    f"TerminalStep {step_id!r} output {terminal_output.artifact_id!r} "
-                    "must be declared as BoolArtifact"
+                    f"TerminalStep {step_id!r} output {terminal_output.artifact_id!r} must be declared as BoolArtifact"
                 )
 
         try:
@@ -876,11 +871,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         if isinstance(value, Constant):
             return (value,) if cls._has_concept(value, "Artifact") else ()
         if isinstance(value, CompoundTerm):
-            return tuple(
-                constant
-                for argument in value.arguments
-                for constant in cls._artifact_constants(argument)
-            )
+            return tuple(constant for argument in value.arguments for constant in cls._artifact_constants(argument))
         if isinstance(value, Assertion):
             return (*cls._artifact_constants(value.lhs), *cls._artifact_constants(value.rhs))
         if isinstance(value, ConnectiveFormula):

@@ -672,19 +672,14 @@ class WorkflowGraph:
             if step.step_type != "TerminalStep":
                 continue
             terminal_outputs = sorted(
-                artifact_id
-                for artifact_id, producer_id in producers.items()
-                if producer_id == step.step_id
+                artifact_id for artifact_id, producer_id in producers.items() if producer_id == step.step_id
             )
             if len(terminal_outputs) != 1:
-                raise WorkflowGraphError(
-                    f"TerminalStep {step.step_id!r} must produce exactly one BoolArtifact"
-                )
+                raise WorkflowGraphError(f"TerminalStep {step.step_id!r} must produce exactly one BoolArtifact")
             terminal_output = artifacts_by_id[terminal_outputs[0]]
             if terminal_output.artifact_type != "BoolArtifact":
                 raise WorkflowGraphError(
-                    f"TerminalStep {step.step_id!r} output {terminal_output.artifact_id!r} "
-                    "must be a BoolArtifact"
+                    f"TerminalStep {step.step_id!r} output {terminal_output.artifact_id!r} must be a BoolArtifact"
                 )
 
         # A global value needed by a consumer, foreach, or workflow output must
