@@ -27,7 +27,9 @@ state_a[n + 1] = update_a(state_a[n], state_b[n])
 state_b[n + 1] = update_b(state_a[n], state_b[n])
 ```
 
-同一个 Artifact 表示一条按 epoch 版本化的状态流。源码不为了运行时版本增加 `state_a_next` 等普通 Artifact。
+同一个 feedback Artifact 表示一条按 epoch 版本化的状态流。源码不需要为了
+runtime 版本机制增加 `state_a_next` 等第二状态 identity；作者仍可声明普通的
+`next_state` 业务中间值, 再由唯一 commit Step 把它写回原 feedback Artifact。
 
 ## 反馈状态识别
 
@@ -173,36 +175,35 @@ consumes(check_convergence) == [delta];
 下面的 `while` 只用于解释运行行为, 不进入 FusionFlow 源码:
 
 ```python
-state = initial_engineering_state
+def loop_engineering(state):
+    while True:
+        work = discover(state)
+        candidate = engineer(state, work)
+        verification = verify(state, candidate)
+        next_state = advance(state, work, candidate, verification)
+        done = should_stop(work, verification)
+        state = commit(next_state)
 
-while True:
-    work = inspect_and_plan(state)
-    candidate = engineer(state, work)
-    verification = verify(state, work, candidate)
-
-    next_state = advance(state, work, candidate, verification)
-    done = check_complete(verification)  # strict bool, no other output
-
-    # epoch barrier: next_state 和 done 都成功后才能提交
-    state = commit(next_state)
-
-    if done:
-        return state
+        if done:
+            return state
 ```
 
-`candidate` 和 `verification` 是本轮真实业务 Artifact, 不是为了拼写 `state[n+1]` 而增加的冗余状态。由于普通 `consumes(state)` 只能读取 committed `state[n]`, verifier 需要通过 `candidate` 读取本轮待验证改动。
+`next_state` 是本轮中间 Artifact。`commit` 消费它并成为反馈 Artifact
+`state` 的唯一 next writer。真正的原子提交仍由 epoch barrier 完成, 因此
+这个 `commit` Step 不能执行不可回滚的外部副作用。
 
 ### 逐轮关系
 
 ```text
-work[n]         = inspect_and_plan(state[n])
+work[n]         = discover(state[n])
 candidate[n]    = engineer(state[n], work[n])
-verification[n] = verify(state[n], work[n], candidate[n])
-state[n + 1]    = advance(state[n], work[n], candidate[n], verification[n])
-done[n]         = check_complete(verification[n])
+verification[n] = verify(state[n], candidate[n])
+next_state[n]   = advance(state[n], work[n], candidate[n], verification[n])
+done[n]         = should_stop(work[n], verification[n])
+state[n + 1]    = commit(next_state[n])
 ```
 
-`advance_step` 与 `terminal_step` 读取同一份 `verification[n]`, 避免“终止判断通过, 但提交状态使用了另一套依据”。barrier 等待 `state[n+1]` 与 `done[n]` 都成功:
+barrier 等待 `state[n+1]` 与 `done[n]` 都成功:
 
 - `done[n] == false`: 提交 `state[n+1]`, 开始第 `n+1` 轮;
 - `done[n] == true`: 提交 `state[n+1]`, 将它作为最终工程状态发布;
@@ -213,229 +214,186 @@ done[n]         = check_complete(verification[n])
 该示例只增加 `TerminalStep` 和 `BoolArtifact` 两个 catalog concept。所有 operator 都来自现有 G4 工作流写法:
 
 ```fusionflow
-const engineering_state: Artifact;
-const discovered_work: Artifact;
-const candidate_change: Artifact;
+const state: Artifact;
+const work: Artifact;
+const candidate: Artifact;
 const verification: Artifact;
+const next_state: Artifact;
 const done: BoolArtifact;
 
-const inspect_step: Step;
-const engineer_step: Step;
-const verify_step: Step;
-const advance_step: Step;
-const terminal_step: TerminalStep;
+const discover: Step;
+const engineer: Step;
+const verify: Step;
+const advance: Step;
+const commit: Step;
+const should_stop: TerminalStep;
 
-const inspect_agent: Agent, Executor;
+const discover_agent: Agent, Executor;
 const engineer_agent: Agent, Executor;
 const verify_agent: Agent, Executor;
 const advance_agent: Agent, Executor;
-const terminal_agent: Agent, Executor;
+const commit_agent: Agent, Executor;
+const stop_agent: Agent, Executor;
 
 workflow loop_engineering {
-  -- DATA FLOW
-  input_workflow(loop_engineering) == [engineering_state];
+  input_workflow(loop_engineering) == [state];
 
-  consumes(inspect_step) == [engineering_state];
-  produces(inspect_step) == [discovered_work];
+  consumes(discover) == [state];
+  produces(discover) == [work];
 
-  consumes(engineer_step) == [engineering_state, discovered_work];
-  produces(engineer_step) == [candidate_change];
+  consumes(engineer) == [state, work];
+  produces(engineer) == [candidate];
 
-  consumes(verify_step) ==
-    [engineering_state, discovered_work, candidate_change];
-  produces(verify_step) == [verification];
+  consumes(verify) == [state, candidate];
+  produces(verify) == [verification];
 
-  consumes(advance_step) ==
-    [engineering_state, discovered_work, candidate_change, verification];
-  produces(advance_step) == [engineering_state];
+  consumes(advance) == [state, work, candidate, verification];
+  produces(advance) == [next_state];
 
-  consumes(terminal_step) == [verification];
-  produces(terminal_step) == [done];
+  consumes(should_stop) == [work, verification];
+  produces(should_stop) == [done];
 
-  output_workflow(loop_engineering) == [engineering_state];
+  consumes(commit) == [next_state];
+  produces(commit) == [state];
 
-  -- EXECUTORS
-  step_executor(inspect_step) == inspect_agent;
-  step_executor(engineer_step) == engineer_agent;
-  step_executor(verify_step) == verify_agent;
-  step_executor(advance_step) == advance_agent;
-  step_executor(terminal_step) == terminal_agent;
+  output_workflow(loop_engineering) == [state];
 
-  -- STEP CONTRACTS
-  step_name(inspect_step) == "Inspect and Plan";
-  step_instruction(inspect_step) == "Inspect engineering_state and return concrete unresolved work, relevant evidence, priorities, and acceptance criteria as discovered_work.";
+  step_executor(discover) == discover_agent;
+  step_executor(engineer) == engineer_agent;
+  step_executor(verify) == verify_agent;
+  step_executor(advance) == advance_agent;
+  step_executor(should_stop) == stop_agent;
+  step_executor(commit) == commit_agent;
 
-  step_name(engineer_step) == "Engineer Candidate";
-  step_instruction(engineer_step) == "Use engineering_state and discovered_work to produce one candidate_change as an isolated patch or candidate workspace snapshot that can be verified before commit.";
+  step_name(discover) == "Discover";
+  step_instruction(discover) == "Return discover(state) as work.";
 
-  step_name(verify_step) == "Verify Candidate";
-  step_instruction(verify_step) == "Verify candidate_change against the baseline and acceptance criteria in engineering_state and discovered_work. Return a structured verification with one acceptance verdict, test evidence, regressions, and remaining work.";
+  step_name(engineer) == "Engineer";
+  step_instruction(engineer) == "Return engineer(state, work) as candidate.";
 
-  step_name(advance_step) == "Advance Engineering State";
-  step_instruction(advance_step) == "Produce the next engineering_state from engineering_state, discovered_work, candidate_change, and verification. Incorporate only verified progress and preserve all evidence and remaining work required by the next epoch.";
+  step_name(verify) == "Verify";
+  step_instruction(verify) == "Return verify(state, candidate) as verification.";
 
-  step_name(terminal_step) == "Check Completion";
-  step_instruction(terminal_step) == "Read verification and return exactly true iff its acceptance verdict says every required criterion passed; otherwise return exactly false. Produce no diagnostic or business data.";
+  step_name(advance) == "Advance";
+  step_instruction(advance) == "Return advance(state, work, candidate, verification) as next_state.";
+
+  step_name(should_stop) == "Should Stop";
+  step_instruction(should_stop) == "Return exactly should_stop(work, verification) as strict Boolean done.";
+
+  step_name(commit) == "Commit Next State";
+  step_instruction(commit) == "Return commit(next_state) as state without external side effects.";
 }
 ```
 
-这里显式声明 `done` 便于 trace。若不需要从源码引用它, 可以同时删除:
-
-```fusionflow
-const done: BoolArtifact;
-produces(terminal_step) == [done];
-```
-
-compiler 随后为 `terminal_step` 合成唯一的内部 `BoolArtifact`。不能只删其中一行。
+这里 `should_stop` 本身就是 `TerminalStep`, 因而 `done` 是它唯一且封闭的
+`BoolArtifact` 输出。
 
 ## ReAct Loop
 
-### 标准行为伪代码
-
-标准 ReAct 带有一个 `Action | Final` 分支:
+### 行为伪代码
 
 ```python
-state = initial_react_state
+def react(prompt, env, max_steps):
+    for step in range(max_steps):
+        thought, action = reason(prompt)
+        observation, done = env.step(action)
+        prompt = update(prompt, thought, action, observation)
 
-while True:
-    decision = reason_once(state)  # ToolCall(tool, args) | Final(answer)
-
-    if decision is Final:
-        next_state = append_final(state, decision.answer)
-        done = True
-    else:
-        observation = dispatch_one_tool(decision.tool, decision.args)
-        next_state = append_turn(state, decision, observation)
-        done = False
-
-    # epoch barrier
-    state = commit(next_state)
-
-    if done:
-        return state.final_answer
+        if done:
+            return action
 ```
 
-这段伪代码说明 ReAct 的业务行为, 不是建议为 G4 新增 `while` 或命令式 `if`。
-
-### 适合当前 eager 数据流的归一化形式
-
-当前数据流不会因为 `TerminalStep` 返回 `true` 而回滚并跳过已经 ready 的普通 Step。因此 G4 示例必须把 action 归一化为一个总函数:
-
-```python
-decision = reason_once(state)
-observation = dispatch_or_noop(decision)
-next_state = append_decision_and_observation(state, decision, observation)
-done = is_final(decision)
-
-state = commit(next_state)  # next_state 与 done 都成功后
-if done:
-    return state.final_answer
-```
-
-其硬契约是:
-
-```text
-dispatch_or_noop(ToolCall) = 执行恰好一个指定工具并返回 observation
-dispatch_or_noop(Final)    = 不执行任何工具, 返回无副作用 final observation
-```
+`step` 对应 runtime epoch, `max_steps` 对应 host 的 `max_loop_epochs` 安全上限。
+`env` 是 `env_step` 的 executor, 不是 Artifact。这份代码每轮都会调用一次
+`env.step(action)`, 然后检查同一次调用返回的 `done`。
 
 逐轮关系为:
 
 ```text
-decision[n]     = reason_once(state[n])
-observation[n]  = dispatch_or_noop(decision[n])
-state[n + 1]    = update(state[n], decision[n], observation[n])
-done[n]         = is_final(decision[n])
+(thought[n], action[n])    = reason(prompt[n])
+(observation[n], done[n])  = env.step(action[n])
+prompt[n + 1]              = update(prompt[n], thought[n], action[n], observation[n])
+loop_done[n]               = terminal(done[n]) = done[n]
 ```
 
 ### FusionFlow 声明
 
 ```fusionflow
-const react_state: Artifact;
-const decision: Artifact;
+const prompt: Artifact;
+const thought: Artifact;
+const action: Artifact;
 const observation: Artifact;
-const final_answer: Artifact;
+const done: BoolArtifact;
+const loop_done: BoolArtifact;
 
-const reason_step: Step;
-const action_step: Step;
-const update_step: Step;
-const terminal_step: TerminalStep;
-const extract_answer_step: Step;
+const reason: Step;
+const env_step: Step;
+const update: Step;
+const terminal: TerminalStep;
 
-const reason_agent: Agent, Executor;
-const action_agent: Agent, Executor;
-const update_agent: Agent, Executor;
-const terminal_agent: Agent, Executor;
-const answer_agent: Agent, Executor;
+const reason_executor: Agent, Executor;
+const env: Agent, Executor;
+const update_executor: Agent, Executor;
+const terminal_validator: Program, Executor;
 
-workflow react_loop {
-  -- LOOP DATA FLOW
-  input_workflow(react_loop) == [react_state];
+workflow react {
+  input_workflow(react) == [prompt];
 
-  consumes(reason_step) == [react_state];
-  produces(reason_step) == [decision];
+  consumes(reason) == [prompt];
+  produces(reason) == [thought, action];
 
-  consumes(action_step) == [decision];
-  produces(action_step) == [observation];
+  consumes(env_step) == [action];
+  produces(env_step) == [observation, done];
 
-  consumes(update_step) == [react_state, decision, observation];
-  produces(update_step) == [react_state];
+  consumes(update) == [prompt, thought, action, observation];
+  produces(update) == [prompt];
 
-  -- The BoolArtifact result is implicit.
-  consumes(terminal_step) == [decision];
+  consumes(terminal) == [done];
+  produces(terminal) == [loop_done];
 
-  -- This consumer runs only after successful loop termination.
-  consumes(extract_answer_step) == [react_state];
-  produces(extract_answer_step) == [final_answer];
+  output_workflow(react) == [action];
 
-  output_workflow(react_loop) == [final_answer];
+  step_executor(reason) == reason_executor;
+  step_executor(env_step) == env;
+  step_executor(update) == update_executor;
+  step_executor(terminal) == terminal_validator;
+  program_path(terminal_validator) == "./skills/workflow/examples/terminal_identity.py";
 
-  -- EXECUTORS
-  step_executor(reason_step) == reason_agent;
-  step_executor(action_step) == action_agent;
-  step_executor(update_step) == update_agent;
-  step_executor(terminal_step) == terminal_agent;
-  step_executor(extract_answer_step) == answer_agent;
+  step_name(reason) == "Reason";
+  step_instruction(reason) == "Read prompt and produce thought and action as two separate outputs. Do not execute action.";
 
-  -- STEP CONTRACTS
-  step_name(reason_step) == "Reason Once";
-  step_instruction(reason_step) == "Read react_state and return exactly one structured decision: either ToolCall with one tool name and arguments, or Final with one answer. Do not execute a tool.";
+  step_name(env_step) == "env.step";
+  step_instruction(env_step) == "Execute env.step(action) exactly once and produce observation and strict Boolean done as two separate outputs.";
 
-  step_name(action_step) == "Act Once Or No-op";
-  step_instruction(action_step) == "Read decision. For ToolCall, execute exactly the selected allowed tool once and return its observation. For Final, execute no tool and return a side-effect-free final observation.";
+  step_name(update) == "Update Prompt";
+  step_instruction(update) == "Return update(prompt, thought, action, observation) as the next prompt.";
 
-  step_name(update_step) == "Update ReAct State";
-  step_instruction(update_step) == "Append decision and observation to react_state and produce the next react_state. For Final, store the final answer and mark the state complete; for ToolCall, preserve everything required by the next reasoning epoch.";
-
-  step_name(terminal_step) == "Detect Final Decision";
-  step_instruction(terminal_step) == "Read decision and return exactly true for Final and exactly false for ToolCall. Produce no other output.";
-
-  step_name(extract_answer_step) == "Extract Final Answer";
-  step_instruction(extract_answer_step) == "Read the successfully terminated final react_state and return its stored final answer.";
+  step_name(terminal) == "If Done";
+  step_instruction(terminal) == "Validate done and produce loop_done with exactly the same strict Boolean value.";
 }
 ```
 
-该例故意使用 `TerminalStep` 的隐式输出形式, 因而没有声明 `done` 或书写 `produces(terminal_step)`。compiler 仍会创建唯一的内部 `BoolArtifact`。
-
-`extract_answer_step` 不属于循环。它虽然消费同名 `react_state`, 但只有成功终止后才会被环外 completion readiness 唤醒, 因而读取的是最终 committed state。
+`done` 是 `env_step` 产生的业务 Boolean。`loop_done` 是 `terminal` 产生的
+封闭 loop-control Boolean。两者使用不同 Artifact ID, 避免两个 Step 同时写
+`done`。`terminal_identity.py` 只校验并原样返回 `done`, 不重新判断业务条件。
 
 ### 这个例子完成了什么, 尚缺什么
 
 新的反馈与终止语义已经能声明:
 
-- `state[n] -> decision[n] -> observation[n] -> state[n+1]`;
-- `Final` 的严格 Boolean 终止判断;
-- `true` 时先提交包含 final answer 的 `state[n+1]`, 再发布结果;
-- 中间 state 不泄漏给环外 consumer。
+- `prompt[n] -> thought/action -> observation/done -> prompt[n+1]`;
+- 对 `env.step` 返回值的严格 Boolean 终止判断;
+- `true` 时先提交 `prompt[n+1]`, 再发布终止轮的 `action`;
+- 中间轮的 `action` 不作为 workflow output 发布。
 
 但 `TerminalStep` 只解决循环终止, 不自动提供以下能力:
 
-- `ToolCall` 中 tool name 的结构类型与静态校验;
-- 一个可观察的“动态派发恰好一次” runtime primitive;
-- lazy branch activation, 即在 `Final` 时由 planner 根本不调度 action Step;
+- `env.step` 内部 action 类型与静态校验;
+- 一个可观察的动态工具派发 primitive;
 - 外部工具副作用的 exactly-once。
 
-因此, 在 `action_step` 仍是当前黑盒 Agent executor 时, 该 G4 能表达 ReAct 的外层反馈结构, 但还不能证明 ReAct 已完全自举。达到自举标准至少还要让 `action_step` 的 one-action dispatch / Final no-op 成为可检查的 executor 契约, 而不是只写在自然语言 instruction 中。
+因此, 在 `env_step` 仍是黑盒 executor 时, 该 G4 能逐项表达这段 ReAct
+外层反馈结构, 但不能证明 `env.step` 内部的工具副作用具有 exactly-once 语义。
 
 ## 必需静态诊断
 

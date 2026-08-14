@@ -615,7 +615,7 @@ Use free-form quoted text only where the typed catalog expects an `Instruction` 
 7. **Inlining a large source document as an instruction.** Keep the task specification in the instruction and pass source material through an input Artifact.
 8. **Relaying an external tool's secret through workflow source.** Let the tool read its own configuration; never encode credentials in constants.
 9. **Sharing mutable state between parallel branches.** Use artifacts and explicit producer/consumer relations.
-10. **Inventing `while`, `for`, `termination_signal`, or a separate `state_next` Artifact.** A feedback state keeps one Artifact identity across epochs; termination is represented by the `TerminalStep` subtype.
+10. **Inventing `while`, `for`, `termination_signal`, or a second feedback-state identity.** The committed feedback state keeps one Artifact identity across epochs. A transient `next_state` produced inside the epoch is valid only when one ordinary commit Step consumes it and remains the unique writer of the original feedback state.
 11. **Using a general Artifact or truthy value as loop control.** A TerminalStep has exactly one `BoolArtifact` output and must return the strict Boolean `true` or `false`.
 
 ### Declarative feedback rules
@@ -659,9 +659,10 @@ feedback, and any residual cycle. A host may supply `max_loop_epochs` as a
 safety guard; do not invent an iteration-limit operator in source.
 
 Use `examples/loop_engineering.workflow` and `examples/react_loop.workflow` as
-the complete reference sources. The ReAct example is deliberately eager:
-`Final` still schedules the current epoch's action Step, whose executor must
-guarantee a side-effect-free no-op for that decision.
+the complete reference sources. The ReAct example follows the source loop
+literally: `reason` produces `thought` and `action`, `env_step` produces
+`observation` and business `done`, `update` writes the next `prompt`, and a
+separate `TerminalStep` validates `done` as closed loop control.
 
 ### Code template
 

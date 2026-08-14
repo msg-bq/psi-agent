@@ -335,8 +335,9 @@ They use the existing declaration and dataflow syntax; there is no `while`,
 `for`, or `termination_signal` operator. The terminal `produces` assertion may
 name one explicit `BoolArtifact`, or it may be omitted entirely so lowering
 creates an internal Boolean result. An explicit empty list is not omission.
-The BoolArtifact is closed loop control: it cannot be a workflow output or an
-input to another Step.
+The BoolArtifact produced by the `TerminalStep` is closed loop control: it
+cannot be a workflow output or an input to another Step. Ordinary business
+BoolArtifacts may still flow into the terminal predicate.
 
 Each epoch commits its complete next-state vector at one barrier. `false`
 commits and starts the next epoch; `true` commits that same `n+1` vector, then
@@ -349,8 +350,9 @@ remain fail closed.
 Complete checked sources are available in
 [`examples/loop_engineering.workflow`](examples/loop_engineering.workflow) and
 [`examples/react_loop.workflow`](examples/react_loop.workflow). The ReAct form
-is the eager dataflow normalization: a `Final` decision requires its action
-Step to be a guaranteed side-effect-free no-op in that epoch.
+follows `reason(prompt)`, `env.step(action)`, `update(...)`, and `if done`
+directly. Its ordinary `done` Artifact is validated by a separate
+`TerminalStep`, whose closed `loop_done` output controls the feedback loop.
 
 This remains a workspace-local package rather than a wheel dependency. The
 graph interpreter stays in `workflow_execution.py`, while executor behavior is

@@ -13,6 +13,7 @@ import pytest
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_SKILL_ROOT = WORKSPACE_ROOT / "skills" / "workflow"
+WORKFLOW_EXAMPLES_ROOT = WORKFLOW_SKILL_ROOT / "examples"
 if str(WORKFLOW_SKILL_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKFLOW_SKILL_ROOT))
 
@@ -39,6 +40,11 @@ from fusion_flow.workflow_graph import (  # noqa: E402
     ProducesEdge,
     StepNode,
     WorkflowGraph,
+)
+from fusion_flow.workflow_runner import (  # noqa: E402
+    CompletionContext,
+    ProgramInvocation,
+    execute_workflow,
 )
 
 
@@ -145,6 +151,79 @@ async def test_loop_commits_next_state_before_termination_and_hides_intermediate
     loop_contexts = [context for context in contexts if context.loop_id == "terminal"]
     assert {context.epoch for context in loop_contexts} == {0, 1, 2}
     assert all(context.invocation_id.startswith("terminal@") for context in loop_contexts)
+
+
+@pytest.mark.anyio
+async def test_reference_react_loop_executes_to_final_action() -> None:
+    source = await anyio.Path(WORKFLOW_EXAMPLES_ROOT / "react_loop.workflow").read_text(encoding="utf-8")
+
+    async def complete(prompt: str, context: CompletionContext) -> object:
+        del prompt
+        if context.step_id == "reason":
+            prompt_value = _int_value(context.inputs, "prompt")
+            return {"thought": f"thought-{prompt_value}", "action": prompt_value + 1}
+        if context.step_id == "env_step":
+            action = _int_value(context.inputs, "action")
+            return {"observation": f"observation-{action}", "done": action >= 3}
+        if context.step_id == "update":
+            return {"prompt": context.inputs["action"]}
+        raise AssertionError(f"unexpected Agent step: {context.step_id}")
+
+    async def run_program(invocation: ProgramInvocation) -> str:
+        assert invocation.name == "terminal_validator"
+        assert invocation.argv == ("./skills/workflow/examples/terminal_identity.py",)
+        assert invocation.cwd == WORKSPACE_ROOT
+        assert invocation.binding_name == "terminal"
+        assert invocation.output_ids == ("loop_done",)
+        assert invocation.terminal is True
+        assert type(invocation.inputs["done"]) is bool
+        program_path = WORKSPACE_ROOT / invocation.argv[0]
+        result = await anyio.run_process(
+            [sys.executable, str(program_path)],
+            input=invocation.stdin.encode(),
+        )
+        return result.stdout.decode()
+
+    outputs = await execute_workflow(
+        source,
+        inputs={"prompt": 0},
+        complete=complete,
+        work_dir=WORKSPACE_ROOT,
+        run_program=run_program,
+        max_loop_epochs=5,
+    )
+
+    assert outputs == {"action": 3}
+
+
+@pytest.mark.anyio
+async def test_reference_loop_engineering_executes_to_committed_state() -> None:
+    source = await anyio.Path(WORKFLOW_EXAMPLES_ROOT / "loop_engineering.workflow").read_text(encoding="utf-8")
+
+    async def complete(prompt: str, context: CompletionContext) -> object:
+        del prompt
+        if context.step_id == "discover":
+            return {"work": _int_value(context.inputs, "state") + 1}
+        if context.step_id == "engineer":
+            return {"candidate": context.inputs["work"]}
+        if context.step_id == "verify":
+            return {"verification": context.inputs["candidate"]}
+        if context.step_id == "advance":
+            return {"next_state": context.inputs["candidate"]}
+        if context.step_id == "should_stop":
+            return _int_value(context.inputs, "verification") >= 3
+        if context.step_id == "commit":
+            return {"state": context.inputs["next_state"]}
+        raise AssertionError(f"unexpected Agent step: {context.step_id}")
+
+    outputs = await execute_workflow(
+        source,
+        inputs={"state": 0},
+        complete=complete,
+        max_loop_epochs=5,
+    )
+
+    assert outputs == {"state": 3}
 
 
 @pytest.mark.anyio

@@ -302,8 +302,8 @@ def test_cycle_remaining_inside_one_epoch_is_reported_as_version_ambiguity() -> 
 @pytest.mark.parametrize(
     ("filename", "feedback_artifact_id", "terminal_step_id", "outside_step_ids"),
     (
-        ("loop_engineering.workflow", "engineering_state", "terminal_step", ()),
-        ("react_loop.workflow", "react_state", "terminal_step", ("extract_answer_step",)),
+        ("loop_engineering.workflow", "state", "should_stop", ()),
+        ("react_loop.workflow", "prompt", "terminal", ()),
     ),
 )
 def test_reference_feedback_workflow_compiles_to_expected_loop_region(

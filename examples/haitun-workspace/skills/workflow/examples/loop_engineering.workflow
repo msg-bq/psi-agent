@@ -1,59 +1,69 @@
-const engineering_state: Artifact;
-const discovered_work: Artifact;
-const candidate_change: Artifact;
+const state: Artifact;
+const work: Artifact;
+const candidate: Artifact;
 const verification: Artifact;
+const next_state: Artifact;
 const done: BoolArtifact;
 
-const inspect_step: Step;
-const engineer_step: Step;
-const verify_step: Step;
-const advance_step: Step;
-const terminal_step: TerminalStep;
+const discover: Step;
+const engineer: Step;
+const verify: Step;
+const advance: Step;
+const commit: Step;
+const should_stop: TerminalStep;
 
-const inspect_agent: Agent, Executor;
+const discover_agent: Agent, Executor;
 const engineer_agent: Agent, Executor;
 const verify_agent: Agent, Executor;
 const advance_agent: Agent, Executor;
-const terminal_agent: Agent, Executor;
+const commit_agent: Agent, Executor;
+const stop_agent: Agent, Executor;
 
 workflow loop_engineering {
-  input_workflow(loop_engineering) == [engineering_state];
+  input_workflow(loop_engineering) == [state];
 
-  consumes(inspect_step) == [engineering_state];
-  produces(inspect_step) == [discovered_work];
+  consumes(discover) == [state];
+  produces(discover) == [work];
 
-  consumes(engineer_step) == [engineering_state, discovered_work];
-  produces(engineer_step) == [candidate_change];
+  consumes(engineer) == [state, work];
+  produces(engineer) == [candidate];
 
-  consumes(verify_step) == [engineering_state, discovered_work, candidate_change];
-  produces(verify_step) == [verification];
+  consumes(verify) == [state, candidate];
+  produces(verify) == [verification];
 
-  consumes(advance_step) == [engineering_state, discovered_work, candidate_change, verification];
-  produces(advance_step) == [engineering_state];
+  consumes(advance) == [state, work, candidate, verification];
+  produces(advance) == [next_state];
 
-  consumes(terminal_step) == [verification];
-  produces(terminal_step) == [done];
+  consumes(should_stop) == [work, verification];
+  produces(should_stop) == [done];
 
-  output_workflow(loop_engineering) == [engineering_state];
+  consumes(commit) == [next_state];
+  produces(commit) == [state];
 
-  step_executor(inspect_step) == inspect_agent;
-  step_executor(engineer_step) == engineer_agent;
-  step_executor(verify_step) == verify_agent;
-  step_executor(advance_step) == advance_agent;
-  step_executor(terminal_step) == terminal_agent;
+  output_workflow(loop_engineering) == [state];
 
-  step_name(inspect_step) == "Inspect and Plan";
-  step_instruction(inspect_step) == "Inspect engineering_state and return unresolved work, evidence, priorities, and acceptance criteria.";
+  step_executor(discover) == discover_agent;
+  step_executor(engineer) == engineer_agent;
+  step_executor(verify) == verify_agent;
+  step_executor(advance) == advance_agent;
+  step_executor(should_stop) == stop_agent;
+  step_executor(commit) == commit_agent;
 
-  step_name(engineer_step) == "Engineer Candidate";
-  step_instruction(engineer_step) == "Use engineering_state and discovered_work to produce one isolated candidate_change that can be verified before commit.";
+  step_name(discover) == "Discover";
+  step_instruction(discover) == "Return discover(state) as work.";
 
-  step_name(verify_step) == "Verify Candidate";
-  step_instruction(verify_step) == "Verify candidate_change against the baseline and acceptance criteria. Return one verdict, test evidence, regressions, and remaining work.";
+  step_name(engineer) == "Engineer";
+  step_instruction(engineer) == "Return engineer(state, work) as candidate.";
 
-  step_name(advance_step) == "Advance Engineering State";
-  step_instruction(advance_step) == "Produce the next engineering_state. Incorporate only verified progress and preserve evidence and remaining work for the next epoch.";
+  step_name(verify) == "Verify";
+  step_instruction(verify) == "Return verify(state, candidate) as verification.";
 
-  step_name(terminal_step) == "Check Completion";
-  step_instruction(terminal_step) == "Return exactly true iff verification says every required criterion passed; otherwise return exactly false.";
+  step_name(advance) == "Advance";
+  step_instruction(advance) == "Return advance(state, work, candidate, verification) as next_state.";
+
+  step_name(should_stop) == "Should Stop";
+  step_instruction(should_stop) == "Return exactly should_stop(work, verification) as strict Boolean done.";
+
+  step_name(commit) == "Commit Next State";
+  step_instruction(commit) == "Return commit(next_state) as state without external side effects.";
 }

@@ -1,59 +1,53 @@
-const react_state: Artifact;
-const decision: Artifact;
+const prompt: Artifact;
+const thought: Artifact;
+const action: Artifact;
 const observation: Artifact;
-const final_answer: Artifact;
+const done: BoolArtifact;
+const loop_done: BoolArtifact;
 
-const reason_step: Step;
-const action_step: Step;
-const update_step: Step;
-const terminal_step: TerminalStep;
-const extract_answer_step: Step;
+const reason: Step;
+const env_step: Step;
+const update: Step;
+const terminal: TerminalStep;
 
-const reason_agent: Agent, Executor;
-const action_agent: Agent, Executor;
-const update_agent: Agent, Executor;
-const terminal_agent: Agent, Executor;
-const answer_agent: Agent, Executor;
+const reason_executor: Agent, Executor;
+const env: Agent, Executor;
+const update_executor: Agent, Executor;
+const terminal_validator: Program, Executor;
 
-workflow react_loop {
-  input_workflow(react_loop) == [react_state];
+workflow react {
+  input_workflow(react) == [prompt];
 
-  consumes(reason_step) == [react_state];
-  produces(reason_step) == [decision];
+  consumes(reason) == [prompt];
+  produces(reason) == [thought, action];
 
-  consumes(action_step) == [decision];
-  produces(action_step) == [observation];
+  consumes(env_step) == [action];
+  produces(env_step) == [observation, done];
 
-  consumes(update_step) == [react_state, decision, observation];
-  produces(update_step) == [react_state];
+  consumes(update) == [prompt, thought, action, observation];
+  produces(update) == [prompt];
 
-  -- TerminalStep may omit produces; lowering creates one internal BoolArtifact.
-  consumes(terminal_step) == [decision];
+  -- done is env.step's result; loop_done is closed loop control.
+  consumes(terminal) == [done];
+  produces(terminal) == [loop_done];
 
-  -- This consumer is released only after successful loop termination.
-  consumes(extract_answer_step) == [react_state];
-  produces(extract_answer_step) == [final_answer];
+  output_workflow(react) == [action];
 
-  output_workflow(react_loop) == [final_answer];
+  step_executor(reason) == reason_executor;
+  step_executor(env_step) == env;
+  step_executor(update) == update_executor;
+  step_executor(terminal) == terminal_validator;
+  program_path(terminal_validator) == "./skills/workflow/examples/terminal_identity.py";
 
-  step_executor(reason_step) == reason_agent;
-  step_executor(action_step) == action_agent;
-  step_executor(update_step) == update_agent;
-  step_executor(terminal_step) == terminal_agent;
-  step_executor(extract_answer_step) == answer_agent;
+  step_name(reason) == "Reason";
+  step_instruction(reason) == "Read prompt and produce thought and action as two separate outputs. Do not execute action.";
 
-  step_name(reason_step) == "Reason Once";
-  step_instruction(reason_step) == "Read react_state and return exactly one ToolCall or Final decision. Do not execute a tool.";
+  step_name(env_step) == "env.step";
+  step_instruction(env_step) == "Execute env.step(action) exactly once and produce observation and strict Boolean done as two separate outputs.";
 
-  step_name(action_step) == "Act Once Or No-op";
-  step_instruction(action_step) == "For ToolCall, execute exactly the selected allowed tool once and return its observation. For Final, execute no tool and return a side-effect-free final observation.";
+  step_name(update) == "Update Prompt";
+  step_instruction(update) == "Return update(prompt, thought, action, observation) as the next prompt.";
 
-  step_name(update_step) == "Update ReAct State";
-  step_instruction(update_step) == "Append decision and observation to react_state. For Final, store the final answer; otherwise preserve everything required by the next reasoning epoch.";
-
-  step_name(terminal_step) == "Detect Final Decision";
-  step_instruction(terminal_step) == "Return exactly true for Final and exactly false for ToolCall. Produce no other output.";
-
-  step_name(extract_answer_step) == "Extract Final Answer";
-  step_instruction(extract_answer_step) == "Read the successfully terminated final react_state and return its stored final answer.";
+  step_name(terminal) == "If Done";
+  step_instruction(terminal) == "Validate done and produce loop_done with exactly the same strict Boolean value.";
 }
