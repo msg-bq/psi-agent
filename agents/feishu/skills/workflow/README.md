@@ -61,6 +61,32 @@ canonical reusable declarations under `flows/workflows/<slug>/`.
 - `fusion_flow/planning.py`: before workflow authoring, checks the syntax mappings declared for each planned step against the syntax names actually available. Each planned step maps to one catalog `Step` identity, which authoring expands into a typed constant and its assertions.
 - `fusion_flow/execution/`: shared Python `flow.*` runtime; the G4 adapter reuses `run`/`agent`/`session`, and the graph interpreter reuses its private retry and bounded-parallel helpers.
 
+## Local authoring dataset
+
+`workflow_sample_record` writes one immutable JSON file per first authoring or
+later user adjustment:
+
+```text
+<AppData>/workflow-samples/<flow-key>/<event-id>.json
+```
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | Record format version; currently `1`. |
+| `event_id` | Random ID of this immutable snapshot. |
+| `flow_key` | SHA-256 of the local workspace plus relative flow path. It groups versions without storing the absolute path. |
+| `created_at` | UTC time the snapshot was saved; use it to order events with the same `flow_key`. |
+| `question` | Exact initial user request, otherwise `null`. A later non-null question starts a new lineage for that path. |
+| `adjustment` | Exact later message asking to change or retain the flow, otherwise `null`. |
+| `plan` | Short ordered public planning outline; never private chain-of-thought. |
+| `flow.path` | Workspace-relative `.workflow` or `.g4` path under `flows/`. |
+| `flow.source` | Full source at that moment, so later edits cannot overwrite this version. |
+| `flow.sha256` | SHA-256 of `flow.source`, used to detect whether an adjustment changed the source. |
+
+The client does not upload these files. Add remote contribution only after an
+explicit user-consent setting and server API exist; the local record format is
+already directly uploadable when that contract is defined.
+
 The obsolete Node/TypeScript compiler prototype has been removed. The Python
 compiler abstraction does not select or implement a concrete output target.
 Runtime dependencies, including `antlr4-python3-runtime`, are declared in the

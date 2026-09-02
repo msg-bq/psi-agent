@@ -54,6 +54,7 @@ Do **not** activate this skill for `.prose` files — those belong to OpenProse.
 | `fusion_flow.execution` | shared `flow.*` runtime; G4 Agent leaves reuse `run`/`agent`/`session` |
 | `fusion_flow.job_store` | private, strict state-v3 Human wait/checkpoint state |
 | workspace `run_flow` / `run_flow_resume` tools | file/JSON boundary, ephemeral Session-backed Agent/Program dispatch, and Human preparation/resume |
+| workspace `workflow_sample_record` tool | local question/plan/flow snapshots; it never uploads data |
 | workspace `clarify` tool | existing user-facing choice or free-text question formatter |
 
 The Python runtime has one contract: `execute_workflow` requires `inputs=`;
@@ -66,9 +67,10 @@ The skill's job is to:
 
 1. Turn the user's intent into valid Workflow G4 source, or resolve the concrete G4 workflow they pointed to.
 2. Save reusable source at the fixed path with existing file tools when requested.
-3. Start it through `run_flow`.
-4. If it reaches a Human Step, pass the nested `$fusion_flow/control.request` fields to the existing `clarify` tool, end the turn, and resume from the next user message.
-5. Return only the final workflow output Artifact mapping.
+3. Record newly authored or user-adjusted definitions through `workflow_sample_record` unless the user opted out of local capture. Saved-workflow reuse is not a new authoring event.
+4. Start it through `run_flow`.
+5. If it reaches a Human Step, pass the nested `$fusion_flow/control.request` fields to the existing `clarify` tool, end the turn, and resume from the next user message.
+6. Return only the final workflow output Artifact mapping.
 
 ## Intent Routing
 
@@ -137,6 +139,16 @@ Pass named workflow inputs through `inputs_json`. Do not rewrite the G4 source j
 Pass run-local resource pools through `resource_capacities_json` only when the workflow declares `resource_requirement`.
 
 Call `run_flow` once. If it returns output Artifacts, use them as the result. If it returns a `$fusion_flow/control` object with `status == "waiting_for_human"`, follow the Human protocol below. This reserved key cannot be a G4 Artifact ID, so an ordinary output Artifact named `status` is never control state.
+
+### Local authoring sample capture
+
+After creating or editing the one real workflow, call
+`workflow_sample_record` once with a short ordered `plan`. For first authoring,
+copy the exact user request to `question`; for every later requested change,
+copy that exact message to `adjustment`, even when the final source stays
+unchanged. Call it for “generate only”, but not when merely running an
+unchanged saved workflow or when the user opted out. The tool stores the full
+source locally under AppData `workflow-samples/` and never uploads it.
 
 ### Human wait and resume
 
@@ -241,8 +253,8 @@ This is the flagship: turn a natural-language intent into a runnable G4 workflow
 1. **Understand intent** — restate the user's goal in 1 sentence. If genuinely ambiguous, ask **one** clarifying question (don't grill them). Note whether the user looks like a *developer* (asked to edit Workflow G4 source or mentioned operators) — that's the only case where you show technical detail later. Everyone else gets the minimal plain-language summary.
 2. **Model the workflow** — match the intent to one of the executable reference patterns below. Identify inputs, outputs, Agent-, Human-, or Program-backed Steps, Artifacts, dependencies, concurrency, resources, and timeouts. Let information dependencies determine graph depth: add an intermediate aggregation layer only when downstream work needs a coherent result from a distinct group of upstream Artifacts.
 3. **Author one Workflow G4 source** — before writing, read `grammar/FusionFlow.g4` completely and treat it as the sole source of truth for FusionFlow syntax and preset operators. Use only declarations, assertions, terms, and operators documented there. Use the workspace-provided target path; never invent a second copy.
-4. **Static self-check** — compare the source against `grammar/FusionFlow.g4` and the executable guardrails in this Skill. `run_flow` repeats this with its built-in `check_workflow` pass before dispatch; there is no separate validation tool or CLI.
-5. **Start it once** — the user asked you to do a task, not to receive an implementation artifact. After the static self-check, say ONE friendly heads-up line ("🚀 方案定了，正在帮你跑，预计几分钟…" — a notice, NOT a question), then call `run_flow` once. A declared Human Step may later ask its own task-specific question through the Human protocol; that is part of execution, not an extra pre-run gate. **Do NOT ask "要不要跑 / 跑不跑" and do NOT wait for `跑`.** The only exception is when the user explicitly says "只生成别跑 / 先给我看看别执行".
+4. **Static self-check and record** — compare the source against `grammar/FusionFlow.g4` and the executable guardrails in this Skill. Then call `workflow_sample_record` once with the exact current user utterance and a short ordered plan, unless the user opted out. If recording fails, do not retry or block delivery: continue to the real run and mention the local-recording failure only in the final handoff.
+5. **Start it once** — the user asked you to do a task, not to receive an implementation artifact. After recording, say ONE friendly heads-up line ("🚀 方案定了，正在帮你跑，预计几分钟…" — a notice, NOT a question), then call `run_flow` once. A declared Human Step may later ask its own task-specific question through the Human protocol; that is part of execution, not an extra pre-run gate. **Do NOT ask "要不要跑 / 跑不跑" and do NOT wait for `跑`.** The only exception is when the user explicitly says "只生成别跑 / 先给我看看别执行"; record the authored version but do not call `run_flow`.
 
 Never mention the source file, its path, G4, operator names, static-check stages, or internal runnable artifacts to a non-technical user. From their side you are just doing the task they asked for. If they ask "你在干嘛 / 怎么做的", answer in plain business language ("我让几个分析分头跑、再汇总").
 
