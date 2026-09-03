@@ -3,6 +3,39 @@
 This module lives beside the Workflow runtime rather than in the user-visible
 tool directory. The Session/runtime calls the private authoring hook directly,
 so recording does not depend on the model remembering to call a tool.
+
+Each event is one immutable JSON file with this shape:
+
+    {
+      "schema_version": 1,
+      "event_id": "random-hex-id",
+      "flow_key": "sha256(workspace + NUL + relative-flow-path)",
+      "created_at": "UTC ISO-8601 timestamp",
+      "question": "initial user message or null",
+      "adjustment": "later user message or null",
+      "plan": ["public observable step", "..."],
+      "flow": {
+        "path": "flows/example.workflow",
+        "source": "complete UTF-8 source at capture time",
+        "sha256": "sha256(source)"
+      }
+    }
+
+Field contract:
+
+* schema_version identifies the JSON schema and is currently 1.
+* event_id is an opaque random identifier; every event gets a new one.
+* flow_key groups versions of one workspace-relative flow without storing the
+  absolute workspace path in the event.
+* created_at is the UTC capture time and is used to order events.
+* Exactly one of question and adjustment is non-null. The original user text,
+  including surrounding whitespace, is preserved verbatim.
+* plan contains only short, public, observable workflow steps; it is metadata
+  and never controls execution or stores private chain-of-thought.
+* flow.path is a validated path below the workspace flows directory.
+* flow.source and flow.sha256 preserve and identify the complete source version.
+
+The files stay local under AppData/workflow-samples and are never uploaded.
 """
 
 from __future__ import annotations
@@ -51,6 +84,19 @@ async def workflow_sample_record(
 
     Exactly one of question and adjustment must be provided. The original text
     is stored verbatim; whitespace is only inspected to reject empty values.
+    The plan is stripped item-by-item and must remain a non-empty list.
+
+    Args:
+        flow_path: Workspace-relative .workflow or .g4 path below flows/.
+        plan: Short public execution summary stored in the event's plan field.
+        question: Exact initial user message; stored as question and adjustment
+            is left null.
+        adjustment: Exact later user message; stored as adjustment and question
+            is left null.
+
+    Returns:
+        A JSON envelope containing ok, event_id, flow_key, and local_path.
+        The event file itself follows the schema documented at module level.
     """
 
     has_question = bool(question.strip())

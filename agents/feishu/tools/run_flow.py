@@ -1153,8 +1153,16 @@ def _workflow_definition_digest(
 
 
 def _workflow_sample_plan(compiled: CompiledWorkflow) -> list[str]:
-    """Build a short observable plan without asking the model to self-report it."""
+    """Build the public plan metadata stored with a captured workflow sample.
 
+    This list is deliberately separate from the execution plan used by the
+    runner. It is only a human-readable summary for the local JSON record:
+    the compiled graph still controls execution, and no model self-report or
+    private chain-of-thought is involved.
+    """
+
+    # These fixed boundary entries make the lifecycle clear even for an empty
+    # graph; one generated string below describes each compiled graph step.
     plan = ["Validate the workflow declaration"]
     plan.extend(
         f"Execute step {step.step_id} ({compiled.executor_kinds[step.executor_id]})"
