@@ -23,10 +23,18 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from posixpath import normpath
 
 _session_id: ContextVar[str] = ContextVar("psi_session_id", default="")
 _workspace: ContextVar[str] = ContextVar("psi_workspace", default="")
 _agent: ContextVar[str] = ContextVar("psi_agent", default="")
+_user_message: ContextVar[str] = ContextVar("psi_user_message", default="")
+_workflow_touched: ContextVar[set[str] | None] = ContextVar("psi_workflow_touched", default=None)
+
+
+def _normalize_tool_path(path: str) -> str:
+    """Normalize separators and dot segments for same-turn path matching."""
+    return normpath(path.strip().replace("\\", "/"))
 
 
 def get_session_id() -> str:
@@ -54,6 +62,24 @@ def get_agent() -> str:
     return _agent.get()
 
 
+def get_user_message() -> str:
+    """Exact user text for the current turn, or an empty string."""
+    return _user_message.get()
+
+
+def mark_workflow_touched(path: str) -> None:
+    """Mark a workflow path changed by a successful workspace tool call."""
+    touched = _workflow_touched.get()
+    if touched is not None and path.strip():
+        touched.add(_normalize_tool_path(path))
+
+
+def workflow_was_touched(path: str) -> bool:
+    """Whether a path was changed during the current Session turn."""
+    touched = _workflow_touched.get()
+    return touched is not None and _normalize_tool_path(path) in touched
+
+
 @contextmanager
 def session_id_scope(session_id: str) -> Iterator[None]:
     """Bind *session_id* until the ``with`` block exits (incl. across yields)."""
@@ -77,7 +103,20 @@ def path_scope(*, workspace: str = "", agent: str = "") -> Iterator[None]:
 
 
 @contextmanager
-def runtime_scope(*, session_id: str, workspace: str = "", agent: str = "") -> Iterator[None]:
-    """Bind session id + workspace + agent for one turn or event dispatch."""
+def runtime_scope(
+    *,
+    session_id: str,
+    workspace: str = "",
+    agent: str = "",
+    user_message: str = "",
+    workflow_touched: set[str] | None = None,
+) -> Iterator[None]:
+    """Bind session, path, and authoring metadata for one turn or event dispatch."""
     with session_id_scope(session_id), path_scope(workspace=workspace, agent=agent):
-        yield
+        message_token = _user_message.set(user_message)
+        touched_token = _workflow_touched.set(workflow_touched)
+        try:
+            yield
+        finally:
+            _workflow_touched.reset(touched_token)
+            _user_message.reset(message_token)
