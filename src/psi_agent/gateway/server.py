@@ -17,6 +17,7 @@ from psi_agent.gateway._defaults import (
     resolve_default_workspace,
 )
 from psi_agent.gateway._openapi import render_openapi
+from psi_agent.i18n import DEFAULT_LANGUAGE, normalize_language
 from psi_agent.runtime._ai_manager import AIManager
 from psi_agent.runtime._chat_manager import ChatManager
 from psi_agent.runtime._history_manager import HistoryManager
@@ -130,6 +131,7 @@ async def create_core_app(
     *,
     default_agent: str = "",
     default_workspace: str = "",
+    language: str = DEFAULT_LANGUAGE,
     appdata: str = "",
     scheduler_ai_id: str = "",
     schedm: SchedulerManager | None = None,
@@ -175,6 +177,7 @@ async def create_core_app(
     app["todom"] = TodoManager()
     app["default_agent"] = default_agent
     app["default_workspace"] = default_workspace
+    app["language"] = normalize_language(language)
     app["appdata"] = appdata
     # ``GET /openapi.json`` 只报本进程真的注册了的那些 path —— 各 register_* 把自己
     # 那面旗子立起来 (见 ``_openapi.build_openapi_spec`` 的三个开关)。
@@ -471,7 +474,10 @@ async def _get_defaults(request: web.Request) -> web.Response:
     agent = request.app.get("default_agent") or await resolve_default_agent()
     workspace = request.app.get("default_workspace") or await resolve_default_workspace()
     appdata = request.app.get("appdata") or await resolve_appdata_root()
-    return _json({"agent": agent, "workspace": workspace, "appdata": appdata})
+    prefs = request.app.get("uiprefs")
+    saved = await prefs.language() if prefs is not None else ""
+    language = normalize_language(saved or request.app.get("language") or DEFAULT_LANGUAGE)
+    return _json({"agent": agent, "workspace": workspace, "appdata": appdata, "language": language})
 
 
 async def _get_history(request: web.Request) -> web.Response:
@@ -550,9 +556,26 @@ async def _set_todo_segment_label(request: web.Request) -> web.Response:
 
 
 async def _handle_chat(request: web.Request) -> web.StreamResponse:
+    """裸 ``POST /sessions/{id}/chat`` —— **不做任何身份校验**, 见 ``_serve_chat_sse`` 模块内注释。"""
+    return await _serve_chat_sse(request, request.match_info["session_id"])
+
+
+async def _serve_chat_sse(request: web.Request, session_id: str) -> web.StreamResponse:
+    """把一次聊天请求跑成 SSE 流。**鉴权由调用方负责, 本函数一行都不做。**
+
+    抽出来是为了让带鉴权的那条 (``POST /feishu/sessions/{id}/chat``, 见
+    ``feishu/_routes.py``) 与裸的这条共用同一份实现: 复制一份函数体的话, multipart 解析、
+    keepalive、``[DONE]`` 收尾这些细节必然有一份先过时, 而过时的那份是**能驱动 agent 执行
+    工具**的路径。
+
+    ``session_id`` 由参数传入而非从 ``match_info`` 读: 两条路由的参数名恰好同为
+    ``session_id``, 但让本函数去认某个路由的占位符名字, 等于把调用方的路由形状写进内核。
+
+    骨架这条路由本身不鉴权是有意的 —— 它在容器内回环 8080 服务本机 (channel、工具链),
+    公网暴露面由反代白名单决定, 不在这里加一层半真半假的判定。
+    """
     sm: SessionManager = request.app["sm"]
     cm: ChatManager = request.app["cm"]
-    session_id = request.match_info["session_id"]
     try:
         channel_socket = sm.get_socket(session_id)
     except LookupError:

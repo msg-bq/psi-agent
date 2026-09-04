@@ -97,14 +97,14 @@ A5 把模块文件搬进两个子包后，这条曾**不成立**：两个 `regis
 6b. 创建 AuthManager（地址非空时；从 `{appdata}/auth.enc.json` 恢复登录态）— **旁挂**：不注入 Session、不写 ContextVar、不进 `_do_persist` 快照（凭证不落 `state/latest.json`）。随后把 `aim._resolve_key` 接上 `make_key_resolver(...)`，再 `nudge_warm()` 预热云端连接（注入 `tg`，详见 [AuthManager 连接复用](#authmanager-连接复用)）
    - **必须排在第 7 步之前**：交给 `Ai` 的 key 在 socket 构造时就定了，建晚了恢复出来的免费模型会带着哨兵起来，第一次对话必然 401（见 [免费模型的 key 替换](#免费模型的-key-替换)）
 7. 恢复 AI / Router / Session（Session 恢复时带 `agent`，缺省用 Gateway default）/ titles / summaries
-8. 创建 SchedulerManager（`--scheduler-ai-id`，空则回落 `--feishu-ai-id`）
+8. 创建 SchedulerManager（`--scheduler-ai-id`，空则回落 `--feishu-ai-id`）并 `start_soon(schedm.watch_loop)` — 常驻协程兜底「首个 TASK.md」的自动拉起（见下节 SchedulerManager 表「按需 spawn」）
 9. await create_core_app(aim, sm, tm, rm=..., default_agent=..., default_workspace=..., appdata=..., schedm=...)  — 骨架（`server.py`）：内核 manager + 两条线都要的路由（含 `GET /defaults`）
 9b. await register_desktop_routes(app, favicon_path=..., app_name=..., attention=..., authm=...)  — ToC（`desktop/_routes.py`）：SPA 静态 + `/ui/*` + `/workspace/*`（`authm` 非 None 才注册 `/auth/*`）。**仅当 `--gateway` 含 `desktop`**
 9c. register_feishu_routes(app, feishu_ai_id=..., feishu_workspace_root=...)  — ToB（`feishu/_routes.py`）：`FeishuManager` + `/feishu/*` + `/feishu-web/`。**仅当 `--gateway` 含 `feishu`**；只挂 ToB 时另注册 `GET /` → 302 `/feishu-web/index.html`
 9d. register_oauth_routes(app) — `/oauth/callback` + `/oauth/code`。**与挂了哪些 gateway 正交，每种组合都贴**：含 `feishu` 时由 9c 内部调用，只挂 ToC 时由 `Gateway.run` 自己调，恰好一处调到
    - **`--gateway` 必填，没有默认值**：挂哪些面是部署方的决定，内核不替它猜。少挂一面不报错，只是某个前端 404，排查方向完全跑偏——必填把这个静默失败提前成启动期的显式失败（不传即非 0 退出）。各调用方都得显式写：装机版 `--gateway desktop`（`.github/inno-setup/haitun.c`），云端 `launch-gateway.sh` `--gateway feishu`
    - `--gateway` 只决定挂哪些 HTTP 面；agent 包选哪个是**独立的一维**，走 `--default-agent`（见 [路径默认值](#路径默认值)），不另造一套。两维可自由组合，见 [gateway 与 agent 是两个独立维度](#gateway-与-agent-是两个独立维度)
-10. 为每个已恢复 Session 的 workspace `schedm.ensure(...)` — 按需拉起调度 Session（无 `schedules/` 则跳过）
+10. 为每个已恢复 Session 的 workspace `schedm.ensure(...)` — 按需拉起调度 Session（无 `schedules/` 则记入 `_pending`，由 watch_loop 每 30s 重查）
 11. 创建 _do_persist 闭包（快照 managers → state.save，sessions 含 `agent`；`list_all()` 默认已排除调度 Session）
 12. 注入 _persist + 初始全量持久化
 13. runner.setup() + create_site + site.start() + tray/webview/browser 等待与 finally 清理
@@ -204,9 +204,9 @@ schedules → `{workspace}/schedules/`（归 workspace，非 agent 包 / 非 App
 | **去重键** | workspace 路径，经 `await anyio.Path(...).resolve()` + `os.path.normcase` 归一（Windows 大小写 / 斜杠差异不产出两个调度 Session）。不用 `os.path.realpath`——同步 IO，违反「一切异步」 |
 | **session id** | `scheduler-<workspace sha256 前16位>`，确定性派生 → 重启后 `ensure` 重建同名，无需持久化 |
 | **激活名单** | `active_schedules=("*",)`（`ACTIVATE_ALL`）——整个 workspace 的定时任务都归它，**含之后新建的**（枚举白名单覆盖不到 `refresh()` 新发现的条目）；用户会话为 `()`。要把某几条让给用户会话，用 `deactive_schedules=(名字…)` 从通配符里挖掉，别改成枚举 |
-| **按需 spawn** | 仅当 workspace 真有 `schedules/*/TASK.md` 时才建。否则 N 个从不用定时任务的飞书用户 / 群会各挂一个空调度 Session（每个都付 tools 加载成本）。用户建第一个定时任务后，下一次 `ensure` 把它拉起来 |
+| **按需 spawn** | 仅当 workspace 真有 `schedules/*/TASK.md` 时才建。否则 N 个从不用定时任务的飞书用户 / 群会各挂一个空调度 Session（每个都付 tools 加载成本）。被跳过的 workspace 记入 `SchedulerManager._pending`，由常驻 `watch_loop`（`Gateway.run` 启动时 `start_soon`）每 30s 重查——用户建第一个定时任务后自动拉起，**不再**依赖下一次 `ensure` 碰巧发生（旧行为：到点不触发、必须「唤醒」，见 `runtime/_scheduler_manager.py` 模块 docstring） |
 | **之后新建的任务** | 由调度 Session 自己的 `_watch_dir` 协程每 30s `refresh()` 感知，**不**依赖再次 `ensure`（`ensure` 幂等命中缓存后直接返回，不会重载磁盘）。详见 `session/AGENTS.md`「动态重载」 |
-| **谁调 `ensure`** | `POST /sessions`（建会话后）、`POST /feishu/route`（路由用户/群后）、`Gateway.run` 启动恢复 state 后 |
+| **谁调 `ensure`** | `POST /sessions`（建会话后）、`POST /feishu/route`（路由用户/群后）、`Gateway.run` 启动恢复 state 后；另有常驻 `watch_loop` 兜底「首个 TASK.md」的发现（无需任何外部事件） |
 | **AI 实例** | `--scheduler-ai-id`，空则回落 `--feishu-ai-id`；两者都空时不 spawn（记 warning）——`fire=prompt` 需要 AI 后端，spawn 一个连不上上游的 Session 更糟 |
 | **失败不扩散** | `ensure` 捕获全部异常，只记 warning 返回 `""`。调度起不来不该拖垮建会话 / 收消息的主链路 |
 | **对 SPA / state 隐藏** | 见上方 `list_all(include_scheduler=False)` |
@@ -436,11 +436,24 @@ Gateway：``list_segments`` / ``get_segment`` 只读；``set_segment_label`` 允
 **route(open_id, *, chat_id="", chat_type="", ai_id=None, workspace=None) → (channel_socket, session_id) 流程**（持 lock）：
 1. `route_key()`（共享模块）定键 → `_session_id` 派生 sid；键为空 → `raise ValueError`（群聊不要求 `open_id`，私聊要求）
 2. 命中 `_routes` 且 `_sm.has(sid)` → 直接返回 `get_socket`
-3. 否则 `_sm.has(sid)`（重启后 Session 被 state 恢复，或 SPA 侧同名建过）→ **adopt** 该 Session，写回 `_routes`
+3. 否则 `_sm.has(sid)`（重启后 Session 被 state 恢复，或 SPA 侧同名建过）→ **adopt** 该 Session，写回 `_routes`；adopt 前先比一次 workspace，不符则打 WARNING（见下）
 4. 否则 `mkdir(workspace)` + `_sm.create(ai_id=ai_id or _ai_id, id=sid, workspace=ws)`；捕获 `ValueError("already exists")` 竞态 → 回退 `get_socket`
 5. `ai_id` 最终为空 → `raise ValueError`（handler 转 400）
 
 **内存态自愈（有意为之）**：`_routes` 不持久化。因 session_id 由路由键确定性派生，Gateway 重启后 Session 经 state 恢复，下次 `route()` 走 adopt 分支自愈，无需额外持久化。
+
+**⚠ adopt 只自愈路由表，不自愈 workspace —— 错的 workspace 会自我延续、永不自愈。** 上面第 3 步在第 4 步的 `ws = workspace or self._workspace_for(key)` **之前**就 return 了，所以 adopt **直接继承已存在 Session 的 workspace**，`workspace_for` 压根不被调用。〔对照实验坐实〕喂一个 workspace 指向根目录的已存在 session，adopt 继承根目录、spawn 不发生；同一份代码在干净状态下走 spawn 则正确派生到 `<root>/<open_id>`。
+
+〔生产实测〕63 个飞书会话里 **15 个**的 workspace 指向 `/workspace` **根目录**而非各自子目录，其中 14 个是 `feishu-ou_*` 形状（本该有自己的目录，抽查 7 个那些目录**一个都不存在**）。后果：这 14 个人的 agent 产出全写进全公司可见的公共区，根目录已散着约 290 个混放文件。
+
+因此 adopt 前有一次一致性校验（`_warn_if_workspace_drifted`）：
+
+- 实际 workspace 与 `workspace_for(key)` **相同 → 什么都不打**。63 个会话里 48 个是健康的，每次 route 都留一行等于把真告警淹掉。
+- **不同 → 一条 WARNING**，带齐四个字段：`key=` / `session=` / `actual_workspace=` / `expected_workspace=`。四个缺一不可——没有键不知道是谁，没有 session_id 没法去 `/sessions` 核对，只印一个路径则看不出哪个才是错的、该改成什么。两个路径用引号夹而非 `!r`（Windows 上 repr 把 `\` 转义成 `\\`，印出来没法复制去 `ls`）。
+- **仍然照旧 adopt**，不抛错也不改 workspace。纠正存量是一个**独立决定**：那 14 个会话的历史与产出都在旧目录里，悄悄换目录等于让用户以为文件丢了。
+- 比较走 `_same_workspace`（normcase/normpath/abspath 三层），不是裸 `==`：尾斜杠 / `.` 段 / Windows 大小写指的是同一个目录，按字符串比会报出一片纯噪音。`_identity._same_path` 转发到同一个函数——归属判定（判错=陌生人互看对话）与错位告警问的是同一个问题，各留一份实现迟早在某一支上分歧。
+
+用例见 `tests/psi_agent/gateway/test_feishu_workspace_drift.py`（阳性 1 条 + 阴性 4 条：健康私聊、群聊 `chat-<chat_id>`、私密区 `.private/<open_id>`、同目录的不同写法）。**初始成因仍未定**：`route()` 这条路吃不到 `--default-workspace` 兜底（它的 `ws` 永远非空），所以另有一条拿 `feishu-ou_*` 形状 id 建 session 却不给 workspace 的路径；堵法见 `runtime/AGENTS.md` 的 workspace 判据。
 
 **list_routes() → list[FeishuRoute]**：`[{open_id, chat_id, session_id}]`，供观测（`GET /feishu/routes`）。群聊记录填 `chat_id` 而 `open_id` 留空，私聊反之——一条记录只有一个键有值。
 
@@ -536,6 +549,7 @@ OAuth 回调中继（`feishu/_oauth_manager.py`，路由与 handler 在 `feishu/
 | POST | `/sessions/{session_id}/todo-segments/{segment_id}` | P1：改段标题 ``{label}``（spa-v2 可用回合 summary 覆盖） |
 | POST | `/feishu/route` | 幂等路由一次飞书会话到其 Session（首次按需 spawn）`{open_id, chat_id?, chat_type?, ai_id?, workspace?}` → 201 `{open_id, chat_id, session_id, channel_socket}`。`chat_type` 为 `group`/`topic` 且 `chat_id` 非空 → 按 `chat_id` 整群共用一个 Session；否则按 `open_id` 一人一个。缺路由键（私聊无 open_id）/ 无 ai_id → 400 |
 | GET | `/feishu/routes` | 列出所有飞书会话 → Session 路由 `[{open_id, chat_id, session_id}]`（群聊记录只有 `chat_id`，私聊只有 `open_id`） |
+| POST | `/feishu/sessions/{session_id}/chat` | **带鉴权的聊天流（SSE）** —— 网页应用打的就是这条，请求/响应格式与骨架 `POST /sessions/{session_id}/chat` 逐字节相同。为什么要有它：骨架那条**一行身份校验都没有**（容器内回环服务本机是它的合理用途），而它是能**驱动 agent 执行工具**的那条（跑 bash、读公司表格、往飞书发消息），上公网等于任何知道一个 session id 的人都能让公司 agent 干活。三段判定与 `/feishu/sessions/{id}/history` **同一套 `owns_session`**：未登录 401、会话不存在 404、别人的/群聊的 403（403 而非 404 是与 history 对齐，真·不存在已占了 404）。**实现不复制**：handler 只做判定，正文转骨架抽出的 `_serve_chat_sse`——两份 handler 体必有一份先过时，而过时的那份是能执行工具的路径。判据 `tests/integration/test_feishu_web_chat_auth.py`（含把归属校验打成恒真的变异复核）|
 | GET | `/oauth/callback` | OAuth 重定向落地点：收下 `?code=&state=` 交给 `OAuthRelay` 暂存，回一张「授权成功」页；缺 state → 400。用户因此**不必**手工复制 code |
 | GET | `/oauth/code` | 发起方（workspace 工具，通常在另一进程）按 `?state=` 取件，命中返回 `{state, code}` 并作废（一次性）；回调带错误则 `{state, error}`；未到达 → 404 |
 | GET | `/auth/status` | 登录态 + 链路自检信息 `{endpoint, prefix, loggedIn, deviceKey, platform, credentialEncrypted}`；**不含 token**。SPA 据此决定显示登录引导还是身份信息。顺带触发连接预热 —— 该端点只读内存不打云端，预热是后台任务，不拖慢本响应 |
@@ -575,6 +589,8 @@ AI 和 Session 的 `id` 字段可选，不传自动生成 UUID。
 ## Web UI Chat 协议
 
 `POST /sessions/{session_id}/chat` 接受 `Chunk` 列表，返回 SSE 流。
+
+**两条路由共用这一份协议与这一份实现。** 骨架这条无身份校验（容器内回环服务本机）；飞书网页应用打的是带鉴权的 `POST /feishu/sessions/{session_id}/chat`（见上表）。正文实现只有一份 `server._serve_chat_sse(request, session_id)`——**鉴权由调用方负责，它自己一行都不做**；`session_id` 走参数而非 `match_info`，否则内核就要认某条产品路由的占位符名字。multipart 解析、SSE keepalive、`[DONE]` 收尾都在这一份里，所以协议改一次两条路由同时跟上。
 
 **Request**：
 ```json

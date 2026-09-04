@@ -72,7 +72,7 @@ Hub「使用免费模型」→ **保留**已连接真实模型；hydrateAiForSes
 发消息           → ensureSessionAi（优先任务绑定的模型；已被删除则用当前模型配置重绑旧 id，通道继续可用）
 ```
 
-不盲选 `ais[0]`。**不自动删除任何已连接模型**——只有「已连接」行的删除按钮会删除，且一次删除该配置（`provider+model+api_key+base_url`）的**全部实例**（同一模型被多个 Session 绑定的重复条目会一起删掉）；删除当前模型后回落到剩余模型，新连接/切免费都不影响其它模型，新连接的模型立即成为当前模型。优先 localStorage 选中 AI（含用户主动选的免费条目），免费条目与真实 key 可以同时保留在池中。Gateway **不**级联删 Session——AI 删除后 Session 仍挂旧 `ai_id`；该任务下一次对话用**当前选中模型**，并把旧 `ai_id` **重绑到当前模型配置**（池全空时才回落免费默认），Session 通道保持可用，刷新后任务卡与可聊性不变。模型池「已连接」按同配置 **折叠展示**（仅 id 不同只显示一行；key 不同则分列）；无显式 id 的 `POST /ais` 同配置复用已有实例。workspace 过滤用 `sessionMatchesWorkspace`（空 workspace 视为本工作区）。
+不盲选 `ais[0]`。**不自动删除任何已连接模型**——只有「已连接」行的删除按钮会删除，且一次删除该配置（`provider+model+api_key+base_url`）的**全部实例**（同一模型被多个 Session 绑定的重复条目会一起删掉）；删除当前模型后回落到剩余模型，新连接/切免费都不影响其它模型，新连接的模型立即成为当前模型。优先 localStorage 选中 AI（含用户主动选的免费条目），免费条目与真实 key 可以同时保留在池中。Gateway **不**级联删 Session——AI 删除后 Session 仍挂旧 `ai_id`；该任务下一次对话用**当前选中模型**，并把旧 `ai_id` **重绑到当前模型配置**（池全空时才回落免费默认），Session 通道保持可用，刷新后任务卡与可聊性不变。模型池「已连接」按同配置 **折叠展示**（仅 id 不同只显示一行；key 不同则分列）；无显式 id 的 `POST /ais` 同配置复用已有实例。**展示层**（`labelAisForDisplay`）：副标题区分「免费」与「自有 Key ···末四位」；同名标题再加 `(1)/(2)`；**重命名**独立存 `gw` 无关的 `spa-v2-ai-aliases`（按 `aiConfigKey`，id 重绑不丢）。workspace 过滤用 `sessionMatchesWorkspace`（空 workspace 视为本工作区）。
 
 ### 任务卡三步进度（分层）
 
@@ -108,7 +108,7 @@ Hub「使用免费模型」→ **保留**已连接真实模型；hydrateAiForSes
 - **停止生成**：流式进行中输入栏右侧为红色停止键（替换发送）。中止后撤回本轮乐观 user+agent，把原文案与附件还原到输入框（对齐 Cursor）。**刻意为之**：停止键用 `pointerdown` + 短时 `suppressSubmit`，避免 Stop 变回 Send 后同一次点击误触重发（旧逻辑清空输入框，误触 submit 是空操作所以「一点就停」；回填草稿后误触会立刻再跑一轮，看起来像打断后又在气泡里重出）。另用 `streamEpoch` / `signal.aborted` 丢掉中止后的迟到 SSE。网络等非 Abort 失败仍标记 `failed` / 可重试。
 - **粘贴 / 拖放附件**：对话栏 / 新建任务/聊天输入支持 `Ctrl/Cmd+V` 粘贴，以及从资源管理器或其他窗口拖入文件——均等价于回形针选文件，进入同一附件 chip 再走 multipart；纯文字粘贴不拦截。识图等由 workspace tool 处理。拖入时输入区高亮并提示「松开以添加附件」（`useComposerFileDrop` + `filesFromClipboard`）。
 - **换行**：输入为 `textarea`；`Enter` 发送，`Ctrl/Cmd+Enter` 换行（`Shift+Enter` 亦换行）。
-- **流式吸底（对齐 spa v1 / Cursor）**：`FocusChatThread` 距底 ≤60px 才跟随新内容滚底；手动上拉后不打断阅读；滚回底部恢复跟随。新发用户消息会重新吸底。
+- **流式吸底（对齐 spa v1 / Cursor）**：`FocusChatThread` 距底 ≤60px 才跟随新内容滚底；手动上拉后不打断阅读；滚回底部恢复跟随。**发消息必跳底**：无论当前滚动位置，新增气泡切片里出现 `role=user` 即强制吸底并重新粘滞（`sendMessage` 一次追加 user+空 agent，不能只看 `messages.at(-1)`）。**直播思考框**（`.focus-chat-live-thinking`）同一规则：贴底才粘滞跟随思考增长；上拖断开、内容在下方继续生成；再拉回底恢复粘滞——禁止每 token 无条件 `scrollTop=scrollHeight`（会把框「粘死」）。
 - SSE `reasoning`：**刻意压缩**仍走同一字段；用 `kind`（`thinking` / `tool_call` / `tool_result`）区分——**≠** `/history` 消息 provenance `kind`。过程轴见 `services/turnProgress.ts`（对标 Cursor）：
   - **封存行**：仅 `tool_call` 短句（如 `读取 \`a.py\``）；thinking / `tool_result` **不**封存（`tool_result` 尾行回「规划下一步…」，刻意不要「整理结果…」行）。
   - **尾行**：只活「规划下一步…」/「撰写回复…」；**刻意**永不把「规划下一步」推进 `lines`。
@@ -167,9 +167,10 @@ npm run dev
 
 **刻意为之**：本地联调不要再用仓库内 `.appdata-spa-dev` 等沙盒记忆区；安装包 / CLI / spa 开发共用同一 AppData 软默认，会话与「已思考」等状态才一致。
 
+**改完验收 / Agent 约定（硬）**：经 Gateway（`http://127.0.0.1:8765/`）看页面时，**每次改完 spa-v2 源码必须立刻 `npm run build`**，再让对方硬刷；不要只改源码不 build，也不要等用户追问「build 了吗」。纯 Vite `:5174` 联调可靠 HMR，但本仓默认验收路径是 Gateway 挂 `dist/`。
+
 生产/联调：`npm run build` 后 Gateway 自动挂载 `spa-v2/dist` → `http://<gateway>/spa-v2/`。
 
-**改完验收**：用户经 Gateway 看页面时，前端改动后先 `npm run build` 再让对方刷新（硬刷）；不要只改源码不 build。
 安装包：PyInstaller / Nuitka CI 会构建并 `--add-data` / `--include-data-dir` 打入 `spa-v2/dist`；有该目录时安装版默认 `GET /` → v2。
 
 单测：`npm test`（vitest）。DOM 行为测试在文件头写 `@vitest-environment jsdom`，纯逻辑测试留在默认 node 环境（快得多）。
