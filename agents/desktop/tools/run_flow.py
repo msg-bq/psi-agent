@@ -1565,17 +1565,15 @@ def _program_result_outputs(
         )
 
     stdout, stdout_base64 = _program_stream_payload(result.stdout)
-    stderr, stderr_base64 = _program_stream_payload(result.stderr)
-    if stdout_base64 is not None or stderr_base64 is not None:
+    if stdout_base64 is not None:
         return _program_error_outputs(
             invocation,
             phase="output_format",
             kind="invalid_utf8",
-            message="Program stdout and stderr must be valid UTF-8 text.",
+            message="Program stdout must be valid UTF-8 text.",
             attempts=attempts,
         )
     assert stdout is not None
-    assert stderr is not None
     if result.exit_code != 0:
         return _program_error_outputs(
             invocation,

@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+import base64
+import importlib
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
+TOOLS_DIR = WORKSPACE_ROOT / "tools"
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+_run_flow: Any = importlib.import_module("run_flow")
+
+_NON_UTF8_GBK = b"\xb2\xe2\xca\xd4"  # "测试" encoded as GBK; invalid UTF-8.
+
+
+def _invocation() -> SimpleNamespace:
+    return SimpleNamespace(
+        binding_name="work_step",
+        output_ids=("out",),
+        dispatch=SimpleNamespace(iteration_index=None, invocation_id=""),
+    )
+
+
+def _result(*, exit_code: int, stdout: bytes, stderr: bytes) -> Any:
+    return _run_flow._ProgramProcessResult(
+        argv=("worker",),
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _program_error(outputs: dict[str, object]) -> dict[str, Any]:
+    value: Any = outputs["out"]
+    return value[_run_flow._PROGRAM_ERROR_KEY]
+
+
+def test_program_result_allows_non_utf8_stderr_on_success() -> None:
+    outputs = _run_flow._program_result_outputs(
+        _invocation(),
+        [_result(exit_code=0, stdout=b"ok", stderr=_NON_UTF8_GBK)],
+    )
+
+    assert outputs == {"out": "ok"}
+
+
+def test_program_result_still_rejects_non_utf8_stdout() -> None:
+    outputs = _run_flow._program_result_outputs(
+        _invocation(),
+        [_result(exit_code=0, stdout=b"\xff", stderr=b"")],
+    )
+
+    error = _program_error(outputs)
+    assert error["phase"] == "output_format"
+    assert error["kind"] == "invalid_utf8"
+    assert error["message"] == "Program stdout must be valid UTF-8 text."
+    attempt = error["attempts"][0]
+    assert attempt["stdout"] is None
+    assert attempt["stdout_base64"] == base64.b64encode(b"\xff").decode("ascii")
+
+
+def test_nonzero_exit_with_non_utf8_stderr_is_execution_error() -> None:
+    outputs = _run_flow._program_result_outputs(
+        _invocation(),
+        [_result(exit_code=7, stdout=b"", stderr=_NON_UTF8_GBK)],
+    )
+
+    error = _program_error(outputs)
+    assert error["phase"] == "execution"
+    assert error["kind"] == "nonzero_exit"
+    assert error["message"] == "Program exited with code 7."
+    attempt = error["attempts"][0]
+    assert attempt["stderr"] is None
+    assert attempt["stderr_base64"] == base64.b64encode(_NON_UTF8_GBK).decode("ascii")
