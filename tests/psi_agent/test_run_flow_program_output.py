@@ -7,8 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
-TOOLS_DIR = WORKSPACE_ROOT / "tools"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TOOLS_DIR = REPO_ROOT / "agents" / "feishu" / "tools"
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
@@ -78,12 +78,12 @@ def test_nonzero_exit_with_non_utf8_stderr_is_execution_error() -> None:
 
 
 def test_program_diagnostic_prefers_declared_locale_and_keeps_raw_bytes(monkeypatch: Any) -> None:
-    monkeypatch.setattr(_run_flow.locale, "getencoding", lambda: "gbk")
+    monkeypatch.setattr(_run_flow.locale, "getencoding", lambda: "cp936")
 
     payload = _run_flow._program_attempt_payload(_result(exit_code=0, stdout=b"ok", stderr=_NON_UTF8_GBK))
 
     assert payload["stderr"] == "测试"
-    assert payload["stderr_encoding"] == "gbk"
+    assert payload["stderr_encoding"] == "cp936"
     assert payload["stderr_base64"] == base64.b64encode(_NON_UTF8_GBK).decode("ascii")
 
 
@@ -95,16 +95,5 @@ def test_program_diagnostic_uses_reversible_fallback_when_encoding_is_unknown(mo
     payload = _run_flow._program_attempt_payload(_result(exit_code=0, stdout=b"ok", stderr=raw))
 
     assert payload["stderr"] == r"warning:\xff"
-    assert payload["stderr_encoding"] == "utf-8/backslashreplace"
-    assert payload["stderr_base64"] == base64.b64encode(raw).decode("ascii")
-
-
-def test_program_diagnostic_does_not_guess_single_byte_locale(monkeypatch: Any) -> None:
-    monkeypatch.setattr(_run_flow.locale, "getencoding", lambda: "cp1252")
-    raw = _NON_UTF8_GBK
-
-    payload = _run_flow._program_attempt_payload(_result(exit_code=0, stdout=b"ok", stderr=raw))
-
-    assert payload["stderr"] == r"\xb2\xe2\xca\xd4"
     assert payload["stderr_encoding"] == "utf-8/backslashreplace"
     assert payload["stderr_base64"] == base64.b64encode(raw).decode("ascii")

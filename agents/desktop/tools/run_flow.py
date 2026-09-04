@@ -1504,10 +1504,7 @@ def _program_diagnostic_payload(raw: bytes) -> tuple[str, str | None, str]:
 
     encodings = ["utf-8"]
     with suppress(Exception):
-        locale_encoding = locale.getencoding()
-        normalized = locale_encoding.casefold().replace("-", "_")
-        if normalized in {"gbk", "gb18030", "big5", "cp932", "shift_jis", "cp949", "euc_kr"}:
-            encodings.append(locale_encoding)
+        encodings.append(locale.getencoding())
     seen: set[str] = set()
     for encoding in encodings:
         if encoding in seen:
