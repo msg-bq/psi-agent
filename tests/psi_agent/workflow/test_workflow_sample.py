@@ -76,14 +76,12 @@ async def test_record_preserves_versions_and_exact_user_text(tmp_path: Path, mon
                 "flows/review.workflow",
                 ["Run three reviews", "Combine their findings"],
                 "  Add a security reviewer.  ",
-                workflow_touched=True,
             )
         )
         skipped = await tool._record_workflow_authoring(
             "flows/review.workflow",
             ["Run three reviews", "Combine their findings"],
             "Reuse the saved workflow.",
-            workflow_touched=False,
         )
 
     initial = json.loads(await anyio.Path(initial_result["local_path"]).read_text(encoding="utf-8"))
