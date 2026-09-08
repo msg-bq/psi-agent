@@ -77,7 +77,7 @@ class FakeClient:
 
     async def complete(self, *, socket: str, body: dict[str, Any], **options: Any) -> UpstreamResult:
         timeout = options.get("timeout")
-        assert timeout is None or (isinstance(timeout, (int, float)) and not isinstance(timeout, bool))
+        assert timeout is None or (isinstance(timeout, int | float) and not isinstance(timeout, bool))
         self.calls.append((socket, body, timeout))
         return self.results.pop(0)
 

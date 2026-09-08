@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from loguru import logger
 from PIL import Image, ImageDraw
@@ -35,7 +35,7 @@ def _flash_hwnd(hwnd: int) -> None:
         return
 
     class FLASHWINFO(ctypes.Structure):
-        _fields_ = [
+        _fields_: ClassVar[list[tuple[str, Any]]] = [
             ("cbSize", wintypes.UINT),
             ("hwnd", wintypes.HWND),
             ("dwFlags", wintypes.DWORD),

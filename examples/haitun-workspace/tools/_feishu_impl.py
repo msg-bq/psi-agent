@@ -211,7 +211,7 @@ def _retry_after_seconds(res: dict[str, Any], attempt: int) -> float:
     in lockstep and throttle each other again.
     """
     after = res.get("retry_after")
-    if isinstance(after, (int, float)) and after > 0:
+    if isinstance(after, int | float) and after > 0:
         return min(float(after), _RATE_LIMIT_MAX_WAIT)
     grown = _RATE_LIMIT_BACKOFF * (2 ** (attempt - 1))
     return min(grown, _RATE_LIMIT_MAX_WAIT) * (1.0 + random.random() * 0.25)
@@ -664,7 +664,7 @@ def _flatten_sheet_cell(cell: Any) -> str:
         return "TRUE" if cell else "FALSE"
     if isinstance(cell, str):
         return cell
-    if isinstance(cell, (int, float)):
+    if isinstance(cell, int | float):
         return str(cell)
     if isinstance(cell, list):
         return "".join(_flatten_sheet_cell(part) for part in cell)
@@ -1346,7 +1346,7 @@ def _extract_post_text(node: Any) -> str:
         if node.get("tag") == "text" and isinstance(node.get("text"), str):
             parts.append(node["text"])
         for v in node.values():
-            if isinstance(v, (dict, list)):
+            if isinstance(v, dict | list):
                 parts.append(_extract_post_text(v))
     elif isinstance(node, list):
         for v in node:

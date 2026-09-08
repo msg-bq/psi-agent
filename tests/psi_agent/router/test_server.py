@@ -44,7 +44,7 @@ class FakeClient:
 
     async def stream_raw(self, *, socket: str, body: dict[str, Any], **options: Any) -> AsyncGenerator[bytes]:
         timeout = options.get("timeout")
-        assert timeout is None or isinstance(timeout, (float, int))
+        assert timeout is None or isinstance(timeout, float | int)
         self.calls.append((socket, body, timeout))
         if self.error is not None and not self.fail_after_first_chunk:
             raise self.error

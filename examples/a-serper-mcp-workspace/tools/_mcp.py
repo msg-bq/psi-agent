@@ -152,7 +152,7 @@ def _resolve(raw: Any) -> dict[str, Any]:
         else:
             p = srv.split()
             cmd, args = p[0], p[1:]
-    elif isinstance(srv, (list, tuple)):
+    elif isinstance(srv, list | tuple):
         p = [str(v) for v in srv]
         if transport == "http":
             url = url or p[0]

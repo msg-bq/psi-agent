@@ -521,7 +521,7 @@ def _bounded_string(value: Any, minimum: int, maximum: int) -> bool:
 
 
 def _safe_json_value(value: Any) -> bool:
-    if value is None or isinstance(value, (str, bool, int)):
+    if value is None or isinstance(value, str | bool | int):
         return not isinstance(value, str) or len(value) <= 100_000
     return isinstance(value, float) and math.isfinite(value)
 
@@ -555,7 +555,7 @@ def _exception_classifications(exc: BaseException) -> set[str]:
                 classifications.add("unauthorized")
             elif current.response.status_code == 429:
                 classifications.add("rate_limited")
-        elif isinstance(current, (TimeoutError, httpx.TimeoutException)):
+        elif isinstance(current, TimeoutError | httpx.TimeoutException):
             classifications.add("timeout")
     return classifications
 

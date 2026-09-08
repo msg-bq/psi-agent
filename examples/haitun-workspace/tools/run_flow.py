@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import aclosing, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import anyio
 import anyio.lowlevel
@@ -133,7 +133,7 @@ if sys.platform == "win32":
     _INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
 
     class _JobObjectBasicLimitInformation(ctypes.Structure):
-        _fields_ = [
+        _fields_: ClassVar[list[tuple[str, Any]]] = [
             ("PerProcessUserTimeLimit", ctypes.c_int64),
             ("PerJobUserTimeLimit", ctypes.c_int64),
             ("LimitFlags", wintypes.DWORD),
@@ -146,7 +146,7 @@ if sys.platform == "win32":
         ]
 
     class _IoCounters(ctypes.Structure):
-        _fields_ = [
+        _fields_: ClassVar[list[tuple[str, Any]]] = [
             ("ReadOperationCount", ctypes.c_uint64),
             ("WriteOperationCount", ctypes.c_uint64),
             ("OtherOperationCount", ctypes.c_uint64),
@@ -156,7 +156,7 @@ if sys.platform == "win32":
         ]
 
     class _JobObjectExtendedLimitInformation(ctypes.Structure):
-        _fields_ = [
+        _fields_: ClassVar[list[tuple[str, Any]]] = [
             ("BasicLimitInformation", _JobObjectBasicLimitInformation),
             ("IoInfo", _IoCounters),
             ("ProcessMemoryLimit", ctypes.c_size_t),

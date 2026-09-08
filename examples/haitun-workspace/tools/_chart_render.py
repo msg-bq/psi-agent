@@ -579,7 +579,7 @@ def _as_float(value: Any, where: str) -> float:
     """
     if isinstance(value, bool):
         raise ChartDataError(f"{where} must be a number, got a boolean.")
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         text = value.strip().replace(",", "").replace("%", "").replace("￥", "").replace("$", "")

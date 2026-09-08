@@ -293,7 +293,7 @@ class ResourceAllocator:
                     raise ExecutionPlanError(f"resource capacity for {resource_id!r} must be a positive integer")
                 instances = tuple(f"{resource_id}-{index}" for index in range(capacity))
             else:
-                if isinstance(capacity, (str, bytes)) or not isinstance(capacity, Sequence):
+                if isinstance(capacity, str | bytes) or not isinstance(capacity, Sequence):
                     raise ExecutionPlanError(
                         f"resource capacity for {resource_id!r} must be a positive integer or instance sequence"
                     )

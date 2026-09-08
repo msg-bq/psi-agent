@@ -322,7 +322,7 @@ def read_json_if_present(path: Path) -> tuple[Any, str]:
 
 
 def raw_record_count(data: Any) -> int:
-    if isinstance(data, (list, dict)):
+    if isinstance(data, list | dict):
         return len(data)
     return 0
 

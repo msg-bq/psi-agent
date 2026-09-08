@@ -196,7 +196,7 @@ class RouterClient:
             names = ", ".join(sorted(unsupported))
             raise TypeError(f"Unexpected RouterClient option(s): {names}")
         timeout = options.get("timeout")
-        if timeout is not None and (not isinstance(timeout, (int, float)) or isinstance(timeout, bool)):
+        if timeout is not None and (not isinstance(timeout, int | float) or isinstance(timeout, bool)):
             raise TypeError("timeout must be a number or None")
         return timeout
 

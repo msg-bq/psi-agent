@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -29,7 +30,7 @@ async def test_attention_hub_notify_calls_bound_targets() -> None:
 async def test_schedule_notify_is_non_blocking() -> None:
     hub = AttentionHub()
     tray = MagicMock()
-    tray.request_attention.side_effect = lambda: time.sleep(0.2)
+    tray.request_attention.side_effect = lambda: threading.Event().wait(0.2)
     hub.bind(tray=tray)
 
     t0 = time.perf_counter()

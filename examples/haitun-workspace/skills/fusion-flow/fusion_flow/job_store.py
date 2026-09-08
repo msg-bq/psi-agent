@@ -816,7 +816,7 @@ def _normalize_resource_capacities(
                 raise error_type(f"resource capacity for {resource_id!r} must be positive")
             normalized[resource_id] = capacity
             continue
-        if isinstance(capacity, (str, bytes)) or not isinstance(
+        if isinstance(capacity, str | bytes) or not isinstance(
             capacity,
             Sequence,
         ):
@@ -875,7 +875,7 @@ def _copy_json_value(
     active: set[int],
     error_type: type[Exception],
 ) -> object:
-    if value is None or isinstance(value, (str, bool)):
+    if value is None or isinstance(value, str | bool):
         return value
     if type(value) is int:
         return value

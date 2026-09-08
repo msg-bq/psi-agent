@@ -214,7 +214,7 @@ async def request_completion(
 def is_retryable_api_error(exc: Exception) -> bool:
     if isinstance(exc, aiohttp.ClientResponseError):
         return exc.status == 429 or exc.status >= 500
-    if isinstance(exc, (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError)):
+    if isinstance(exc, aiohttp.ClientConnectionError | aiohttp.ServerTimeoutError):
         return True
     if exc.__class__.__name__ in RETRYABLE_ERROR_NAMES:
         return True

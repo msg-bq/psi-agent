@@ -48,7 +48,7 @@ class RouterConfig:
                 raise ValueError(f"{name} must be a non-empty string")
         if self.default_socket == self.session_socket:
             raise ValueError("default_socket must not equal session_socket")
-        if not isinstance(self.upstream, (list, tuple)):
+        if not isinstance(self.upstream, list | tuple):
             raise ValueError("upstream must be a list or tuple of (socket, description) tuples")
         if not self.upstream:
             raise ValueError("upstream must contain at least one socket")
@@ -73,9 +73,9 @@ class RouterConfig:
             raise ValueError("max_tool_rounds must be a positive integer")
         for name in ("router_timeout", "branch_timeout", "aggregate_timeout"):
             value = getattr(self, name)
-            if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0):
+            if value is not None and (not isinstance(value, int | float) or isinstance(value, bool) or value <= 0):
                 raise ValueError(f"{name} must be a positive number or None")
-        if not isinstance(self.run_ttl, (int, float)) or isinstance(self.run_ttl, bool) or self.run_ttl <= 0:
+        if not isinstance(self.run_ttl, int | float) or isinstance(self.run_ttl, bool) or self.run_ttl <= 0:
             raise ValueError("run_ttl must be a positive number")
 
 

@@ -32,7 +32,7 @@ def _is_fatal(exc: BaseException) -> bool:
     the whole gateway process down. We contain everything MCP-related here, while
     still letting genuine interpreter-control signals through.
     """
-    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+    if isinstance(exc, KeyboardInterrupt | SystemExit):
         return True
     if isinstance(exc, BaseExceptionGroup):
         # A group is fatal only if it contains a fatal leaf.
@@ -363,7 +363,7 @@ def _resolve(raw: Any) -> dict[str, Any]:
         else:
             p = srv.split()
             cmd, args = p[0], p[1:]
-    elif isinstance(srv, (list, tuple)):
+    elif isinstance(srv, list | tuple):
         p = [str(v) for v in srv]
         if transport == "http":
             url = url or p[0]

@@ -1,4 +1,4 @@
-# ruff: noqa: E402, ASYNC240
+# ruff: noqa: E402
 
 from __future__ import annotations
 
