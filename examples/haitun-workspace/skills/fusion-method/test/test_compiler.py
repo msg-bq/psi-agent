@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import pytest
-from fusion_flow.compiler import CoreIRCompiler, _CompiledDeclarations
-from fusion_flow.core_ir import (
+from fusion_method.compiler import CoreIRCompiler, _CompiledDeclarations
+from fusion_method.core_ir import (
     Assertion,
     CompoundTerm,
     ConnectiveFormula,
     Constant,
     IfTerm,
     ListTerm,
+    Method,
+    MethodFile,
     Operator,
-    Workflow,
-    WorkflowFile,
 )
 
 
@@ -51,27 +51,27 @@ class _RecordingCompiler(CoreIRCompiler):
             None if formula.formula_right is None else self._compile_formula(formula.formula_right),
         )
 
-    def _build_workflow(
+    def _build_method(
         self,
-        workflow: Workflow,
+        method: Method,
         *,
         assertions: tuple[object, ...],
     ) -> object:
-        return ("workflow", workflow.name, assertions)
+        return ("method", method.name, assertions)
 
     def _build_program(
         self,
         declarations: _CompiledDeclarations,
         *,
-        workflows: tuple[object, ...],
+        methods: tuple[object, ...],
     ) -> object:
         return {
             "constants": tuple((constant.symbol, compiled) for constant, compiled in declarations.constants.items()),
-            "workflows": workflows,
+            "methods": methods,
         }
 
 
-def test_core_ir_compiler_traverses_workflow_file_through_backend_hooks() -> None:
+def test_core_ir_compiler_traverses_method_file_through_backend_hooks() -> None:
     first = Constant("first")
     second = Constant("second")
     condition = ConnectiveFormula(Assertion(first, second), "NOT")
@@ -80,22 +80,22 @@ def test_core_ir_compiler_traverses_workflow_file_through_backend_hooks() -> Non
         when_true=CompoundTerm(operator=Operator("+"), arguments=(first, second)),
         when_false=ListTerm((second, first)),
     )
-    workflow_file = WorkflowFile(
+    method_file = MethodFile(
         constants=(first, second),
-        workflows=(Workflow("main", (Assertion(result, first),)),),
+        methods=(Method("main", (Assertion(result, first),)),),
     )
     compiler = _RecordingCompiler()
 
-    compiled = compiler.compile(workflow_file)
+    compiled = compiler.compile(method_file)
 
     assert compiled == {
         "constants": (
             ("first", ("constant", "first")),
             ("second", ("constant", "second")),
         ),
-        "workflows": (
+        "methods": (
             (
-                "workflow",
+                "method",
                 "main",
                 (
                     (
@@ -131,15 +131,15 @@ def test_core_ir_compiler_traverses_workflow_file_through_backend_hooks() -> Non
 
 
 def test_core_ir_compiler_rejects_unimplemented_node_hooks() -> None:
-    workflow_file = WorkflowFile(constants=(Constant("value"),), workflows=())
+    method_file = MethodFile(constants=(Constant("value"),), methods=())
 
     with pytest.raises(
         ValueError,
         match="CoreIRCompiler cannot compile unsupported constant declaration node of type Constant",
     ):
-        CoreIRCompiler().compile(workflow_file)
+        CoreIRCompiler().compile(method_file)
 
 
 def test_core_ir_compiler_requires_program_builder() -> None:
     with pytest.raises(NotImplementedError, match="CoreIRCompiler must implement _build_program"):
-        CoreIRCompiler().compile(WorkflowFile(constants=(), workflows=()))
+        CoreIRCompiler().compile(MethodFile(constants=(), methods=()))

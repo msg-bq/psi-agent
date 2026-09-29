@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import psi_agent.workflow_graph as workflow_graph
+import psi_agent.method_graph as method_graph
 
 
-def test_workflow_graph_public_api_contains_only_the_graph_model() -> None:
+def test_method_graph_public_api_contains_only_the_graph_model() -> None:
     expected = {
         "ArtifactOperand",
         "ArtifactOperandDict",
@@ -33,14 +33,14 @@ def test_workflow_graph_public_api_contains_only_the_graph_model() -> None:
         "SelectNodeDict",
         "StepNode",
         "StepNodeDict",
-        "WorkflowEdge",
-        "WorkflowEdgeDict",
-        "WorkflowGraph",
-        "WorkflowGraphDict",
-        "WorkflowGraphError",
-        "WorkflowPolicy",
-        "WorkflowPolicyDict",
+        "MethodEdge",
+        "MethodEdgeDict",
+        "MethodGraph",
+        "MethodGraphDict",
+        "MethodGraphError",
+        "MethodPolicy",
+        "MethodPolicyDict",
     }
 
-    assert set(workflow_graph.__all__) == expected
-    assert all(getattr(workflow_graph, name) is not None for name in expected)
+    assert set(method_graph.__all__) == expected
+    assert all(getattr(method_graph, name) is not None for name in expected)

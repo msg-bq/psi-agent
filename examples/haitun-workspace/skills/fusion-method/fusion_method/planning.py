@@ -1,6 +1,6 @@
-"""Report missing DSL syntax for planned steps before workflow authoring.
+"""Report missing DSL syntax for planned steps before method authoring.
 
-Each ``PlannedStep`` maps to one catalog ``Step`` identity. Workflow authoring
+Each ``PlannedStep`` maps to one catalog ``Step`` identity. Method authoring
 expands it into that typed constant and the assertions that describe it.
 """
 
@@ -36,7 +36,7 @@ class PlannedStep:
 class PlanningCheckResult:
     """Whether declared steps can be authored, independent of later phases."""
 
-    can_author_workflow: bool
+    can_author_method: bool
     diagnostics: tuple[Diagnostic, ...]
 
 
@@ -48,7 +48,7 @@ def check_planned_steps(
 
     The caller supplies syntax names that actually exist; a non-empty mapping
     is not assumed to be available. Missing, blank, unavailable, or empty
-    mappings are normal diagnostics and make ``can_author_workflow`` false.
+    mappings are normal diagnostics and make ``can_author_method`` false.
     This phase checks declared items only and cannot prove the planner listed
     every required step. It does not imply parse, compile, or execution
     success.
@@ -57,4 +57,4 @@ def check_planned_steps(
     """
 
     del steps, available_syntax_names
-    raise NotImplementedError("FusionFlow planning check is not implemented.")
+    raise NotImplementedError("FusionMethod planning check is not implemented.")

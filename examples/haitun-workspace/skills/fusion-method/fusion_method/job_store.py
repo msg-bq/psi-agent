@@ -1,8 +1,8 @@
-"""Durable state for FusionFlow runs that may wait for human input.
+"""Durable state for FusionMethod runs that may wait for human input.
 
 This module is intentionally workspace-private.  It persists the small amount
 of adapter state needed to end a Haitun turn at a Human step and resume the
-same workflow from the next user message.  It does not implement an approval
+same method from the next user message.  It does not implement an approval
 UI or an input channel.
 """
 
@@ -26,7 +26,7 @@ import anyio
 from anyio.to_thread import run_sync as run_sync_in_worker_thread
 from loguru import logger
 
-from psi_agent.workflow_execution import ExecutionCheckpoint, ResourceCapacity
+from psi_agent.method_execution import ExecutionCheckpoint, ResourceCapacity
 
 STATE_VERSION = 2
 type RunStatus = Literal[
@@ -44,8 +44,8 @@ _RUN_KEYS = frozenset(
         "version",
         "run_id",
         "status",
-        "flow_path",
-        "flow_source_digest",
+        "mtd_path",
+        "mtd_source_digest",
         "inputs",
         "resource_capacities",
         "checkpoint",
@@ -57,7 +57,7 @@ _RUN_KEYS = frozenset(
 )
 _CHECKPOINT_KEYS = frozenset(
     {
-        "workflow_id",
+        "method_id",
         "plan_digest",
         "values",
         "completed_step_ids",
@@ -94,7 +94,7 @@ class _PosixLockingModule(Protocol):
 
 
 class JobStoreError(RuntimeError):
-    """Base class for persisted FusionFlow job errors."""
+    """Base class for persisted FusionMethod job errors."""
 
 
 class InvalidRunStateError(JobStoreError):
@@ -155,13 +155,13 @@ class HumanRequestSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class HumanWorkflowRun:
-    """One versioned, JSON-serializable FusionFlow run record."""
+class HumanMethodRun:
+    """One versioned, JSON-serializable FusionMethod run record."""
 
     run_id: str
     status: RunStatus
-    flow_path: str
-    flow_source_digest: str
+    mtd_path: str
+    mtd_source_digest: str
     inputs: dict[str, object]
     resource_capacities: dict[str, ResourceCapacity]
     checkpoint: ExecutionCheckpoint | None = None
@@ -224,13 +224,13 @@ class RunLease:
         self.run_id = run_id
         self._active = True
 
-    async def load(self) -> HumanWorkflowRun:
+    async def load(self) -> HumanMethodRun:
         """Load the leased run's latest atomically published state."""
 
         self._require_active()
         return await self._store.load(self.run_id)
 
-    async def save(self, run: HumanWorkflowRun) -> None:
+    async def save(self, run: HumanMethodRun) -> None:
         """Atomically save state for this lease's run."""
 
         self._require_active()
@@ -309,33 +309,33 @@ class JobStore:
     async def create(
         self,
         *,
-        flow_path: str | PathLike[str],
-        flow_source: str,
+        mtd_path: str | PathLike[str],
+        mtd_source: str,
         definition_digest: str | None = None,
         inputs: Mapping[str, object],
         resource_capacities: Mapping[str, ResourceCapacity] | None = None,
         checkpoint: ExecutionCheckpoint | None = None,
-    ) -> HumanWorkflowRun:
+    ) -> HumanMethodRun:
         """Create and persist a new running job with an opaque run ID."""
 
-        if not isinstance(flow_source, str):
-            raise TypeError("flow_source must be a string")
+        if not isinstance(mtd_source, str):
+            raise TypeError("mtd_source must be a string")
         if definition_digest is not None and _DIGEST_PATTERN.fullmatch(definition_digest) is None:
             raise ValueError("definition_digest must be 64 lowercase hexadecimal characters")
-        normalized_path = str(flow_path)
+        normalized_path = str(mtd_path)
         if not normalized_path:
-            raise ValueError("flow_path must be non-empty")
+            raise ValueError("mtd_path must be non-empty")
         await self.root.mkdir(parents=True, exist_ok=True)
         await self._locks_dir.mkdir(parents=True, exist_ok=True)
 
         for _attempt in range(10):
             run_id = new_opaque_id()
-            run = HumanWorkflowRun(
+            run = HumanMethodRun(
                 run_id=run_id,
                 status="running",
-                flow_path=normalized_path,
-                flow_source_digest=(
-                    hashlib.sha256(flow_source.encode()).hexdigest() if definition_digest is None else definition_digest
+                mtd_path=normalized_path,
+                mtd_source_digest=(
+                    hashlib.sha256(mtd_source.encode()).hexdigest() if definition_digest is None else definition_digest
                 ),
                 inputs=dict(inputs),
                 resource_capacities=dict(resource_capacities or {}),
@@ -346,7 +346,7 @@ class JobStore:
                 run_lock = await _RunLock.try_acquire(self._lock_path(run_id))
                 if run_lock is None:
                     continue
-                logger.debug(f"FusionFlow run lock acquired for create {run_id!r}")
+                logger.debug(f"FusionMethod run lock acquired for create {run_id!r}")
                 if await self._run_path(run_id).exists():
                     continue
                 await self._write(run)
@@ -354,10 +354,10 @@ class JobStore:
             finally:
                 if run_lock is not None:
                     await run_lock.release()
-                    logger.debug(f"FusionFlow run lock released for create {run_id!r}")
-        raise JobStoreError("could not allocate a unique FusionFlow run ID")
+                    logger.debug(f"FusionMethod run lock released for create {run_id!r}")
+        raise JobStoreError("could not allocate a unique FusionMethod run ID")
 
-    async def load(self, run_id: str) -> HumanWorkflowRun:
+    async def load(self, run_id: str) -> HumanMethodRun:
         """Load and strictly validate one atomically published run document."""
 
         _validate_opaque_id(run_id, "run_id", error_type=ValueError)
@@ -365,7 +365,7 @@ class JobStore:
         try:
             source = await path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            raise FileNotFoundError(f"FusionFlow run {run_id!r} does not exist") from None
+            raise FileNotFoundError(f"FusionMethod run {run_id!r} does not exist") from None
         try:
             payload = json.loads(
                 source,
@@ -373,13 +373,13 @@ class JobStore:
                 parse_constant=_reject_json_constant,
             )
         except (json.JSONDecodeError, InvalidRunStateError) as error:
-            raise InvalidRunStateError(f"invalid state document for FusionFlow run {run_id!r}: {error}") from error
+            raise InvalidRunStateError(f"invalid state document for FusionMethod run {run_id!r}: {error}") from error
         run = _run_from_json(payload)
         if run.run_id != run_id:
             raise InvalidRunStateError(f"state filename identifies run {run_id!r}, document identifies {run.run_id!r}")
         return run
 
-    async def save(self, run: HumanWorkflowRun) -> None:
+    async def save(self, run: HumanMethodRun) -> None:
         """Atomically replace an existing run document.
 
         Mutating adapters should call this through :meth:`acquire`'s
@@ -389,7 +389,7 @@ class JobStore:
 
         _validate_run(run, error_type=ValueError)
         if not await self._run_path(run.run_id).exists():
-            raise FileNotFoundError(f"FusionFlow run {run.run_id!r} does not exist")
+            raise FileNotFoundError(f"FusionMethod run {run.run_id!r} does not exist")
         await self._write(run)
 
     @asynccontextmanager
@@ -403,27 +403,27 @@ class JobStore:
 
         _validate_opaque_id(run_id, "run_id", error_type=ValueError)
         if not await self._run_path(run_id).exists():
-            raise FileNotFoundError(f"FusionFlow run {run_id!r} does not exist")
+            raise FileNotFoundError(f"FusionMethod run {run_id!r} does not exist")
         await self._locks_dir.mkdir(parents=True, exist_ok=True)
         run_lock: _RunLock | None = None
         lease: RunLease | None = None
         try:
             run_lock = await _RunLock.try_acquire(self._lock_path(run_id))
             if run_lock is None:
-                logger.debug(f"FusionFlow run lock busy for {run_id!r}")
-                raise RunAlreadyActiveError(f"FusionFlow run {run_id!r} is already active")
-            logger.debug(f"FusionFlow run lock acquired for {run_id!r}")
+                logger.debug(f"FusionMethod run lock busy for {run_id!r}")
+                raise RunAlreadyActiveError(f"FusionMethod run {run_id!r} is already active")
+            logger.debug(f"FusionMethod run lock acquired for {run_id!r}")
             lease = RunLease(self, run_id)
             # Recheck under the lease in case a future deletion API races us.
             if not await self._run_path(run_id).exists():
-                raise FileNotFoundError(f"FusionFlow run {run_id!r} does not exist")
+                raise FileNotFoundError(f"FusionMethod run {run_id!r} does not exist")
             yield lease
         finally:
             if lease is not None:
                 lease._release()
             if run_lock is not None:
                 await run_lock.release()
-                logger.debug(f"FusionFlow run lock released for {run_id!r}")
+                logger.debug(f"FusionMethod run lock released for {run_id!r}")
 
     def _run_path(self, run_id: str) -> anyio.Path:
         return self.root / f"{run_id}.json"
@@ -433,7 +433,7 @@ class JobStore:
         # directories, which could otherwise brick a run after an upgrade.
         return self._locks_dir / f"{run_id}.lockfile"
 
-    async def _write(self, run: HumanWorkflowRun) -> None:
+    async def _write(self, run: HumanMethodRun) -> None:
         payload = _run_to_json(run)
         encoded = json.dumps(
             payload,
@@ -521,12 +521,12 @@ def _close_locked_file(
         _release_process_lock(reservation_key)
 
 
-def _run_to_json(run: HumanWorkflowRun) -> dict[str, object]:
+def _run_to_json(run: HumanMethodRun) -> dict[str, object]:
     _validate_run(run, error_type=ValueError)
     checkpoint: dict[str, object] | None = None
     if run.checkpoint is not None:
         checkpoint = {
-            "workflow_id": run.checkpoint.workflow_id,
+            "method_id": run.checkpoint.method_id,
             "plan_digest": run.checkpoint.plan_digest,
             "values": _copy_json_mapping(
                 run.checkpoint.values,
@@ -554,8 +554,8 @@ def _run_to_json(run: HumanWorkflowRun) -> dict[str, object]:
         "version": run.version,
         "run_id": run.run_id,
         "status": run.status,
-        "flow_path": run.flow_path,
-        "flow_source_digest": run.flow_source_digest,
+        "mtd_path": run.mtd_path,
+        "mtd_source_digest": run.mtd_source_digest,
         "inputs": run.inputs,
         "resource_capacities": capacities,
         "checkpoint": checkpoint,
@@ -566,7 +566,7 @@ def _run_to_json(run: HumanWorkflowRun) -> dict[str, object]:
     }
 
 
-def _run_from_json(payload: object) -> HumanWorkflowRun:
+def _run_from_json(payload: object) -> HumanMethodRun:
     if not isinstance(payload, dict):
         raise InvalidRunStateError("run state must be a JSON object")
     payload = cast(dict[str, object], payload)
@@ -585,9 +585,9 @@ def _run_from_json(payload: object) -> HumanWorkflowRun:
         _require_exact_keys(checkpoint_payload, _CHECKPOINT_KEYS, "checkpoint")
         try:
             checkpoint = ExecutionCheckpoint(
-                workflow_id=_require_string(
-                    checkpoint_payload["workflow_id"],
-                    context="checkpoint.workflow_id",
+                method_id=_require_string(
+                    checkpoint_payload["method_id"],
+                    context="checkpoint.method_id",
                 ),
                 plan_digest=_require_string(
                     checkpoint_payload["plan_digest"],
@@ -657,16 +657,16 @@ def _run_from_json(payload: object) -> HumanWorkflowRun:
             raise InvalidRunStateError(str(error)) from error
 
     try:
-        return HumanWorkflowRun(
+        return HumanMethodRun(
             run_id=_require_string(payload["run_id"], context="run_id"),
             status=cast(
                 RunStatus,
                 _require_string(payload["status"], context="status"),
             ),
-            flow_path=_require_string(payload["flow_path"], context="flow_path"),
-            flow_source_digest=_require_string(
-                payload["flow_source_digest"],
-                context="flow_source_digest",
+            mtd_path=_require_string(payload["mtd_path"], context="mtd_path"),
+            mtd_source_digest=_require_string(
+                payload["mtd_source_digest"],
+                context="mtd_source_digest",
             ),
             inputs=_require_json_mapping(payload["inputs"], context="inputs"),
             resource_capacities=_decode_resource_capacities(payload["resource_capacities"]),
@@ -696,7 +696,7 @@ def _copy_checkpoint(
     if not isinstance(checkpoint, ExecutionCheckpoint):
         raise error_type("checkpoint must be an ExecutionCheckpoint or None")
     return ExecutionCheckpoint(
-        workflow_id=checkpoint.workflow_id,
+        method_id=checkpoint.method_id,
         plan_digest=checkpoint.plan_digest,
         values=_copy_json_mapping(
             checkpoint.values,
@@ -709,7 +709,7 @@ def _copy_checkpoint(
 
 
 def _validate_run(
-    run: HumanWorkflowRun,
+    run: HumanMethodRun,
     *,
     error_type: type[Exception],
 ) -> None:
@@ -724,10 +724,10 @@ def _validate_run(
         "cancelled",
     }:
         raise error_type(f"unsupported run status: {run.status!r}")
-    if not isinstance(run.flow_path, str) or not run.flow_path:
-        raise error_type("flow_path must be a non-empty string")
-    if not isinstance(run.flow_source_digest, str) or _DIGEST_PATTERN.fullmatch(run.flow_source_digest) is None:
-        raise error_type("flow_source_digest must be 64 lowercase hexadecimal characters")
+    if not isinstance(run.mtd_path, str) or not run.mtd_path:
+        raise error_type("mtd_path must be a non-empty string")
+    if not isinstance(run.mtd_source_digest, str) or _DIGEST_PATTERN.fullmatch(run.mtd_source_digest) is None:
+        raise error_type("mtd_source_digest must be 64 lowercase hexadecimal characters")
     _copy_json_mapping(run.inputs, context="inputs", error_type=error_type)
     _normalize_resource_capacities(
         run.resource_capacities,
@@ -987,8 +987,8 @@ def _reject_json_constant(value: str) -> object:
 
 __all__ = [
     "STATE_VERSION",
+    "HumanMethodRun",
     "HumanRequestSpec",
-    "HumanWorkflowRun",
     "InvalidRunStateError",
     "JobStore",
     "JobStoreError",

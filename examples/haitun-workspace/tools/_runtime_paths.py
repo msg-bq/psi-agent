@@ -33,7 +33,7 @@ def package_fallback() -> str:
 
 
 def workspace_dir(explicit: str = "") -> str:
-    """User workspace root (relative file IO / schedules / todos / flows).
+    """User workspace root (relative file IO / schedules / todos / mtds).
 
     Priority: explicit arg → ContextVar ``get_workspace()`` → ``WORKSPACE_DIR``
     → package fallback.

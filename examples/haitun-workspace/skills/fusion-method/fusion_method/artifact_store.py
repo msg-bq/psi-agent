@@ -38,7 +38,7 @@ class ArtifactStore:
         *,
         reuse_existing: bool,
     ) -> ArtifactStore:
-        """Create or reopen one workflow-local run directory."""
+        """Create or reopen one method-local run directory."""
 
         if _RUN_ID_PATTERN.fullmatch(run_id) is None:
             raise ValueError("run_id must be 32 lowercase hexadecimal characters")
@@ -59,7 +59,7 @@ class ArtifactStore:
             boundary=run_dir,
             exist_ok=True,
         )
-        logger.debug(f"FusionFlow Artifact store ready: {artifacts_dir!r}")
+        logger.debug(f"FusionMethod Artifact store ready: {artifacts_dir!r}")
         return cls(run_dir, artifacts_dir)
 
     async def persist(self, values: Mapping[str, object]) -> None:
@@ -74,14 +74,14 @@ class ArtifactStore:
             self._persisted_ids.add(artifact_id)
             written += 1
         if written:
-            logger.debug(f"Persisted {written} FusionFlow Artifact file(s) under {self.artifacts_dir!r}")
+            logger.debug(f"Persisted {written} FusionMethod Artifact file(s) under {self.artifacts_dir!r}")
 
 
 def _artifact_filename(artifact_id: str) -> str:
     """Return a readable, collision-safe filename for one G4 Artifact ID."""
 
     if not isinstance(artifact_id, str) or not artifact_id:
-        raise ValueError("FusionFlow Artifact ID for persistence must be a non-empty string")
+        raise ValueError("FusionMethod Artifact ID for persistence must be a non-empty string")
     if _PORTABLE_FILENAME_PATTERN.fullmatch(artifact_id) is not None and (
         _WINDOWS_RESERVED_NAME.fullmatch(artifact_id) is None
     ):
@@ -119,11 +119,11 @@ async def _regular_directory(
 
     await path.mkdir(parents=True, exist_ok=exist_ok)
     if await path.is_symlink() or not await path.is_dir():
-        raise ValueError(f"FusionFlow Artifact path is not a regular directory: {path!r}")
+        raise ValueError(f"FusionMethod Artifact path is not a regular directory: {path!r}")
     resolved = await path.resolve()
     boundary_resolved = await boundary.resolve()
     if not Path(str(resolved)).is_relative_to(Path(str(boundary_resolved))):
-        raise ValueError(f"FusionFlow Artifact path escapes its workflow directory: {path!r}")
+        raise ValueError(f"FusionMethod Artifact path escapes its method directory: {path!r}")
     return resolved
 
 

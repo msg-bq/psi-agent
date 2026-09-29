@@ -1,4 +1,4 @@
-# FusionFlow SelectNode implementation plan
+# FusionMethod SelectNode implementation plan
 
 1. Add failing graph-model tests for SelectNode ownership, dependencies,
    serialization, and duplicate producers.

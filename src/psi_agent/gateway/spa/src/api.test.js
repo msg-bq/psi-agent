@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { listWorkspaceWorkflows } from './api.js'
+import { listWorkspaceMethods } from './api.js'
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('listWorkspaceWorkflows', () => {
+describe('listWorkspaceMethods', () => {
   it('serializes the selected workspace without relying on URLSearchParams.size', async () => {
     const NativeURLSearchParams = globalThis.URLSearchParams
     class LegacyURLSearchParams {
@@ -25,17 +25,17 @@ describe('listWorkspaceWorkflows', () => {
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ workflows: [{ name: 'daily-brief' }] }),
+      json: async () => ({ methods: [{ name: 'daily-brief' }] }),
     })
     vi.stubGlobal('URLSearchParams', LegacyURLSearchParams)
     vi.stubGlobal('window', { location: { origin: 'https://example.test/' } })
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(listWorkspaceWorkflows('/tmp/my workspace')).resolves.toEqual([
+    await expect(listWorkspaceMethods('/tmp/my workspace')).resolves.toEqual([
       { name: 'daily-brief' },
     ])
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://example.test/workspace/workflows?path=%2Ftmp%2Fmy+workspace',
+      'https://example.test/workspace/methods?path=%2Ftmp%2Fmy+workspace',
       expect.objectContaining({ method: 'GET' }),
     )
   })
@@ -43,15 +43,15 @@ describe('listWorkspaceWorkflows', () => {
   it('omits the query suffix when no workspace is supplied', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ workflows: [] }),
+      json: async () => ({ methods: [] }),
     })
     vi.stubGlobal('window', { location: { origin: 'https://example.test' } })
     vi.stubGlobal('fetch', fetchMock)
 
-    await listWorkspaceWorkflows('')
+    await listWorkspaceMethods('')
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://example.test/workspace/workflows',
+      'https://example.test/workspace/methods',
       expect.objectContaining({ method: 'GET' }),
     )
   })

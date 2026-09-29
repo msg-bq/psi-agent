@@ -15,7 +15,7 @@ Gateway 进程
 ├── SessionManager     — Session 实例注册表 + 生命周期管理
 ├── SchedulerManager   — 每 workspace 一个全量激活的调度 Session（触发其 schedules/，对 SPA 隐藏）
 ├── TitleManager       — 会话标题 CRUD + AI 自动生成
-├── WorkspaceManager   — 目录浏览 + workspace-scoped reusable workflow 摘要
+├── WorkspaceManager   — 目录浏览 + workspace-scoped reusable method 摘要
 ├── ChatManager        — SSE 流式对话管理
 ├── HistoryManager     — JSONL 历史读取（AppData `histories/` + legacy 双读）
 ├── TodoManager        — 会话 todo 列表只读（AppData `todos/` + legacy workspace 双读）
@@ -48,7 +48,7 @@ Gateway 进程
 | `_chat_manager.py` | SSE 流式对话管理（复用 ChannelCore） |
 | `_history_manager.py` | JSONL 历史读取（``{appdata}/histories/{session_id}.jsonl``，legacy ``{workspace}/histories/`` 双读；delete 两侧都清） |
 | `_todo_manager.py` | 会话 todo 列表读取（``{appdata}/todos/{session_id}.json``，legacy ``{workspace}/.psi/todos/`` 双读） |
-| `_workspace_manager.py` | 目录浏览 + 快捷路径列表 + cwd 查询 + 固定 registry 下 reusable workflow 的安全摘要列表 |
+| `_workspace_manager.py` | 目录浏览 + 快捷路径列表 + cwd 查询 + 固定 registry 下 reusable method 的安全摘要列表 |
 | `spa/` | Vue 3 SPA v1（对话气泡），构建输出 `spa/dist/`；路径 `/spa/` |
 | `spa-v2/` | React SPA v2（任务工作台 + 宝箱），构建输出 `spa-v2/dist/`；**默认** `GET /` → `/spa-v2/`（无 dist 时回退 v1） |
 | `_tray.py` | 系统托盘图标（pystray + Pillow），由 `--tray` 参数开启，`--icon` 参数指定图标文件，左键打开浏览器或恢复 webview 窗口，右键菜单控制；`request_attention()` 脉冲高亮图标 |
@@ -387,7 +387,7 @@ OAuth 回调中继（`_oauth_manager.py`）：让**授权码自己回到发起�
 | GET | `/workspace/cwd` | Gateway 进程当前工作目录 |
 | GET | `/workspace/places` | PathPicker 快捷位置（cwd / home / desktop / documents / downloads）+ 盘符 |
 | GET | `/workspace/browse` | 浏览目录 `?path=...&kind=directory|file|all&q=...`，默认 `kind=directory` |
-| GET | `/workspace/workflows` | 列出指定 workspace 的 reusable workflow 摘要 `?path=...` |
+| GET | `/workspace/methods` | 列出指定 workspace 的 reusable method 摘要 `?path=...` |
 | GET | `/workspace/file` | 读取文件为 base64（`?path=...&root=...`）；``root`` 非空时路径须落在该目录下 |
 | POST | `/workspace/reveal` | 在本机文件管理器中显示路径（Windows `explorer /select`；macOS `open -R`；Linux `xdg-open` 父目录）。body `{path}`；路径须已存在。供 spa-v2 交付物「在文件夹中显示」 |
 | GET | `/titles` | 获取所有 session 标题 |
@@ -403,8 +403,8 @@ AI 和 Session 的 `id` 字段可选，不传自动生成 UUID。
 
 **注意**：`GET /workspace/browse` 对 `path` 不加限制，可列举本机任意目录——这是 PathPicker 选 workspace 的预期功能。`GET /workspace/places` 返回快捷位置与盘符。
 
-`GET /workspace/workflows` 只扫描固定的一层目录
-`flows/workflows/<slug>/<slug>.workflow`，不导入 FusionFlow，也不定义额外
+`GET /workspace/methods` 只扫描固定的一层目录
+`mtds/methods/<slug>/<slug>.method`，不导入 FusionMethod，也不定义额外
 manifest 协议。目录链或资产文件为 symlink、slug 非法/为 Windows 保留名、文件超限时，
 该条目会被跳过。响应只投影 `name/path`。
 

@@ -1,5 +1,5 @@
 {
-  "candidate_knowledge_base_initial": "Initial catalyst candidates collected before this workflow run.",
+  "candidate_knowledge_base_initial": "Initial catalyst candidates collected before this method run.",
   "historical_results": "Historical experiment observations and measurements.",
   "laboratory_rule_base": "Laboratory safety, equipment, and material-handling constraints.",
   "overall_water_splitting_knowledge_base": "Known catalysts and reaction conditions for overall water splitting.",

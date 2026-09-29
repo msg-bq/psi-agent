@@ -1,17 +1,17 @@
-# Workflow Graph 初版设计：允许有环的声明式 Step–Artifact 图
+# Method Graph 初版设计：允许有环的声明式 Step–Artifact 图
 
 > 状态：已评审；2026-07-23 补充确认 Executor 包含 Human、Agent、Program
 > 日期：2026-07-23
-> 目标 PR：独立于 FusionFlow Python 运行时 PR
-> 图模型：`src/psi_agent/workflow_graph/`
-> Core IR 后端：`examples/haitun-workspace/skills/fusion-flow/fusion_flow/graph_compiler.py`
+> 目标 PR：独立于 FusionMethod Python 运行时 PR
+> 图模型：`src/psi_agent/method_graph/`
+> Core IR 后端：`examples/haitun-workspace/skills/fusion-method/fusion_method/graph_compiler.py`
 
 ## 1. 结论
 
-Workflow Core IR 中与执行依赖相关的 assertion，应编译为一个**类型化、有向、允许
+Method Core IR 中与执行依赖相关的 assertion，应编译为一个**类型化、有向、允许
 有环的 Step–Artifact 图**。
 
-它不是 DAG，也不是一次运行的状态机，更不是旧 FusionFlow
+它不是 DAG，也不是一次运行的状态机，更不是旧 FusionMethod
 `execution-graph.json` 中的动态 trace。
 
 初版图只保存静态定义：
@@ -20,7 +20,7 @@ Workflow Core IR 中与执行依赖相关的 assertion，应编译为一个**类
 - 有哪些 Artifact；
 - Step 读取和产生哪些 Artifact；
 - 哪个 List Artifact 在运行时展开 foreach slots；
-- 已确认的 timeout、attempt、resource 和 workflow policy；
+- 已确认的 timeout、attempt、resource 和 method policy；
 - 哪些 Core IR assertions 暂时不能进入图。
 
 一个环可以被保存、序列化和分析，但没有 seed、Artifact version、Step activation、
@@ -29,12 +29,12 @@ commit 与 termination 合同之前，不能据此宣称该环已经可执行。
 ## 2. 三层模型
 
 ```text
-Workflow Core IR
+Method Core IR
     └── assertion、term、formula、identity
             |
-            | WorkflowGraphCompiler.compile()
+            | MethodGraphCompiler.compile()
             v
-WorkflowGraph
+MethodGraph
     └── 静态 Step、Artifact、关系、policy；允许有环
             |
             | 未来 planner
@@ -50,9 +50,9 @@ ExecutionTrace
 
 分层约束：
 
-- `psi_agent.workflow_graph` 只定义通用图模型，不导入 example skill；
-- `fusion_flow.graph_compiler` 继承 PR12 的 `CoreIRCompiler`，并单向导入图模型；
-- 未来 `workflow_runtime` 可以同时依赖二者；
+- `psi_agent.method_graph` 只定义通用图模型，不导入 example skill；
+- `fusion_method.graph_compiler` 继承 PR12 的 `CoreIRCompiler`，并单向导入图模型；
+- 未来 `method_runtime` 可以同时依赖二者；
 - Core IR 是语义事实的上游，Graph 是执行依赖的派生视图；
 - 未编译进图的 Core IR 不能被假装已经进入 Graph。
 
@@ -72,17 +72,17 @@ Petri Net、SCC 分析或 Region CDFG 可以成为以后独立的分析/lowering
 ## 4. 包结构
 
 ```text
-src/psi_agent/workflow_graph/
+src/psi_agent/method_graph/
 ├── __init__.py
 └── model.py       # 不可变模型、结构校验、确定性序列化
 
-tests/psi_agent/workflow_graph/
+tests/psi_agent/method_graph/
 ├── __init__.py
 ├── test_model.py
 └── test_public_api.py
 
-examples/haitun-workspace/skills/fusion-flow/
-├── fusion_flow/graph_compiler.py  # CoreIRCompiler 的 WorkflowGraph 后端
+examples/haitun-workspace/skills/fusion-method/
+├── fusion_method/graph_compiler.py  # CoreIRCompiler 的 MethodGraph 后端
 └── test/test_graph_compiler.py
 ```
 
@@ -95,7 +95,7 @@ examples/haitun-workspace/skills/fusion-flow/
 
 所有标识都是非空字符串，并保留上游 Core IR identity，不把 identity 当展示文本。
 
-- `workflow_id`
+- `method_id`
 - `step_id`
 - `artifact_id`
 - `name_id`
@@ -142,7 +142,7 @@ Artifact 边回答“这个值从哪里来”，`depends_on` 回答“即使不�
 未来 dispatcher 通过原始 Core IR/catalog 解析 identity 的类型与配置。
 `program_path(program) = path_identity` 与
 `agent_system_prompt(agent) = instruction_identity` 属于 catalog/dispatcher
-配置，保留在 residual 中，不复制进 `StepNode` 或 `WorkflowGraph`。
+配置，保留在 residual 中，不复制进 `StepNode` 或 `MethodGraph`。
 
 ### 5.3 ArtifactNode
 
@@ -157,7 +157,7 @@ ArtifactNode
 `binding_step_id` 非空时，该 Artifact 是 foreach invocation-local item binding：
 
 - 只在指定 Step 的一个 slot 内可见；
-- 不能作为 workflow input/output；
+- 不能作为 method input/output；
 - 不能由普通 Step 产生；
 - 不能被其他 Step 消费；
 - 不能再次作为 foreach source。
@@ -210,7 +210,7 @@ SelectNode
 **eager 值选择**，不是控制流：两个候选 producer 都会运行，不能据此承诺未选分支
 不启动。
 
-### 5.5 WorkflowPolicy
+### 5.5 MethodPolicy
 
 初版只保留已确认的 run-level 上界：
 
@@ -220,15 +220,15 @@ SelectNode
 不提供任意 `attrs`/`config` 字典。开放语义应留在 residual 或新版本模型中，不应先
 进入一个无人能静态检查的 escape hatch。
 
-### 5.6 WorkflowGraph
+### 5.6 MethodGraph
 
 ```text
-WorkflowGraph
-├── workflow_id
+MethodGraph
+├── method_id
 ├── steps: tuple[StepNode, ...]
 ├── artifacts: tuple[ArtifactNode, ...]
 ├── edges: tuple[ConsumesEdge | ProducesEdge | ForeachEdge, ...]
-├── policy: WorkflowPolicy
+├── policy: MethodPolicy
 └── selectors: tuple[SelectNode, ...]
 ```
 
@@ -263,19 +263,19 @@ Artifact A -> Step S1 -> Artifact B -> Step S2 -> Artifact A
 - retry 和循环 iteration 如何组合。
 
 任意有向图的 SCC 缩点图必然是 DAG，可以用于以后分析组件间的依赖顺序；这不等于
-原始 WorkflowGraph 是 DAG。
+原始 MethodGraph 是 DAG。
 
 ## 7. Core IR 编译边界
 
 ### 7.1 复用 PR12 编译器
 
-`fusion_flow.graph_compiler.WorkflowGraphCompiler` 继承
-`CoreIRCompiler`，输入是真实的 `WorkflowFile`、`Workflow`、`Assertion`、
+`fusion_method.graph_compiler.MethodGraphCompiler` 继承
+`CoreIRCompiler`，输入是真实的 `MethodFile`、`Method`、`Assertion`、
 `CompoundTerm`、`Constant` 和 `ListTerm`。它不解析 BNF 文本，也不接受
 duck-typed DTO。
 
-`CoreIRCompiler.compile()` 负责遍历文件、声明和 workflow；图后端只实现
-`_compile_*` node hooks 以及 `_build_workflow()`、`_build_program()`。未知 term
+`CoreIRCompiler.compile()` 负责遍历文件、声明和 method；图后端只实现
+`_compile_*` node hooks 以及 `_build_method()`、`_build_program()`。未知 term
 不会被近似处理。图后端只认领顶层的命名 Artifact 选择；内联或递归 `IfTerm`
 仍沿共享编译器的 fail-closed 路径显式报错。
 
@@ -286,11 +286,11 @@ duck-typed DTO。
 
 ### 7.2 已知 operator
 
-FusionFlow grammar catalog 仍有 21 个 preset operator；runner 的 typed context
+FusionMethod grammar catalog 仍有 21 个 preset operator；runner 的 typed context
 另外注入 `independent` 和 `depends_on`。图后端当前识别：
 
-- `input_workflow`
-- `output_workflow`
+- `input_method`
+- `output_method`
 - `step_name`
 - `step_instruction`
 - `step_executor`
@@ -301,15 +301,15 @@ FusionFlow grammar catalog 仍有 21 个 preset operator；runner 的 typed cont
 - `max_attempts`
 - `resource_requirement`
 - `max_concurrency`
-- `workflow_timeout`
+- `method_timeout`
 - `independent`
 - `depends_on`
 
 已知 operator 如果 arity、RHS、owner 或类型形状错误，直接产生
-`WorkflowGraphCompilationError`，不能伪装成 residual。
+`MethodGraphCompilationError`，不能伪装成 residual。
 
 `program_path` 与 `agent_system_prompt` 按源码顺序进入 graph compiler residual；
-官方 workflow runner 当前消费并校验前者，后者仍因没有 catalog adapter 而 fail
+官方 method runner 当前消费并校验前者，后者仍因没有 catalog adapter 而 fail
 closed。Graph backend 不复制这两种 executor 配置。
 
 arity 以 `CompoundTerm.arguments` 的实际长度为准，不使用 `Operator.arity`。当前
@@ -320,12 +320,12 @@ operator 默认可能为 0，不能代表应用实参数量。
 
 `Assertion` 表示等式而不是赋值。已知图算子可以位于等式任意一侧；compiler 先将唯一的
 图算子规范化为 `graph_call = value`，再复用同一 lowering 路径。若等式两侧都是已知
-图算子，则显式抛出 `WorkflowGraphCompilationError`，不能进入 residual。
+图算子，则显式抛出 `MethodGraphCompilationError`，不能进入 residual。
 
-| Core IR assertion | WorkflowGraph |
+| Core IR assertion | MethodGraph |
 | --- | --- |
-| `input_workflow(w) == [a, ...]` | 每项成为 `ArtifactNode(a, is_input=True)` |
-| `output_workflow(w) == [a, ...]` | 每项成为 `ArtifactNode(a, is_output=True)` |
+| `input_method(w) == [a, ...]` | 每项成为 `ArtifactNode(a, is_input=True)` |
+| `output_method(w) == [a, ...]` | 每项成为 `ArtifactNode(a, is_output=True)` |
 | `step_name(s) = n` | `StepNode(s).name_id = n` |
 | `step_instruction(s) = i` | `StepNode(s).instruction_id = i` |
 | `step_executor(s) = e` | `StepNode(s).executor_id = e` |
@@ -337,8 +337,8 @@ operator 默认可能为 0，不能代表应用实参数量。
 | `resource_requirement(s, resource) = n` | `StepNode(s).resources += (resource, n)` |
 | `independent(s) == True` | `StepNode(s).independent = True`，仅保留 metadata |
 | `depends_on(s, predecessor) == True` | `StepNode(s).depends_on += predecessor` |
-| `max_concurrency(w) = n` | `WorkflowPolicy.max_concurrency = n` |
-| `workflow_timeout(w) = n` | `WorkflowPolicy.timeout_seconds = n` |
+| `max_concurrency(w) = n` | `MethodPolicy.max_concurrency = n` |
+| `method_timeout(w) = n` | `MethodPolicy.timeout_seconds = n` |
 | `selected == if(condition, a, b)` | `SelectNode(selected, a, b, condition)` |
 
 其中所有 `n` 都从 `Constant.symbol` 显式解析为正整数。resource identity 使用
@@ -357,13 +357,13 @@ operator 默认可能为 0，不能代表应用实参数量。
 未知、图无关且结构合法的 assertions 保留在：
 
 ```text
-WorkflowGraphCompilation
+MethodGraphCompilation
 ├── graph
 └── residual_assertions
 ```
 
-`WorkflowGraphCompiler.compile(WorkflowFile)` 为每个 workflow 返回一个
-`WorkflowGraphCompilation`。residual 保留真实 `Assertion`，因此 compilation 本身
+`MethodGraphCompiler.compile(MethodFile)` 为每个 method 返回一个
+`MethodGraphCompilation`。residual 保留真实 `Assertion`，因此 compilation 本身
 不是持久化 payload。需要持久化时，调用者分别保存原始 Core IR 和
 `graph.to_dict()`。
 
@@ -373,13 +373,13 @@ WorkflowGraphCompilation
 
 ## 8. canonical dataflow ListTerm 的信息边界
 
-`input_workflow`、`output_workflow`、`consumes`、`produces` 都从真实
+`input_method`、`output_method`、`consumes`、`produces` 都从真实
 `ListTerm.items` 读取。图后端把它们编译为关系：
 
 - List 项展开为普通边或 I/O 标记；
 - 重复项报错，避免静默丢 multiplicity；
 - 该 List 只是批量书写关系的载体，项的源码顺序没有执行含义；
-- WorkflowGraph 保留全部依赖关系，但不保留载体的源码顺序；
+- MethodGraph 保留全部依赖关系，但不保留载体的源码顺序；
 - 因此这不是从 repository Core IR 到 Graph 的无损 round-trip；
 - 原始 Core IR 必须由调用者继续保存。
 
@@ -390,17 +390,17 @@ WorkflowGraphCompilation
 
 构造完成后检查：
 
-1. workflow、Step、Artifact identity 非空且各自唯一；
+1. method、Step、Artifact identity 非空且各自唯一；
 2. Step/Artifact identity 不冲突；
 3. 所有 Step 都有且只有一个 name 和 executor；
 4. instruction 至多一个；
 5. 所有边端点存在且方向正确；
 6. 相同关系边不重复；
-7. 普通 consumed、foreach source 或 workflow output 的全局 Artifact，必须是
-   workflow input 或有 producer；
+7. 普通 consumed、foreach source 或 method output 的全局 Artifact，必须是
+   method input 或有 producer；
 8. 一个 Artifact 最多一个静态 producer；
 9. 一个 foreach Step 最多一个 source；
-10. local binding 不跨 Step 泄漏，也不参与 workflow I/O、普通 produces 或 nested
+10. local binding 不跨 Step 泄漏，也不参与 method I/O、普通 produces 或 nested
     foreach；
 11. timeout、concurrency、resource amount 为正整数；
 12. `max_attempts >= 1`；
@@ -415,7 +415,7 @@ WorkflowGraphCompilation
 ## 10. 确定性序列化
 
 确定性不只依赖 compiler。即使调用者直接以不同 tuple 顺序构造语义相同的
-`WorkflowGraph`，`to_dict()` 也必须：
+`MethodGraph`，`to_dict()` 也必须：
 
 - 按 identity 排 steps；
 - 按 identity 排 artifacts；
@@ -448,29 +448,7 @@ schema migration 或 `schema_version`。
 Graph 只保存 `ForeachEdge` 和 local binding。slot FSM、并发配额、attempt、partial
 failure、结果聚合与提交由未来 runtime 负责。
 
-## 12. 与 FusionFlow Python 执行原语的关系
-
-旧 `flow.*` Python 移植是 imperative runtime：
-
-- `flow.session`、`flow.call`、`flow.exec` 是可能的原子执行能力；
-- `flow.parallel`、`flow.if_`、loop、map/filter 等是 Python 作者直接使用的组合器；
-- 它们产生动态 `ExecutionTrace`。
-
-静态图 executor 不应把所有 combinator 再套一遍：
-
-- 图的普通依赖已决定 all-ready、fan-out 和隐式并行；
-- planner 应按图决定 frontier；
-- dispatcher 通过原始 Core IR/catalog 判断 `executor_id` 属于 Human、Agent 还是
-  Program；
-- Agent 与 Program handler 由官方 G4 workspace adapter 直接注入，不依赖旧
-  `fusion_flow.execution`；
-- Human handler 已在 workspace adapter 中实现为：专用 Agent 整理说明并按需读取
-  引用资源，持久保存 `ExecutionCheckpoint` 与 request token，释放 Session turn，
-  通过既有 `clarify` 获取下一条用户消息后恢复并提交 produces Artifact；
-- 图的控制语义未闭合时，不从普通数据边猜测 lazy `if`、first/any 或 while；
-  `SelectNode` 只执行已显式建模的 eager 值选择。
-
-## 13. 测试策略
+## 12. 测试策略
 
 ### 13.1 模型测试
 
@@ -493,7 +471,7 @@ failure、结果聚合与提交由未来 runtime 负责。
 - resource key 不发生 `"a:b" + "c"` 与 `"a" + "b:c"` 碰撞；
 - 结果排序稳定。
 
-## 14. 非目标
+## 13. 非目标
 
 本 PR 不实现：
 
@@ -510,9 +488,9 @@ failure、结果聚合与提交由未来 runtime 负责。
 - dynamic graph mutation；
 - Petri Net/TLA+/MLIR lowering；
 - executor callable registry；
-- FusionFlow Python 运行时。
+- FusionMethod Python 运行时。
 
-## 15. 验收标准
+## 14. 验收标准
 
 - 图模型明确允许有环，代码中没有 DAG 校验；
 - 静态定义与运行状态彻底分离；
@@ -522,5 +500,5 @@ failure、结果聚合与提交由未来 runtime 负责。
 - tests、Ruff、ty 通过；
 - 根 AGENTS 的代码结构和设计说明同步；
 - 初版 one-shot planner/executor 已独立实现，边界见
-  `2026-07-25-workflow-execution-plan-design.zh.md`；本图模型仍允许保存 planner
+  `2026-07-25-method-execution-plan-design.zh.md`；本图模型仍允许保存 planner
   暂不支持的有环和 Foreach 结构。

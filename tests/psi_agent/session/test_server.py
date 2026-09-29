@@ -143,7 +143,7 @@ async def test_handle_non_user_role_coercion(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_agent_run_success_flow(tmp_path: Path) -> None:
+async def test_agent_run_success_mtd(tmp_path: Path) -> None:
     """When agent runs successfully, response is streamed correctly."""
 
     async def ai_handler(request: web.Request) -> web.StreamResponse:

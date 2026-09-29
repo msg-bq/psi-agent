@@ -1,6 +1,6 @@
 根据 `skills/ows-catalyst-recommender/SKILL.md` 来执行。对于每个 Stage02
 推荐 worker 的 agent，要求在分配到的 `slot_n` 中完成一次推荐迭代：读取
-workflow 输入，并基于当前 `<output_root>/pools/candidates`、
+method 输入，并基于当前 `<output_root>/pools/candidates`、
 `<output_root>/pools/structures`、
 `<output_root>/pools/novel_and_stable_catalysts` 和
 `<output_root>/fail/candidates` 去重；写入

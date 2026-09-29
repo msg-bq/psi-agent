@@ -30,13 +30,13 @@ export async function browseWorkspace(path, { kind = 'directory', q = '' } = {})
   return r.json()
 }
 
-export async function listWorkspaceWorkflows(path) {
+export async function listWorkspaceMethods(path) {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   const query = params.toString()
   const suffix = query ? `?${query}` : ''
-  const data = await api('GET', `/workspace/workflows${suffix}`)
-  return Array.isArray(data.workflows) ? data.workflows : []
+  const data = await api('GET', `/workspace/methods${suffix}`)
+  return Array.isArray(data.methods) ? data.methods : []
 }
 
 export async function streamChat(sessionId, formData, signal) {

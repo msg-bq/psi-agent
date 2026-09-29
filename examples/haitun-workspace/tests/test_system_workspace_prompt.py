@@ -45,5 +45,5 @@ async def test_system_prompt_workspace_section_uses_get_workspace(tmp_path: Path
     user_abs = str(user_ws.resolve())
     assert user_abs in prompt
     # Must announce the bound user workspace as the file-IO root.
-    assert "user workspace** (file IO / deliverables / schedules / flows) is:" in prompt
+    assert "user workspace** (file IO / deliverables / schedules / mtds) is:" in prompt
     assert f"is: {user_abs}" in prompt or f"is: {user_abs.replace(chr(92), '/')}" in prompt

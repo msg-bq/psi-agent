@@ -404,10 +404,10 @@ OPENAPI_SPEC = {
                 },
             },
         },
-        "/workspace/workflows": {
+        "/workspace/methods": {
             "get": {
-                "summary": "List reusable workflow declarations in a workspace",
-                "operationId": "listWorkspaceWorkflows",
+                "summary": "List reusable method declarations in a workspace",
+                "operationId": "listWorkspaceMethods",
                 "parameters": [
                     {
                         "name": "path",
@@ -418,16 +418,16 @@ OPENAPI_SPEC = {
                 ],
                 "responses": {
                     "200": {
-                        "description": "Canonical reusable workflow paths",
+                        "description": "Canonical reusable method paths",
                         "content": {
                             "application/json": {
                                 "schema": {
                                     "type": "object",
-                                    "required": ["workflows"],
+                                    "required": ["methods"],
                                     "properties": {
-                                        "workflows": {
+                                        "methods": {
                                             "type": "array",
-                                            "items": {"$ref": "#/components/schemas/WorkflowSummary"},
+                                            "items": {"$ref": "#/components/schemas/MethodSummary"},
                                         }
                                     },
                                 }
@@ -627,7 +627,7 @@ OPENAPI_SPEC = {
                     "status": {"type": "string"},
                 },
             },
-            "WorkflowSummary": {
+            "MethodSummary": {
                 "type": "object",
                 "required": ["name", "path"],
                 "additionalProperties": False,
@@ -639,7 +639,7 @@ OPENAPI_SPEC = {
                     },
                     "path": {
                         "type": "string",
-                        "pattern": "^flows/workflows/[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}\\.workflow$",
+                        "pattern": "^mtds/methods/[a-z][a-z0-9-]{0,63}/[a-z][a-z0-9-]{0,63}\\.method$",
                     },
                 },
             },

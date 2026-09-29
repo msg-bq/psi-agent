@@ -335,12 +335,12 @@ async def test_gateway_rest_errors(tmp_path: str) -> None:
 
 
 @pytest.mark.anyio
-async def test_gateway_lists_workflows_for_requested_workspace(tmp_path: str) -> None:
+async def test_gateway_lists_methods_for_requested_workspace(tmp_path: str) -> None:
     workspace = anyio.Path(str(tmp_path)) / "workspace with spaces"
-    workflow_dir = workspace / "flows" / "workflows" / "daily-brief"
-    await workflow_dir.mkdir(parents=True)
-    source = b"workflow daily_brief {}"
-    await (workflow_dir / "daily-brief.workflow").write_bytes(source)
+    method_dir = workspace / "mtds" / "methods" / "daily-brief"
+    await method_dir.mkdir(parents=True)
+    source = b"method daily_brief {}"
+    await (method_dir / "daily-brief.method").write_bytes(source)
 
     tg = anyio.create_task_group()
     await tg.__aenter__()
@@ -353,21 +353,21 @@ async def test_gateway_lists_workflows_for_requested_workspace(tmp_path: str) ->
         timeout = ClientTimeout(total=10)
         async with ClientSession(timeout=timeout) as session:
             async with session.get(
-                f"{base_url}/workspace/workflows",
+                f"{base_url}/workspace/methods",
                 params={"path": str(workspace)},
             ) as resp:
                 assert resp.status == 200
                 assert await resp.json() == {
-                    "workflows": [
+                    "methods": [
                         {
                             "name": "daily-brief",
-                            "path": "flows/workflows/daily-brief/daily-brief.workflow",
+                            "path": "mtds/methods/daily-brief/daily-brief.method",
                         }
                     ]
                 }
 
             async with session.get(
-                f"{base_url}/workspace/workflows",
+                f"{base_url}/workspace/methods",
                 params={"path": str(workspace / "missing")},
             ) as resp:
                 assert resp.status == 400

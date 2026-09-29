@@ -20,16 +20,16 @@ jobs:
             https://www.antlr.org/download/antlr-4.13.2-complete.jar
           echo "eae2dfa119a64327444672aff63e9ec35a20180dc5b8090b7a6ab85125df4d76  $RUNNER_TEMP/antlr-4.13.2-complete.jar" \
             | sha256sum --check
-      - name: Verify FusionFlow generated sources
-        working-directory: examples/haitun-workspace/skills/fusion-flow
+      - name: Verify FusionMethod generated sources
+        working-directory: examples/haitun-workspace/skills/fusion-method
         run: |
-          output="$RUNNER_TEMP/fusion-flow-generated"
+          output="$RUNNER_TEMP/fusion-method-generated"
           mkdir "$output"
           java -jar "$RUNNER_TEMP/antlr-4.13.2-complete.jar" \
             -Dlanguage=Python3 -no-listener -Xexact-output-dir \
-            -o "$output" grammar/FusionFlow.g4
-          diff -u fusion_flow/generated/FusionFlowLexer.py "$output/FusionFlowLexer.py"
-          diff -u fusion_flow/generated/FusionFlowParser.py "$output/FusionFlowParser.py"
+            -o "$output" grammar/FusionMethod.g4
+          diff -u fusion_method/generated/FusionMethodLexer.py "$output/FusionMethodLexer.py"
+          diff -u fusion_method/generated/FusionMethodParser.py "$output/FusionMethodParser.py"
 
   lint:
     runs-on: ubuntu-latest
@@ -43,7 +43,7 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ty check .
 
-  fusion-flow-test:
+  fusion-method-test:
     needs: [generated-sources, lint]
     runs-on: ubuntu-latest
     steps:
@@ -52,12 +52,12 @@ jobs:
         with:
           python-version: "3.14"
       - run: uv sync
-      - name: Test FusionFlow
-        working-directory: examples/haitun-workspace/skills/fusion-flow
+      - name: Test FusionMethod
+        working-directory: examples/haitun-workspace/skills/fusion-method
         run: uv run python -m pytest -q --rootdir=. test
 
   coscientist-ows-bundle:
-    needs: fusion-flow-test
+    needs: fusion-method-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -67,7 +67,7 @@ jobs:
           archive_name="coscientist-ows-${GITHUB_SHA}.tar.gz"
           archive="dist/${archive_name}"
           tar -C examples/haitun-workspace -czf "$archive" \
-            flows/workflows/coscientist-ows \
+            mtds/methods/coscientist-ows \
             skills/coscientist-ows-entry \
             skills/mattergen-structure-sampler \
             skills/mattersim-structure-evaluator \

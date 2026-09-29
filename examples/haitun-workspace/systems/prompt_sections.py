@@ -76,7 +76,7 @@ CORE_TOOL_SUMMARIES: dict[str, str] = {
     "subagent_wait": "Wait until subagent AI or Session socket is ready",
     "subagent_chat": "Send one message to a subagent; returns final text only",
     "skill_manage": "Create, patch, view, and list workspace skills",
-    "flow_manage": "Create, patch, view, list, and promote reusable Fusion Flow assets",
+    "mtd_manage": "Create, patch, view, list, and promote reusable Fusion Method assets",
     "memory_add": "Store durable user preferences, project facts, or decisions",
     "memory_search": "Search Fusion Memory for raw evidence",
     "memory_answer_context": "Retrieve a query-grounded Fusion Memory context pack",
@@ -108,7 +108,7 @@ TOOL_ORDER: list[str] = [
     "subagent_wait",
     "subagent_chat",
     "skill_manage",
-    "flow_manage",
+    "mtd_manage",
     "memory_add",
     "memory_search",
     "memory_answer_context",
@@ -444,7 +444,7 @@ External API writes: batch when safe, avoid tight loops, respect 429/Retry-After
 
 WORKSPACE_SECTION_TEMPLATE = """\
 ## Workspace
-Your **user workspace** (file IO / deliverables / schedules / flows) is: {workspace_dir}
+Your **user workspace** (file IO / deliverables / schedules / mtds) is: {workspace_dir}
 Relative paths for `read`/`write`/`edit`/`bash` cwd and `[SEND:]` absolute paths MUST resolve under this directory.
 The agent capability package (skills / tools / SOUL / systems) is a **separate** root — do **not** write user deliverables into the agent package.
 There is no global config directory under `~/`.

@@ -4,7 +4,7 @@ import json
 
 import pytest
 from antlr4 import CommonTokenStream, InputStream
-from fusion_flow.core_ir import (
+from fusion_method.core_ir import (
     Assertion,
     CompoundTerm,
     Concept,
@@ -12,12 +12,12 @@ from fusion_flow.core_ir import (
     Constant,
     IfTerm,
     ListTerm,
+    MethodFile,
     Operator,
-    WorkflowFile,
 )
-from fusion_flow.generated.FusionFlowLexer import FusionFlowLexer
-from fusion_flow.generated.FusionFlowParser import FusionFlowParser
-from fusion_flow.parser import ParseContext, parse_workflow
+from fusion_method.generated.FusionMethodLexer import FusionMethodLexer
+from fusion_method.generated.FusionMethodParser import FusionMethodParser
+from fusion_method.parser import ParseContext, parse_method
 
 
 def _context() -> ParseContext:
@@ -92,22 +92,22 @@ def test_new_builtins_use_owner_rules_without_parser_arity_checks(
     operator_call: str,
     owner_rule: str,
 ) -> None:
-    lexer = FusionFlowLexer(InputStream(f"workflow builtins {{ {operator_call} == true; }}"))
-    parser = FusionFlowParser(CommonTokenStream(lexer))
-    tree = parser.workflowFile()
+    lexer = FusionMethodLexer(InputStream(f"method builtins {{ {operator_call} == true; }}"))
+    parser = FusionMethodParser(CommonTokenStream(lexer))
+    tree = parser.methodFile()
 
     assert parser.getNumberOfSyntaxErrors() == 0
-    operator_name = tree.workflowDecl(0).workflowItem(0).assertion().term(0).operatorCall().operatorName()
-    builtin = operator_name.workflowBuiltinOperator()
+    operator_name = tree.methodDecl(0).methodItem(0).assertion().term(0).operatorCall().operatorName()
+    builtin = operator_name.methodBuiltinOperator()
     assert builtin is not None
     assert getattr(builtin, owner_rule)() is not None
 
 
 def test_bool_call_shorthand_lowers_to_explicit_true_assertion() -> None:
-    result = parse_workflow(
+    result = parse_method(
         """
         const item: Artifact;
-        workflow shorthand {
+        method shorthand {
           predicate(item);
           predicate(item) == True;
         }
@@ -116,8 +116,8 @@ def test_bool_call_shorthand_lowers_to_explicit_true_assertion() -> None:
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
-    shorthand, explicit = result.core_ir.workflows[0].assertions
+    assert isinstance(result.core_ir, MethodFile)
+    shorthand, explicit = result.core_ir.methods[0].assertions
     assert shorthand == explicit
 
 
@@ -126,17 +126,17 @@ def test_non_bool_call_cannot_use_predicate_shorthand() -> None:
         ValueError,
         match=r"Predicate shorthand requires a Bool-returning operator; 'value' returns 'Artifact'",
     ):
-        parse_workflow(
+        parse_method(
             """
             const item: Artifact;
-            workflow shorthand { value(item); }
+            method shorthand { value(item); }
             """,
             context=_context(),
         )
 
 
-def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
-    result = parse_workflow(
+def test_parse_method_lowers_complete_surface_to_core_ir() -> None:
+    result = parse_method(
         """
         const review: Step, Agent;
         const "draft": Artifact;
@@ -145,12 +145,12 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
         const writer: Agent;
         const human: Agent;
 
-        workflow first {
+        method first {
           custom(agent, review) == TRUE;
           custom(review) == False;
         }
 
-        workflow second {
+        method second {
           step_executor(review) == if(!(max_attempts(review) != 2) AND max_turns(agent) = 8, writer, human);
           custom(1 + 2 * 3, [review, "draft"], -(4 ^ 2 ^ 3)) == true;
         }
@@ -159,9 +159,9 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
-    workflow_file = result.core_ir
-    assert [constant.symbol for constant in workflow_file.constants] == [
+    assert isinstance(result.core_ir, MethodFile)
+    method_file = result.core_ir
+    assert [constant.symbol for constant in method_file.constants] == [
         "review",
         "draft",
         "backup",
@@ -169,16 +169,16 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
         "writer",
         "human",
     ]
-    assert [workflow.name for workflow in workflow_file.workflows] == ["first", "second"]
+    assert [method.name for method in method_file.methods] == ["first", "second"]
 
-    review, draft, backup, agent, writer, human = workflow_file.constants
+    review, draft, backup, agent, writer, human = method_file.constants
     assert [concept.name for concept in review.belong_concepts] == ["Step", "Agent"]
     assert [concept.name for concept in draft.belong_concepts] == ["Artifact"]
     assert review.belong_concepts[1] is backup.belong_concepts[0]
 
-    first_workflow, second_workflow = workflow_file.workflows
-    first_custom_assertion, second_custom_assertion = first_workflow.assertions
-    conditional_assertion, arithmetic_assertion = second_workflow.assertions
+    first_method, second_method = method_file.methods
+    first_custom_assertion, second_custom_assertion = first_method.assertions
+    conditional_assertion, arithmetic_assertion = second_method.assertions
 
     assert isinstance(first_custom_assertion.lhs, CompoundTerm)
     assert isinstance(second_custom_assertion.lhs, CompoundTerm)
@@ -265,11 +265,11 @@ def test_parse_workflow_lowers_complete_surface_to_core_ir() -> None:
 
 
 def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
-    result = parse_workflow(
+    result = parse_method(
         """
         const a: Comparable;
         const b: Comparable;
-        workflow comparisons {
+        method comparisons {
           compare(
             if(a < b, a, b),
             if(a <= b, a, b),
@@ -283,8 +283,8 @@ def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
-    assertion = result.core_ir.workflows[0].assertions[0]
+    assert isinstance(result.core_ir, MethodFile)
+    assertion = result.core_ir.methods[0].assertions[0]
     assert isinstance(assertion.lhs, CompoundTerm)
     conditions = tuple(argument.condition for argument in assertion.lhs.arguments if isinstance(argument, IfTerm))
     assert len(conditions) == 5
@@ -321,11 +321,11 @@ def test_comparisons_lower_to_builtin_operators_and_not_formula() -> None:
 
 
 def test_literals_use_gk_constant_symbols_and_concepts() -> None:
-    result = parse_workflow(
+    result = parse_method(
         """
         const name: Name;
         const "quoted": Name;
-        workflow literals {
+        method literals {
           custom(002, 2.50, TRUE, false, name, "quoted") == true;
         }
         """,
@@ -333,9 +333,9 @@ def test_literals_use_gk_constant_symbols_and_concepts() -> None:
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
+    assert isinstance(result.core_ir, MethodFile)
     declared_name, declared_quoted = result.core_ir.constants
-    assertion = result.core_ir.workflows[0].assertions[0]
+    assertion = result.core_ir.methods[0].assertions[0]
     assert isinstance(assertion.lhs, CompoundTerm)
     integer, decimal, true, false, name, quoted = assertion.lhs.arguments
     assert isinstance(integer, Constant)
@@ -357,36 +357,36 @@ def test_literals_use_gk_constant_symbols_and_concepts() -> None:
 
 
 def test_duplicate_declarations_reuse_identity() -> None:
-    result = parse_workflow(
+    result = parse_method(
         """
         const item: First;
         const item: First;
-        workflow duplicate { custom(item) == true; }
+        method duplicate { custom(item) == true; }
         """,
         context=_context(),
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
+    assert isinstance(result.core_ir, MethodFile)
     (item,) = result.core_ir.constants
-    call = result.core_ir.workflows[0].assertions[0].lhs
+    call = result.core_ir.methods[0].assertions[0].lhs
     assert isinstance(call, CompoundTerm)
     assert call.arguments[0] is item
 
 
 def test_numeric_literal_does_not_alias_numeric_declaration() -> None:
-    result = parse_workflow(
+    result = parse_method(
         """
         const 2: Count;
-        workflow numeric { custom(2) == true; }
+        method numeric { custom(2) == true; }
         """,
         context=_context(),
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
+    assert isinstance(result.core_ir, MethodFile)
     (number,) = result.core_ir.constants
-    call = result.core_ir.workflows[0].assertions[0].lhs
+    call = result.core_ir.methods[0].assertions[0].lhs
     assert isinstance(call, CompoundTerm)
     literal = call.arguments[0]
     assert isinstance(literal, Constant)
@@ -396,19 +396,19 @@ def test_numeric_literal_does_not_alias_numeric_declaration() -> None:
 
 
 def test_quoted_constants_do_not_alias_boolean_or_numeric_literals() -> None:
-    result = parse_workflow(
+    result = parse_method(
         """
         const "true": Artifact;
         const "1": Artifact;
-        workflow lexical_types { custom("true", true, "1", 1) == true; }
+        method lexical_types { custom("true", true, "1", 1) == true; }
         """,
         context=_context(),
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
+    assert isinstance(result.core_ir, MethodFile)
     quoted_true, quoted_one = result.core_ir.constants
-    call = result.core_ir.workflows[0].assertions[0].lhs
+    call = result.core_ir.methods[0].assertions[0].lhs
     assert isinstance(call, CompoundTerm)
     parsed_quoted_true, boolean_true, parsed_quoted_one, numeric_one = call.arguments
     assert parsed_quoted_true is quoted_true
@@ -424,57 +424,57 @@ def test_quoted_constants_do_not_alias_boolean_or_numeric_literals() -> None:
 
 
 def test_conflicting_constant_declarations_are_rejected() -> None:
-    with pytest.raises(ValueError, match="Conflicting FusionFlow constant declaration for 'item'"):
-        parse_workflow(
+    with pytest.raises(ValueError, match="Conflicting FusionMethod constant declaration for 'item'"):
+        parse_method(
             """
             const item: First;
             const item: Second;
-            workflow duplicate { custom(item) == true; }
+            method duplicate { custom(item) == true; }
             """,
             context=_context(),
         )
 
 
 def test_declared_quoted_and_unquoted_names_reuse_one_constant() -> None:
-    result = parse_workflow(
+    result = parse_method(
         """
         const foo: Artifact;
-        workflow reuse { typed(foo, "foo") == true; }
+        method reuse { typed(foo, "foo") == true; }
         """,
         context=_context(),
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
+    assert isinstance(result.core_ir, MethodFile)
     (foo,) = result.core_ir.constants
-    call = result.core_ir.workflows[0].assertions[0].lhs
+    call = result.core_ir.methods[0].assertions[0].lhs
     assert isinstance(call, CompoundTerm)
     assert call.arguments == (foo, foo)
 
 
 def test_undeclared_names_are_inferred_and_listed_in_first_use_order() -> None:
-    result = parse_workflow(
-        'workflow inferred { typed(second, "first") == true; }',
+    result = parse_method(
+        'method inferred { typed(second, "first") == true; }',
         context=_context(),
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
+    assert isinstance(result.core_ir, MethodFile)
     second, first = result.core_ir.constants
     assert (second.symbol, first.symbol) == ("second", "first")
     assert [concept.name for concept in second.belong_concepts] == ["Artifact"]
     assert [concept.name for concept in first.belong_concepts] == ["Artifact"]
-    call = result.core_ir.workflows[0].assertions[0].lhs
+    call = result.core_ir.methods[0].assertions[0].lhs
     assert isinstance(call, CompoundTerm)
     assert call.arguments == (second, first)
 
 
 def test_relative_instruction_path_infers_operator_output_concept() -> None:
     context = _context()
-    result = parse_workflow(
+    result = parse_method(
         """
         const review: Step;
-        workflow instructions {
+        method instructions {
           step_instruction(review) == "./instructions/review-file.md";
         }
         """,
@@ -482,8 +482,8 @@ def test_relative_instruction_path_infers_operator_output_concept() -> None:
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
-    instruction = result.core_ir.workflows[0].assertions[0].rhs
+    assert isinstance(result.core_ir, MethodFile)
+    instruction = result.core_ir.methods[0].assertions[0].rhs
     assert isinstance(instruction, Constant)
     assert instruction.symbol == "./instructions/review-file.md"
     assert instruction.belong_concepts == (context.concepts["Instruction"],)
@@ -492,10 +492,10 @@ def test_relative_instruction_path_infers_operator_output_concept() -> None:
 def test_inline_instruction_text_supports_unicode_spaces_and_json_escapes() -> None:
     context = _context()
     instruction_text = "调研自然语言处理中的语义解析。\n比较主要方法、代表工作、证据来源与局限, 并输出结构化结论。"
-    result = parse_workflow(
+    result = parse_method(
         f"""
         const review: Step;
-        workflow instructions {{
+        method instructions {{
           step_instruction(review) == {json.dumps(instruction_text, ensure_ascii=False)};
         }}
         """,
@@ -503,8 +503,8 @@ def test_inline_instruction_text_supports_unicode_spaces_and_json_escapes() -> N
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
-    instruction = result.core_ir.workflows[0].assertions[0].rhs
+    assert isinstance(result.core_ir, MethodFile)
+    instruction = result.core_ir.methods[0].assertions[0].rhs
     assert isinstance(instruction, Constant)
     assert instruction.symbol == instruction_text
     assert instruction.belong_concepts == (context.concepts["Instruction"],)
@@ -513,10 +513,10 @@ def test_inline_instruction_text_supports_unicode_spaces_and_json_escapes() -> N
 def test_reversed_parenthesized_inline_instruction_infers_instruction_type() -> None:
     context = _context()
     instruction_text = "Use the supplied inputs and return a bounded, evidence-backed result."
-    result = parse_workflow(
+    result = parse_method(
         f"""
         const review: Step;
-        workflow instructions {{
+        method instructions {{
           {json.dumps(instruction_text)} == (step_instruction(review));
         }}
         """,
@@ -524,8 +524,8 @@ def test_reversed_parenthesized_inline_instruction_infers_instruction_type() -> 
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
-    instruction = result.core_ir.workflows[0].assertions[0].lhs
+    assert isinstance(result.core_ir, MethodFile)
+    instruction = result.core_ir.methods[0].assertions[0].lhs
     assert isinstance(instruction, Constant)
     assert instruction.symbol == instruction_text
     assert instruction.belong_concepts == (context.concepts["Instruction"],)
@@ -533,8 +533,8 @@ def test_reversed_parenthesized_inline_instruction_infers_instruction_type() -> 
 
 def test_inline_text_is_rejected_outside_instruction_position() -> None:
     with pytest.raises(ValueError, match="only valid where Instruction is required"):
-        parse_workflow(
-            'workflow invalid { custom("free form text") == true; }',
+        parse_method(
+            'method invalid { custom("free form text") == true; }',
             context=_context(),
         )
 
@@ -548,10 +548,10 @@ def test_inline_text_is_rejected_outside_instruction_position() -> None:
 )
 def test_parenthesized_operator_output_concept_is_inferred(assertion_source: str) -> None:
     context = _context()
-    result = parse_workflow(
+    result = parse_method(
         f"""
         const review: Step;
-        workflow instructions {{
+        method instructions {{
           {assertion_source};
         }}
         """,
@@ -559,8 +559,8 @@ def test_parenthesized_operator_output_concept_is_inferred(assertion_source: str
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
-    parsed_assertion = result.core_ir.workflows[0].assertions[0]
+    assert isinstance(result.core_ir, MethodFile)
+    parsed_assertion = result.core_ir.methods[0].assertions[0]
     instruction = parsed_assertion.lhs if isinstance(parsed_assertion.lhs, Constant) else parsed_assertion.rhs
     assert isinstance(instruction, Constant)
     assert instruction.symbol == "./instructions/review-file.md"
@@ -570,19 +570,19 @@ def test_parenthesized_operator_output_concept_is_inferred(assertion_source: str
 @pytest.mark.parametrize(
     "source",
     (
-        "const foo: Agent; workflow conflict { typed(foo, foo) == true; }",
-        'workflow conflict { typed_mixed(foo, "foo") == true; }',
+        "const foo: Agent; method conflict { typed(foo, foo) == true; }",
+        'method conflict { typed_mixed(foo, "foo") == true; }',
     ),
 )
 def test_constant_concept_conflicts_are_rejected(source: str) -> None:
-    with pytest.raises(ValueError, match=r"FusionFlow constant 'foo'.*concept"):
-        parse_workflow(source, context=_context())
+    with pytest.raises(ValueError, match=r"FusionMethod constant 'foo'.*concept"):
+        parse_method(source, context=_context())
 
 
 def test_undeclared_constants_are_allowed_and_later_inferred() -> None:
-    result = parse_workflow(
+    result = parse_method(
         """
-        workflow inferred {
+        method inferred {
           custom(unknown) == true;
           unknown == other;
           typed("unknown", typed_value) == true;
@@ -592,21 +592,21 @@ def test_undeclared_constants_are_allowed_and_later_inferred() -> None:
     )
 
     assert result.diagnostics == ()
-    assert isinstance(result.core_ir, WorkflowFile)
+    assert isinstance(result.core_ir, MethodFile)
     unknown, other, typed_value = result.core_ir.constants
     assert [concept.name for concept in unknown.belong_concepts] == ["Artifact"]
     assert other.belong_concepts == ()
     assert [concept.name for concept in typed_value.belong_concepts] == ["Artifact"]
-    first_call = result.core_ir.workflows[0].assertions[0].lhs
+    first_call = result.core_ir.methods[0].assertions[0].lhs
     assert isinstance(first_call, CompoundTerm)
     assert first_call.arguments[0] is unknown
 
 
 def test_untyped_constant_rejects_conflicting_later_inference() -> None:
     with pytest.raises(ValueError, match=r"constant 'identity'.*requires concept 'Agent'"):
-        parse_workflow(
+        parse_method(
             """
-            workflow conflict {
+            method conflict {
               custom(identity) == true;
               typed(identity, artifact) == true;
               typed_mixed(artifact, identity) == true;
@@ -617,21 +617,21 @@ def test_untyped_constant_rejects_conflicting_later_inference() -> None:
 
 
 def test_unknown_parse_context_entries_are_rejected() -> None:
-    with pytest.raises(ValueError, match="Unknown FusionFlow concept 'Missing'"):
-        parse_workflow(
-            "const foo: Missing; workflow missing { custom(foo) == true; }",
+    with pytest.raises(ValueError, match="Unknown FusionMethod concept 'Missing'"):
+        parse_method(
+            "const foo: Missing; method missing { custom(foo) == true; }",
             context=_context(),
         )
-    with pytest.raises(ValueError, match="Unknown FusionFlow operator 'missing'"):
-        parse_workflow(
-            "workflow missing { missing(true) == true; }",
+    with pytest.raises(ValueError, match="Unknown FusionMethod operator 'missing'"):
+        parse_method(
+            "method missing { missing(true) == true; }",
             context=_context(),
         )
 
 
 def test_syntax_errors_return_diagnostics_without_core_ir() -> None:
-    result = parse_workflow(
-        "workflow broken { custom(value) = true; }",
+    result = parse_method(
+        "method broken { custom(value) = true; }",
         context=_context(),
     )
 
@@ -641,13 +641,13 @@ def test_syntax_errors_return_diagnostics_without_core_ir() -> None:
     assert diagnostic.severity == "error"
     assert diagnostic.message
     assert diagnostic.span is not None
-    assert (diagnostic.span.start.line, diagnostic.span.start.column) == (1, 33)
-    assert (diagnostic.span.end.line, diagnostic.span.end.column) == (1, 34)
+    assert (diagnostic.span.start.line, diagnostic.span.start.column) == (1, 31)
+    assert (diagnostic.span.end.line, diagnostic.span.end.column) == (1, 32)
 
 
 def test_eof_diagnostics_have_a_visible_half_open_span() -> None:
-    result = parse_workflow(
-        "workflow broken { custom(value) == true;",
+    result = parse_method(
+        "method broken { custom(value) == true;",
         context=_context(),
     )
 

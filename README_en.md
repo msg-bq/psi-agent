@@ -25,49 +25,17 @@ AI layer is stateless. Session maintains conversation history. Channel is a pure
 
 For developers: start components independently, mix and match for debugging and customization. For users: `psi-agent run config.yml` launches everything in one command, and `psi-agent gateway` provides a visual web console for managing everything.
 
-## FusionFlow Python execution layer
+## FusionMethod Python execution layer
 
-The legacy TypeScript-compatible execution primitives belong to the example
-Skill, not the `psi_agent` core package. Their source lives under
-`examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/`
-and is available as `fusion_flow.execution` when Python is run from that
-Skill directory:
+The Haitun workspace provides one Python G4 runtime: method source becomes
+Core IR, then a MethodGraph, an execution plan, and Session-backed
+Agent/Program/Human Steps. The workspace run_mtd tool executes it and returns
+the final Artifact mapping.
 
-```python
-import anyio
-
-from fusion_flow.execution import RunContext, flow, run
-
-
-async def program(_: RunContext) -> None:
-    message = await flow.input("message", "hello")
-    await flow.output("result", message.upper())
-
-
-async def main() -> None:
-    result = await run(program, inputs={"message": "fusion flow"})
-    print(result.run_dir)
-
-
-anyio.run(main)
-```
-
-Inject Agent calls with `run(..., runner=...)`, or call
-`Agent(config, runner=...)` independently outside a run. The `RunContext`
-passed to a program also exposes `ctx.flow`. Execute commands with
-`flow.exec(name, argv, ...)`. Configure automatic cleanup with
-`run(..., keep_count=50, keep_days=7)`; setting both values to `0` disables it.
-`run(..., resume_from_run_id="last")` resumes the lexicographically latest
-directory, so `run_id="last"` is reserved.
-Real TypeScript and Python run directories are not guaranteed to hit each
-other's resume cache. See the
-[TypeScript / Python audit](docs/architecture/workflow/2026-07-26-fusion-flow-ts-parity-audit.zh.md)
-for the current alignment results and the
-[open questions](docs/architecture/workflow/2026-07-23-fusion-flow-python-runtime-open-questions.zh.md)
-for the historical design decisions.
-This compatibility layer is isolated beside the G4 parser/compiler. It is not
-yet connected to the G4 `WorkflowGraph` execution entry point and is not
-exported in the `psi_agent` wheel.
+The Skill and parser/compiler live under
+examples/haitun-workspace/skills/fusion-method/; the shared graph model and
+executor live under src/psi_agent/method_graph/ and
+src/psi_agent/method_execution.py.
 
 ## Quick Start
 

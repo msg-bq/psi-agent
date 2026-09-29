@@ -1,10 +1,10 @@
-# FusionFlow named conditional artifact selection
+# FusionMethod named conditional artifact selection
 
 ## Goal
 
 Make the executable G4 shape below first-class:
 
-```fusionflow
+```fusionmethod
 selected_result == if(condition, primary_result, fallback_result);
 consumes(final_step) == [selected_result];
 ```
@@ -14,7 +14,7 @@ eager; selection chooses a value and does not activate or skip branches.
 
 ## Graph model
 
-`WorkflowGraph` gains immutable `SelectNode` values. A SelectNode owns one output
+`MethodGraph` gains immutable `SelectNode` values. A SelectNode owns one output
 Artifact, references two candidate Artifacts, and carries a small serializable
 condition tree:
 
@@ -25,7 +25,7 @@ condition tree:
 
 The selected output counts as producer-backed. It cannot also have a Step
 producer or another SelectNode producer. Candidate and condition Artifacts must
-be globally available from workflow input, a Step, or an earlier SelectNode.
+be globally available from method input, a Step, or an earlier SelectNode.
 
 ## Compilation
 

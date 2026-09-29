@@ -4,7 +4,7 @@ from pathlib import Path
 
 import anyio
 import pytest
-from fusion_flow.artifact_store import (
+from fusion_method.artifact_store import (
     ArtifactStore,
     _artifact_filename,
     _render_markdown,
@@ -35,7 +35,7 @@ def test_structured_artifacts_render_as_json_fenced_markdown() -> None:
 
 @pytest.mark.anyio
 async def test_artifact_store_persists_each_materialized_value_atomically(tmp_path: Path) -> None:
-    bundle = anyio.Path(tmp_path / "flows" / "review")
+    bundle = anyio.Path(tmp_path / "mtds" / "review")
     await bundle.mkdir(parents=True)
     store = await ArtifactStore.open(
         bundle,
@@ -69,7 +69,7 @@ async def test_artifact_store_persists_each_materialized_value_atomically(tmp_pa
 
 @pytest.mark.anyio
 async def test_artifact_store_preserves_text_bytes_verbatim(tmp_path: Path) -> None:
-    bundle = anyio.Path(tmp_path / "flows" / "review")
+    bundle = anyio.Path(tmp_path / "mtds" / "review")
     await bundle.mkdir(parents=True)
     store = await ArtifactStore.open(
         bundle,

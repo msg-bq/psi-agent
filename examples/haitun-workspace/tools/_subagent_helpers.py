@@ -330,14 +330,13 @@ def psi_executable(repo_root: Path) -> str:
 
 
 def _credentials_from_env() -> dict[str, str]:
-    provider = (os.environ.get("PSI_AI_PROVIDER") or os.environ.get("FLOW_PSI_AI") or "openai").strip()
-    model = (os.environ.get("PSI_AI_MODEL") or os.environ.get("FLOW_PSI_MODEL") or "").strip()
+    provider = (os.environ.get("PSI_AI_PROVIDER") or "openai").strip()
+    model = (os.environ.get("PSI_AI_MODEL") or "").strip()
     api_key = (
-        os.environ.get("PSI_AI_API_KEY") or os.environ.get("FLOW_PSI_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+        os.environ.get("PSI_AI_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
     ).strip()
     base_url = (
         os.environ.get("PSI_AI_BASE_URL")
-        or os.environ.get("FLOW_PSI_BASE_URL")
         or os.environ.get("OPENAI_BASE_URL")
         or ""
     ).strip()

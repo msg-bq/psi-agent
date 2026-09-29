@@ -7,8 +7,8 @@ This merges three ideas into one workspace:
 * An OpenClaw-style prompt engine (stable prefix + cache boundary + dynamic
   suffix, skills index, bootstrap context files) - **de-branded**, with **all
   configuration kept inside the workspace** (there is no global config dir).
-* The Fusion Flow authoring capability (flows index + authoring guidance),
-  fully merged from the fusion-flow workspace.
+* The Fusion Method authoring capability (mtds index + authoring guidance),
+  fully merged from the fusion-method workspace.
 * A fixed Haitun agent persona, always stated in the system prompt.
 
 Only ``system_prompt_builder()`` (and optionally ``system_prompt_rebuild_checker``)
@@ -134,16 +134,16 @@ _SELF_EVOLUTION_PROMPT = (
     """
 
 Only update workspace assets when the conversation produced reusable knowledge:
-- workflow-authoring patterns that should become reusable curated flows
+- method-authoring patterns that should become reusable curated mtds
 - recurring structure, validation, or runtime practices
 - corrections to an agent-created skill or a new class-level skill
 
-Use `skill_manage` for reusable non-flow procedures.
-Use `flow_manage` for reusable Fusion Flow templates.
+Use `skill_manage` for reusable non-mtd procedures.
+Use `mtd_manage` for reusable Fusion Method templates.
 
 Rules:
 1. Do not update anything for one-off task facts, transient errors, secrets, local credentials, or user-private data.
-2. Do not patch user-authored skills or the immutable `skills/fusion-flow/` runtime skill.
+2. Do not patch user-authored skills or the immutable `skills/fusion-method/` runtime skill.
 3. Prefer patching an existing agent-created asset over creating a narrow duplicate.
 4. If nothing is worth saving, reply exactly: Nothing to save.
 """
@@ -546,20 +546,20 @@ async def _build_skills_index(workspace_dir: anyio.Path) -> str:
     return skills_xml
 
 
-async def _build_flows_index(flows_dir: anyio.Path) -> str:
-    """Index curated + generated Fusion Flow assets (merged from fusion-flow)."""
-    curated_dir = flows_dir / "curated"
+async def _build_mtds_index(mtds_dir: anyio.Path) -> str:
+    """Index curated + generated Fusion Method assets (merged from fusion-method)."""
+    curated_dir = mtds_dir / "curated"
     task_lines: list[str] = []
     curated_lines: list[str] = []
 
     if await curated_dir.exists():
-        async for flow_dir in curated_dir.iterdir():
-            if not await flow_dir.is_dir() or flow_dir.name.startswith("."):
+        async for mtd_dir in curated_dir.iterdir():
+            if not await mtd_dir.is_dir() or mtd_dir.name.startswith("."):
                 continue
-            flow_md = flow_dir / "FLOW.md"
-            if not await flow_md.exists():
+            mtd_md = mtd_dir / "MTD.md"
+            if not await mtd_md.exists():
                 continue
-            raw = await flow_md.read_text(encoding="utf-8", errors="replace")
+            raw = await mtd_md.read_text(encoding="utf-8", errors="replace")
             frontmatter_match = re.match(r"^---\n(.*?)\n---", raw, re.DOTALL)
             description = ""
             category = "general"
@@ -572,32 +572,32 @@ async def _build_flows_index(flows_dir: anyio.Path) -> str:
                 if category_match:
                     category = category_match.group(1).strip().strip('"').strip("'") or "general"
             suffix = f": {description}" if description else ""
-            curated_lines.append(f"    - {flow_dir.name} ({category}){suffix}")
+            curated_lines.append(f"    - {mtd_dir.name} ({category}){suffix}")
 
-    if await flows_dir.exists():
-        async for task_dir in flows_dir.iterdir():
+    if await mtds_dir.exists():
+        async for task_dir in mtds_dir.iterdir():
             if (
                 not await task_dir.is_dir()
                 or task_dir.name.startswith(".")
-                or task_dir.name in {"curated", "adhoc", "workflows"}
+                or task_dir.name in {"curated", "adhoc", "methods"}
             ):
                 continue
-            preferred = task_dir / f"{task_dir.name}.workflow"
+            preferred = task_dir / f"{task_dir.name}.method"
             if await preferred.exists():
                 task_lines.append(f"    - {task_dir.name}: {preferred.name}")
                 continue
-            async for flow_file in task_dir.glob("*.workflow"):
-                task_lines.append(f"    - {task_dir.name}: {flow_file.name}")
+            async for mtd_file in task_dir.glob("*.method"):
+                task_lines.append(f"    - {task_dir.name}: {mtd_file.name}")
                 break
 
     if not curated_lines and not task_lines:
-        return "No reusable flows configured."
+        return "No reusable mtds configured."
 
     index_lines = [
-        "Before creating a new workflow, scan the reusable flows below. If a curated flow fits, "
-        "view it with `flow_manage` and adapt it instead of starting from scratch.",
+        "Before creating a new method, scan the reusable mtds below. If a curated mtd fits, "
+        "view it with `mtd_manage` and adapt it instead of starting from scratch.",
         "",
-        "<available_flows>",
+        "<available_mtds>",
     ]
     if curated_lines:
         index_lines.append("  curated:")
@@ -605,7 +605,7 @@ async def _build_flows_index(flows_dir: anyio.Path) -> str:
     if task_lines:
         index_lines.append("  generated_tasks:")
         index_lines.extend(sorted(task_lines))
-    index_lines.append("</available_flows>")
+    index_lines.append("</available_mtds>")
     return "\n".join(index_lines)
 
 
@@ -793,17 +793,17 @@ def _build_self_evolution_tool_schemas() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "flow_manage",
-                "description": "Create, patch, view, list, or promote reusable Fusion Flow assets.",
+                "name": "mtd_manage",
+                "description": "Create, patch, view, list, or promote reusable Fusion Method assets.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "enum": ["list", "view", "create", "patch", "promote"]},
-                        "flow_name": {"type": "string"},
+                        "mtd_name": {"type": "string"},
                         "description": {"type": "string"},
                         "category": {"type": "string"},
                         "body": {"type": "string"},
-                        "flow_source": {"type": "string"},
+                        "mtd_source": {"type": "string"},
                         "target": {"type": "string", "enum": ["curated", "tasks", "adhoc", "all"]},
                     },
                     "required": ["action"],
@@ -819,7 +819,7 @@ async def _run_self_evolution_review(
     complete_fn: ReviewCompleteFn,
     tool_executors: ToolExecutors,
 ) -> None:
-    allowed_tools = {"skill_manage", "flow_manage"}
+    allowed_tools = {"skill_manage", "mtd_manage"}
     tool_schemas = _build_self_evolution_tool_schemas()
     loop_messages = [*messages, {"role": "user", "content": _SELF_EVOLUTION_PROMPT}]
 
@@ -889,128 +889,127 @@ class System:
         self._previous_summary: str | None = None
 
     async def _build_fusion_section(self) -> str:
-        """Fusion Flow command routing, authoring guidance, and flows index.
+        """Fusion Method command routing, authoring guidance, and mtds index.
 
-        Returns empty string if the fusion-flow runtime skill is not present.
-        Skill/runtime live under the **agent** package; generated ``flows/`` under
+        Returns empty string if the fusion-method runtime skill is not present.
+        Skill/runtime live under the **agent** package; generated ``mtds/`` under
         the **user workspace**.
         """
         agent_resolved = await self._agent_dir.resolve()
         user_resolved = await self._user_workspace.resolve()
-        fusion_skill_md = agent_resolved / "skills" / "fusion-flow" / "SKILL.md"
+        fusion_skill_md = agent_resolved / "skills" / "fusion-method" / "SKILL.md"
         if not await fusion_skill_md.exists():
             return ""
 
-        flows_dir = user_resolved / "flows"
-        workflow_registry_dir = flows_dir / "workflows"
-        flows_index = await _build_flows_index(flows_dir)
+        mtds_dir = user_resolved / "mtds"
+        method_registry_dir = mtds_dir / "methods"
+        mtds_index = await _build_mtds_index(mtds_dir)
 
-        return f"""## Fusion Flow (workflow authoring)
+        return f"""## Fusion Method (method authoring)
 
-This workspace can author, save, reuse, and run Fusion Flow workflows from natural language.
+This workspace can author, save, reuse, and run Fusion Method methods from natural language.
 
-### `/workflow:<slug>` — saved workflow command (highest priority)
+### `/method:<slug>` — saved method command (highest priority)
 
-Any trimmed user message matching exactly `/workflow:<slug>` invokes one saved
-FusionFlow G4 declaration. Accept no suffix, inline parameters, or trailing
+Any trimmed user message matching exactly `/method:<slug>` invokes one saved
+FusionMethod G4 declaration. Accept no suffix, inline parameters, or trailing
 argument syntax.
 
 For this command:
 1. Read the full instructions at:
    {fusion_skill_md}
-   Relative path: skills/fusion-flow/SKILL.md
+   Relative path: skills/fusion-method/SKILL.md
 2. Map the slug to the fixed workspace-relative path
-   `flows/workflows/<slug>/<slug>.workflow`.
-3. Read that declaration before execution and inspect its `input_workflow(...)`
+   `mtds/methods/<slug>/<slug>.method`.
+3. Read that declaration before execution and inspect its `input_method(...)`
    assertion to identify every required input Artifact.
 4. Resolve every required input from the conversation. If any value is missing,
-   ask for it in normal dialogue and end the turn without calling `run_flow`.
+   ask for it in normal dialogue and end the turn without calling `run_mtd`.
    Do not extend the command syntax, guess values, or probe the runner with its
    default empty input object.
-5. Once all required values are available, call the existing `run_flow` runner
-   exactly once for the initial execution, passing `flow_path` and the complete
+5. Once all required values are available, call the existing `run_mtd` runner
+   exactly once for the initial execution, passing `mtd_path` and the complete
    `inputs_json`. Use an empty input object only when the declaration requires
    no inputs. Do not retry that initial call merely to discover inputs.
-6. If the result contains `$fusion_flow/control`, pass the nested
+6. If the result contains `$fusion_method/control`, pass the nested
    `request.question/options/recommended/default` fields to `clarify`, show its
    returned text verbatim, and end the turn. On the user's next reply, call
-   `run_flow_resume` once with the matching `run_id`, `request_id`, and
+   `run_mtd_resume` once with the matching `run_id`, `request_id`, and
    JSON-encoded response. Repeat only when that resume returns another Human
    request.
 
-The registry root is fixed at {workflow_registry_dir}. Save reusable
+The registry root is fixed at {method_registry_dir}. Save reusable
 declarations there with the existing file-writing capability. This command
 contract adds no operator or manifest protocol and must not route through
-`flow_manage`. A generated child Step may write a self-contained declaration
+`mtd_manage`. A generated child Step may write a self-contained declaration
 there but must not launch it.
 
-### Other reusable flows
-{flows_index}
+### Other reusable mtds
+{mtds_index}
 
 ### Natural-language activation
-When the user describes a workflow-shaped task - multi-agent collaboration, parallel review,
-fan-out/fan-in, pipelines, multi-step research or scoring, or running a `.workflow` file -
-activate the Fusion Flow skill.
+When the user describes a method-shaped task - multi-agent collaboration, parallel review,
+fan-out/fan-in, pipelines, multi-step research or scoring, or running a `.method` file -
+activate the Fusion Method skill.
 
-**Multi-agent simulation is workflow-shaped - build a flow, do NOT role-play it yourself.**
-Any task that simulates several distinct agents/personas interacting is a Fusion Flow task:
+**Multi-agent simulation is method-shaped - build a mtd, do NOT role-play it yourself.**
+Any task that simulates several distinct agents/personas interacting is a Fusion Method task:
 a debate among N sides (三方辩论), a role-play conversation or roundtable (多角色对话/圆桌),
 a negotiation (谈判), red-team vs blue-team (红蓝对抗), a panel of experts / multi-expert
 review (多专家会诊/多角度评审), interviewer-vs-candidate, or any "let a few AIs each play a
 role and interact" request. When you recognize one, your DEFAULT action is to enter the Fusion
-Flow skill's Authoring Mode and build a `.workflow` where each role is its own Agent Step.
+Mtd skill's Authoring Mode and build a `.method` where each role is its own Agent Step.
 Use explicit Artifacts and dependencies for parallel stances, finite turn-taking, and a final
 synthesizer or judge - the runtime spawns and drives those role agents. Do NOT play the roles
 yourself in a single reply, and do NOT offer "I'll just do it manually this once" as the default.
-Only skip the flow if the user explicitly says they want a one-off answer and not a tool.
+Only skip the mtd if the user explicitly says they want a one-off answer and not a tool.
 
 To activate:
 1. Read the full skill instructions at:
    {fusion_skill_md}
-   Relative path: skills/fusion-flow/SKILL.md
+   Relative path: skills/fusion-method/SKILL.md
 2. Keep the skill itself immutable. Author generated task files under:
-   {flows_dir}/<task-slug>/
+   {mtds_dir}/<task-slug>/
    Layout:
-   - {flows_dir}/<task-slug>/<task-slug>.workflow
-3. Review the source against `skills/fusion-flow/grammar/FusionFlow.g4`.
-4. Start it exactly once with the workspace `run_flow` tool, passing all declared inputs through
+   - {mtds_dir}/<task-slug>/<task-slug>.method
+3. Review the source against `skills/fusion-method/grammar/FusionMethod.g4`.
+4. Start it exactly once with the workspace `run_mtd` tool, passing all declared inputs through
    `inputs_json` and any declared resource pools through `resource_capacities_json`.
 5. Report the returned output Artifact mapping in plain language. If the result instead contains
-   `$fusion_flow/control`, use `clarify` and next-turn `run_flow_resume` exactly as described above.
+   `$fusion_method/control`, use `clarify` and next-turn `run_mtd_resume` exactly as described above.
 
 The runtime owns parsing, planning, dependency scheduling, resource leasing, Agent/Program Step
-execution, and checkpointed Human waits. Agent/Program-only workflows complete in the initial
-`run_flow` call; Human workflows may return a wait envelope and continue only through
-`run_flow_resume`. Every run atomically persists each materialized input, intermediate,
-selected, and final Artifact as Markdown below the workflow bundle's
+execution, and checkpointed Human waits. Agent/Program-only methods complete in the initial
+`run_mtd` call; Human methods may return a wait envelope and continue only through
+`run_mtd_resume`. Every run atomically persists each materialized input, intermediate,
+selected, and final Artifact as Markdown below the method bundle's
 `runs/<run-id>/artifacts/` directory. These user-visible Artifact files are separate from the
-ignored `.psi/fusion-flow/runs/` Human resume state. Do not invent polling tokens, background
+ignored `.psi/fusion-method/runs/` Human resume state. Do not invent polling tokens, background
 workers, alternate run directories, or manual substitutes; the runtime owns both locations.
-Legacy `.flow.ts` files are not executable by this runtime; if a user explicitly points to one,
-explain that it needs migration instead of silently running or translating it.
+Only workspace-local method G4 sources are supported by this runtime.
 
 ### Self-evolution tools
 - `skill_manage`: list, view, create, and patch workspace skills.
-- `flow_manage`: list, view, create, patch, and promote reusable Fusion Flow assets.
+- `mtd_manage`: list, view, create, patch, and promote reusable Fusion Method assets.
 
 Use them only when the task produces reusable knowledge or the user asks to maintain the
 workspace. Never silently rewrite user-authored assets.
 
 Rules:
-1. Keep `skills/fusion-flow/` immutable - it is the runtime Skill, not a generated workflow.
+1. Keep `skills/fusion-method/` immutable - it is the runtime Skill, not a generated method.
 2. Treat skills without `created_by: agent` as read-only.
 3. New learned procedures -> `skills/<skill-name>/SKILL.md` via `skill_manage(action="create")`.
-4. Reusable workflow templates -> `flows/curated/<flow-name>/FLOW.md` via `flow_manage`.
-5. Saved command workflows -> `flows/workflows/<slug>/<slug>.workflow` via existing file tools.
-6. One-off task executions -> `flows/<task-slug>/`.
+4. Reusable method templates -> `mtds/curated/<mtd-name>/MTD.md` via `mtd_manage`.
+5. Saved command methods -> `mtds/methods/<slug>/<slug>.method` via existing file tools.
+6. One-off task executions -> `mtds/<task-slug>/`.
 
 ### Agent execution
 Agent Steps reuse the invoking psi-agent Session's AI socket through the runtime context. Do not
-start an external engine CLI, create a second execution workspace, or invoke `run_flow` from a
+start an external engine CLI, create a second execution workspace, or invoke `run_mtd` from a
 Step. A Step may save a generated declaration but only the parent Session may launch it. The
 Step adapter resolves relative `read`/`write`/`edit` paths against this workspace root, independent
-of the Gateway or Session process working directory. The workflow source contains instructions and
-graph declarations only; never write API keys into the workspace or generated `.workflow` files."""
+of the Gateway or Session process working directory. The method source contains instructions and
+graph declarations only; never write API keys into the workspace or generated `.method` files."""
 
     async def build_system_prompt(self, model: str | None = None, tool_names: list[str] | None = None) -> str:
         # Capability root (skills/tools/SOUL) vs user open-folder (file IO guidance).
@@ -1238,7 +1237,7 @@ graph declarations only; never write API keys into the workspace or generated `.
         called = set(called_tools)
         should_review = (
             tool_call_count >= SELF_EVOLUTION_TOOL_THRESHOLD
-            or "flow_manage" in called
+            or "mtd_manage" in called
             or "skill_manage" in called
             or ("bash" in called and "write" in called)
             or "edit" in called
@@ -1247,7 +1246,7 @@ graph declarations only; never write API keys into the workspace or generated `.
             return
 
         review_tools = {
-            name: tool_executors[name] for name in ("skill_manage", "flow_manage") if name in tool_executors
+            name: tool_executors[name] for name in ("skill_manage", "mtd_manage") if name in tool_executors
         }
         if not review_tools:
             logger.debug("Self-evolution skipped: no review tools registered")

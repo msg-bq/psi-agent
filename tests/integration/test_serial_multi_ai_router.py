@@ -1,4 +1,4 @@
-"""End-to-end serial Router flow through a real Session tool loop."""
+"""End-to-end serial Router mtd through a real Session tool loop."""
 
 from __future__ import annotations
 

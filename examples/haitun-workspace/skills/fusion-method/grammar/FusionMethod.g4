@@ -1,5 +1,5 @@
 /*
- * FusionFlow surface-syntax contract.
+ * FusionMethod surface-syntax contract.
  *
  * The parser owns tokens, delimiters, file-level identity declarations,
  * assertions, formulas, terms, List literals, the three-argument shape of
@@ -8,7 +8,7 @@
  * Concepts and operator signatures come from an external catalog; source files
  * cannot redefine them. The checker and catalog own identity/operator lookup,
  * concept compatibility, ordinary operator arity and types, value constraints,
- * workflow legality, and exact backend support. Lowering/runtime own execution
+ * method legality, and exact backend support. Lowering/runtime own execution
  * order, dependencies, list-valued data relations, branch evaluation, and
  * retries/timeouts.
  *
@@ -22,27 +22,27 @@
  * explicit arity for human and agent readers. if(...) is the one call-like
  * surface expression whose arity is fixed by this grammar.
  */
-grammar FusionFlow;
+grammar FusionMethod;
 
-/* A file has optional global identity declarations, then one or more workflows. */
-workflowFile
-    : (constDecl SEMICOLON)* workflowDecl+ EOF
+/* A file has optional global identity declarations, then one or more methods. */
+methodFile
+    : (constDecl SEMICOLON)* methodDecl+ EOF
     ;
 
-workflowDecl
-    : WORKFLOW workflowName LBRACE workflowItem* RBRACE
+methodDecl
+    : METHOD methodName LBRACE methodItem* RBRACE
     ;
 
-workflowName
+methodName
     : identifier
     ;
 
 /*
- * Workflow blocks contain assertions only; each assertion ends with a semicolon.
+ * Method blocks contain assertions only; each assertion ends with a semicolon.
  * A standalone Bool-returning operator call is shorthand for `call == True`.
  * The parser resolves the catalog return type before applying this shorthand.
  */
-workflowItem
+methodItem
     : assertion SEMICOLON
     ;
 
@@ -135,7 +135,7 @@ atomicTerm
     | booleanLiteral
     ;
 
-/* Lowercase names identify workflows, constants, and catalog operators. */
+/* Lowercase names identify methods, constants, and catalog operators. */
 identifier
     : LOWID
     ;
@@ -146,18 +146,18 @@ conceptName
 
 operatorName
     : LOWID
-    | workflowBuiltinOperator
+    | methodBuiltinOperator
     ;
 
 /*
  * Complete catalog:
- * 4 workflow + 5 step + 1 program + 4 data/resource + 7 agent = 21.
+ * 4 method + 5 step + 1 program + 4 data/resource + 7 agent = 21.
  * Owner categories are disjoint;
  * cross-cutting labels such as dataflow, control, and configuration stay in
  * comments rather than duplicating names across parser rules.
  */
-workflowBuiltinOperator
-    : workflowOwnerOperator
+methodBuiltinOperator
+    : methodOwnerOperator
     | stepOwnerOperator
     | programOwnerOperator
     | dataResourceOperator
@@ -165,17 +165,17 @@ workflowBuiltinOperator
     ;
 
 /*
- * Workflow owner (external I/O and workflow-level control/configuration):
- *   input_workflow(Workflow) -> List                  [arity 1]
- *   output_workflow(Workflow) -> List                 [arity 1]
- *   max_concurrency(Workflow) -> Integer             [arity 1]
- *   workflow_timeout(Workflow) -> Integer            [arity 1]
+ * Method owner (external I/O and method-level control/configuration):
+ *   input_method(Method) -> List                  [arity 1]
+ *   output_method(Method) -> List                 [arity 1]
+ *   max_concurrency(Method) -> Integer             [arity 1]
+ *   method_timeout(Method) -> Integer            [arity 1]
  */
-workflowOwnerOperator
-    : 'input_workflow'
-    | 'output_workflow'
+methodOwnerOperator
+    : 'input_method'
+    | 'output_method'
     | 'max_concurrency'
-    | 'workflow_timeout'
+    | 'method_timeout'
     ;
 
 /*
@@ -254,7 +254,7 @@ booleanLiteral
     ;
 
 /* Keywords and symbolic aliases are case-sensitive exactly as listed below. */
-WORKFLOW : 'workflow';
+METHOD : 'method';
 IF : 'if';
 CONST : 'const';
 AND : 'AND' | 'and' | '&';

@@ -1,4 +1,4 @@
-"""Tests for WorkspaceManager browsing, places, and reusable workflows."""
+"""Tests for WorkspaceManager browsing, places, and reusable methods."""
 
 from __future__ import annotations
 
@@ -8,17 +8,17 @@ import pytest
 from psi_agent.gateway._workspace_manager import WorkspaceManager
 
 
-async def _write_workflow(
+async def _write_method(
     workspace: anyio.Path,
     name: str,
 ) -> anyio.Path:
-    workflow_dir = workspace / "flows" / "workflows" / name
-    await workflow_dir.mkdir(parents=True, exist_ok=True)
-    await (workflow_dir / f"{name}.workflow").write_text(
-        f"workflow {name.replace('-', '_')} {{}}",
+    method_dir = workspace / "mtds" / "methods" / name
+    await method_dir.mkdir(parents=True, exist_ok=True)
+    await (method_dir / f"{name}.method").write_text(
+        f"method {name.replace('-', '_')} {{}}",
         encoding="utf-8",
     )
-    return workflow_dir
+    return method_dir
 
 
 @pytest.mark.anyio
@@ -58,43 +58,43 @@ async def test_list_places_includes_cwd() -> None:
 
 
 @pytest.mark.anyio
-async def test_list_workflows_returns_valid_sorted_summaries(tmp_path) -> None:
+async def test_list_methods_returns_valid_sorted_summaries(tmp_path) -> None:
     workspace = anyio.Path(str(tmp_path))
-    await _write_workflow(workspace, "zeta-flow")
-    await _write_workflow(workspace, "alpha-flow")
+    await _write_method(workspace, "zeta-mtd")
+    await _write_method(workspace, "alpha-mtd")
 
-    result = await WorkspaceManager().list_workflows(str(workspace))
+    result = await WorkspaceManager().list_methods(str(workspace))
 
     assert result == [
         {
-            "name": "alpha-flow",
-            "path": "flows/workflows/alpha-flow/alpha-flow.workflow",
+            "name": "alpha-mtd",
+            "path": "mtds/methods/alpha-mtd/alpha-mtd.method",
         },
         {
-            "name": "zeta-flow",
-            "path": "flows/workflows/zeta-flow/zeta-flow.workflow",
+            "name": "zeta-mtd",
+            "path": "mtds/methods/zeta-mtd/zeta-mtd.method",
         },
     ]
 
 
 @pytest.mark.anyio
-async def test_list_workflows_skips_corrupt_and_incomplete_entries(tmp_path) -> None:
+async def test_list_methods_skips_corrupt_and_incomplete_entries(tmp_path) -> None:
     workspace = anyio.Path(str(tmp_path))
-    await _write_workflow(workspace, "valid-flow")
+    await _write_method(workspace, "valid-mtd")
 
-    missing_source = workspace / "flows" / "workflows" / "missing-source"
+    missing_source = workspace / "mtds" / "methods" / "missing-source"
     await missing_source.mkdir(parents=True)
-    await (missing_source / "other.workflow").write_text(
-        "workflow other {}",
+    await (missing_source / "other.method").write_text(
+        "method other {}",
         encoding="utf-8",
     )
 
-    invalid_name = await _write_workflow(workspace, "Invalid_Name")
+    invalid_name = await _write_method(workspace, "Invalid_Name")
     assert await invalid_name.exists()
 
-    result = await WorkspaceManager().list_workflows(str(workspace))
+    result = await WorkspaceManager().list_methods(str(workspace))
 
-    assert [workflow["name"] for workflow in result] == ["valid-flow"]
+    assert [method["name"] for method in result] == ["valid-mtd"]
 
 
 @pytest.mark.parametrize(
@@ -110,64 +110,64 @@ async def test_list_workflows_skips_corrupt_and_incomplete_entries(tmp_path) -> 
         "lpt9",
     ],
 )
-def test_workflow_name_rejects_windows_reserved_names(name: str) -> None:
-    assert not WorkspaceManager._is_valid_workflow_name(name)
+def test_method_name_rejects_windows_reserved_names(name: str) -> None:
+    assert not WorkspaceManager._is_valid_method_name(name)
 
 
 @pytest.mark.anyio
-async def test_list_workflows_skips_symlinked_entries_and_sources(tmp_path) -> None:
+async def test_list_methods_skips_symlinked_entries_and_sources(tmp_path) -> None:
     workspace = anyio.Path(str(tmp_path))
-    registry = workspace / "flows" / "workflows"
+    registry = workspace / "mtds" / "methods"
     await registry.mkdir(parents=True)
 
     outside = workspace / "outside"
-    await _write_workflow(outside, "linked-flow")
-    outside_entry = outside / "flows" / "workflows" / "linked-flow"
+    await _write_method(outside, "linked-mtd")
+    outside_entry = outside / "mtds" / "methods" / "linked-mtd"
     try:
-        await (registry / "linked-flow").symlink_to(outside_entry, target_is_directory=True)
+        await (registry / "linked-mtd").symlink_to(outside_entry, target_is_directory=True)
     except OSError:
         pytest.skip("symlink creation is not available")
 
-    source_link = await _write_workflow(workspace, "source-link")
-    await (source_link / "source-link.workflow").unlink()
-    await (source_link / "source-link.workflow").symlink_to(outside_entry / "linked-flow.workflow")
+    source_link = await _write_method(workspace, "source-link")
+    await (source_link / "source-link.method").unlink()
+    await (source_link / "source-link.method").symlink_to(outside_entry / "linked-mtd.method")
 
-    result = await WorkspaceManager().list_workflows(str(workspace))
+    result = await WorkspaceManager().list_methods(str(workspace))
 
     assert result == []
 
 
 @pytest.mark.anyio
-async def test_list_workflows_skips_symlinked_registry_components(tmp_path) -> None:
+async def test_list_methods_skips_symlinked_registry_components(tmp_path) -> None:
     workspace = anyio.Path(str(tmp_path))
-    real_flows = workspace / "real-flows"
-    await _write_workflow(real_flows, "linked-flow")
+    real_mtds = workspace / "real-mtds"
+    await _write_method(real_mtds, "linked-mtd")
     try:
-        await (workspace / "flows").symlink_to(real_flows / "flows", target_is_directory=True)
+        await (workspace / "mtds").symlink_to(real_mtds / "mtds", target_is_directory=True)
     except OSError:
         pytest.skip("symlink creation is not available")
 
-    assert await WorkspaceManager().list_workflows(str(workspace)) == []
+    assert await WorkspaceManager().list_methods(str(workspace)) == []
 
-    await (workspace / "flows").unlink()
-    await (workspace / "flows").mkdir()
-    await (workspace / "flows" / "workflows").symlink_to(real_flows / "flows" / "workflows", target_is_directory=True)
+    await (workspace / "mtds").unlink()
+    await (workspace / "mtds").mkdir()
+    await (workspace / "mtds" / "methods").symlink_to(real_mtds / "mtds" / "methods", target_is_directory=True)
 
-    assert await WorkspaceManager().list_workflows(str(workspace)) == []
+    assert await WorkspaceManager().list_methods(str(workspace)) == []
 
 
 @pytest.mark.anyio
-async def test_list_workflows_skips_oversized_source(tmp_path) -> None:
+async def test_list_methods_skips_oversized_source(tmp_path) -> None:
     workspace = anyio.Path(str(tmp_path))
-    oversized_source = await _write_workflow(workspace, "oversized-source")
-    await (oversized_source / "oversized-source.workflow").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+    oversized_source = await _write_method(workspace, "oversized-source")
+    await (oversized_source / "oversized-source.method").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
 
-    assert await WorkspaceManager().list_workflows(str(workspace)) == []
+    assert await WorkspaceManager().list_methods(str(workspace)) == []
 
 
 @pytest.mark.anyio
-async def test_list_workflows_missing_registry_is_empty(tmp_path) -> None:
-    result = await WorkspaceManager().list_workflows(str(tmp_path))
+async def test_list_methods_missing_registry_is_empty(tmp_path) -> None:
+    result = await WorkspaceManager().list_methods(str(tmp_path))
     assert result == []
 
 

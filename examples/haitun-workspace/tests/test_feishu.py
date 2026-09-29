@@ -4382,7 +4382,7 @@ def test_json_error_body_keeps_the_feishu_code() -> None:
 
 
 def test_rate_limit_is_not_mistaken_for_a_permission_error() -> None:
-    """Otherwise a 429 would trigger the auth flow, asking the user to re-authorize
+    """Otherwise a 429 would trigger the auth mtd, asking the user to re-authorize
     for a problem that authorization has nothing to do with."""
     res = _impl._resp_to_result(_FakeResp(None, "", b"", status_code=429))
     assert _impl._is_rate_limited(res) is True

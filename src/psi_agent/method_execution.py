@@ -1,4 +1,4 @@
-"""Compile workflow graphs into inspectable one-shot async plans."""
+"""Compile method graphs into inspectable one-shot async plans."""
 
 from __future__ import annotations
 
@@ -15,22 +15,22 @@ from typing import cast
 import anyio
 from loguru import logger
 
-from psi_agent.workflow_graph import (
+from psi_agent.method_graph import (
     ArtifactOperand,
     ComparisonCondition,
     ConsumesEdge,
     ForeachEdge,
     LiteralOperand,
+    MethodGraph,
     ProducesEdge,
     ResourceRequirement,
     SelectCondition,
     StepNode,
-    WorkflowGraph,
 )
 
 
 class ExecutionPlanError(ValueError):
-    """A workflow graph cannot be lowered to the supported execution plan."""
+    """A method graph cannot be lowered to the supported execution plan."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +77,7 @@ class Fiber:
 class ExecutionPlan:
     """An inspectable collection of fibers started by the executor."""
 
-    workflow_id: str
+    method_id: str
     fibers: tuple[Fiber, ...]
 
 
@@ -134,7 +134,7 @@ type ResourceCapacity = int | Sequence[str]
 class ExecutionCheckpoint:
     """A plan-bound JSON snapshot of materialized values and completed operations."""
 
-    workflow_id: str
+    method_id: str
     plan_digest: str
     values: dict[str, object]
     completed_step_ids: tuple[str, ...] = ()
@@ -143,8 +143,8 @@ class ExecutionCheckpoint:
     def __post_init__(self) -> None:
         """Validate the execution identity and defensively copy JSON values."""
 
-        if not isinstance(self.workflow_id, str) or not self.workflow_id:
-            raise ValueError("checkpoint workflow_id must be a non-empty string")
+        if not isinstance(self.method_id, str) or not self.method_id:
+            raise ValueError("checkpoint method_id must be a non-empty string")
         if (
             not isinstance(self.plan_digest, str)
             or len(self.plan_digest) != 64
@@ -178,16 +178,16 @@ type CheckpointObserver = Callable[[ExecutionCheckpoint], Awaitable[None]]
 
 def execution_plan_digest(
     plan: ExecutionPlan,
-    graph: WorkflowGraph,
+    graph: MethodGraph,
 ) -> str:
     """Return a stable digest of graph semantics and explicit plan structure."""
 
     if not isinstance(plan, ExecutionPlan):
         raise ExecutionPlanError("plan must be an ExecutionPlan")
-    if not isinstance(graph, WorkflowGraph):
-        raise ExecutionPlanError("graph must be a WorkflowGraph")
-    if plan.workflow_id != graph.workflow_id:
-        raise ExecutionPlanError(f"plan targets {plan.workflow_id}, not {graph.workflow_id}")
+    if not isinstance(graph, MethodGraph):
+        raise ExecutionPlanError("graph must be a MethodGraph")
+    if plan.method_id != graph.method_id:
+        raise ExecutionPlanError(f"plan targets {plan.method_id}, not {graph.method_id}")
 
     fibers: list[dict[str, object]] = []
     for fiber in sorted(plan.fibers, key=lambda item: item.fiber_id):
@@ -235,7 +235,7 @@ def execution_plan_digest(
         "graph": graph.to_dict(),
         "plan": {
             "fibers": fibers,
-            "workflow_id": plan.workflow_id,
+            "method_id": plan.method_id,
         },
     }
     encoded = json.dumps(
@@ -250,16 +250,16 @@ def execution_plan_digest(
 
 def create_execution_checkpoint(
     plan: ExecutionPlan,
-    graph: WorkflowGraph,
+    graph: MethodGraph,
     *,
     values: Mapping[str, object],
     completed_step_ids: Sequence[str] = (),
     completed_selection_ids: Sequence[str] = (),
 ) -> ExecutionCheckpoint:
-    """Create a checkpoint bound to exactly one workflow and execution plan."""
+    """Create a checkpoint bound to exactly one method and execution plan."""
 
     return ExecutionCheckpoint(
-        workflow_id=graph.workflow_id,
+        method_id=graph.method_id,
         plan_digest=execution_plan_digest(plan, graph),
         values=dict(values),
         completed_step_ids=tuple(completed_step_ids),
@@ -353,7 +353,7 @@ class ResourceAllocator:
             yield lease
         finally:
             if lease is not None and lease.grants:
-                # Workflow cancellation must never interrupt resource return.
+                # Method cancellation must never interrupt resource return.
                 with anyio.CancelScope(shield=True):
                     await self._release(lease)
 
@@ -418,7 +418,7 @@ class ResourceAllocator:
                 )
             lease = ResourceLease(tuple(grants))
             if lease.grants:
-                logger.debug(f"Acquired workflow resources: {lease.grants}")
+                logger.debug(f"Acquired method resources: {lease.grants}")
             return lease
 
     async def _release(
@@ -438,11 +438,11 @@ class ResourceAllocator:
                 rank = self._instance_order[grant.resource_id]
                 available.sort(key=rank.__getitem__)
             if lease.grants:
-                logger.debug(f"Released workflow resources: {lease.grants}")
+                logger.debug(f"Released method resources: {lease.grants}")
             self._condition.notify_all()
 
 
-def generate_plan(graph: WorkflowGraph) -> ExecutionPlan:
+def generate_plan(graph: MethodGraph) -> ExecutionPlan:
     """Lower one-shot data and explicit step dependencies into async fibers."""
 
     if any(isinstance(edge, ForeachEdge) for edge in graph.edges):
@@ -536,14 +536,14 @@ def generate_plan(graph: WorkflowGraph) -> ExecutionPlan:
         instructions.append(Select(output_artifact_id))
         fibers.append(Fiber(output_artifact_id, tuple(instructions)))
     return ExecutionPlan(
-        graph.workflow_id,
+        graph.method_id,
         tuple(sorted(fibers, key=lambda fiber: fiber.fiber_id)),
     )
 
 
 async def execute_plan(
     plan: ExecutionPlan,
-    graph: WorkflowGraph,
+    graph: MethodGraph,
     *,
     inputs: Mapping[str, object],
     dispatch: StepDispatcher | None = None,
@@ -555,8 +555,8 @@ async def execute_plan(
 ) -> dict[str, object]:
     """Start or resume all fibers and interpret their awaits and invocations."""
 
-    if plan.workflow_id != graph.workflow_id:
-        raise ExecutionPlanError(f"plan targets {plan.workflow_id}, not {graph.workflow_id}")
+    if plan.method_id != graph.method_id:
+        raise ExecutionPlanError(f"plan targets {plan.method_id}, not {graph.method_id}")
     if (dispatch is None) == (contextual_dispatch is None):
         raise ExecutionPlanError("provide exactly one of dispatch or contextual_dispatch")
     if resource_capacities is not None and allocator is not None:
@@ -567,7 +567,7 @@ async def execute_plan(
     supplied_inputs = set(inputs)
     if supplied_inputs != expected_inputs:
         raise ExecutionPlanError(
-            f"workflow inputs must match exactly: expected {sorted(expected_inputs)}, got {sorted(supplied_inputs)}"
+            f"method inputs must match exactly: expected {sorted(expected_inputs)}, got {sorted(supplied_inputs)}"
         )
 
     steps = {step.step_id: step for step in graph.steps}
@@ -690,10 +690,8 @@ async def execute_plan(
     if checkpoint is not None:
         if not isinstance(checkpoint, ExecutionCheckpoint):
             raise ExecutionPlanError("checkpoint must be an ExecutionCheckpoint")
-        if checkpoint.workflow_id != graph.workflow_id:
-            raise ExecutionPlanError(
-                f"checkpoint targets workflow {checkpoint.workflow_id!r}, not {graph.workflow_id!r}"
-            )
+        if checkpoint.method_id != graph.method_id:
+            raise ExecutionPlanError(f"checkpoint targets method {checkpoint.method_id!r}, not {graph.method_id!r}")
         if checkpoint.plan_digest != current_plan_digest:
             raise ExecutionPlanError("checkpoint plan digest does not match the current graph and execution plan")
         if len(set(checkpoint.completed_step_ids)) != len(checkpoint.completed_step_ids):
@@ -781,7 +779,7 @@ async def execute_plan(
             step.resources,
             state=admission_state,
         ) as resource_lease:
-            logger.debug(f"Dispatching workflow step: {step.step_id}")
+            logger.debug(f"Dispatching method step: {step.step_id}")
             context = DispatchContext(
                 resource_lease=resource_lease,
             )
@@ -853,7 +851,7 @@ async def execute_plan(
                             )
                         )
                 completed_steps[step.step_id].set()
-                logger.debug(f"Completed workflow step: {step.step_id}")
+                logger.debug(f"Completed method step: {step.step_id}")
                 continue
 
             if isinstance(instruction, Select):
@@ -862,7 +860,7 @@ async def execute_plan(
                 selector = selectors.get(instruction.output_artifact_id)
                 if selector is None:
                     raise ExecutionPlanError(f"plan executes unknown selection: {instruction.output_artifact_id}")
-                logger.debug(f"Evaluating workflow select: {selector.output_artifact_id}")
+                logger.debug(f"Evaluating method select: {selector.output_artifact_id}")
                 candidate_artifact_id = (
                     selector.when_true_artifact_id
                     if _evaluate_condition(selector.condition, values)
@@ -891,7 +889,7 @@ async def execute_plan(
                             )
                         )
                 completed_selections[selector.output_artifact_id].set()
-                logger.debug(f"Completed workflow select: {selector.output_artifact_id}")
+                logger.debug(f"Completed method select: {selector.output_artifact_id}")
                 continue
 
             raise ExecutionPlanError(f"plan contains unknown instruction: {type(instruction).__name__}")

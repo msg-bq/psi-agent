@@ -25,20 +25,15 @@ AI 层无状态、Session 层维护对话历史、Channel 层是纯 UI 客户端
 
 对开发者：三个组件可独立启动、任意组合，适合调试和定制。对使用者：`psi-agent run config.yml` 一键拉起全部，`psi-agent gateway` 在浏览器里可视化管理一切。
 
-## FusionFlow Python 执行层
+## FusionMethod Python ???
 
-Haitun workspace 中的 `flow` Skill 使用声明式 `.workflow` 源码。运行路径为
-G4 parser → Core IR → `WorkflowGraph` → execution plan → Session-backed Agent Steps，
-由 workspace 的 `run_flow` 工具同步执行并返回最终 Artifact 映射。
+Haitun workspace ??? Python G4 runtime?method source -> Core IR ->
+MethodGraph -> execution plan -> Session-backed Agent/Program/Human Steps?
+workspace ? run_mtd tool ????????? Artifact ???
 
-Skill 和 parser/compiler 位于
-`examples/haitun-workspace/skills/fusion-flow/`；通用图结构与执行器位于
-`src/psi_agent/workflow_graph/` 和 `src/psi_agent/workflow_execution.py`。
-用户仍以自然语言要求创建或运行工作流，不需要了解内部语言或执行器切换。
-
-旧 Node/TypeScript `.flow.ts` runtime 不再随 workspace 启用。已有 `.flow.ts`
-需要显式迁移为 `.workflow`，不会被静默执行或自动翻译。历史兼容审计见
-[TypeScript / Python 审计](docs/architecture/workflow/2026-07-26-fusion-flow-ts-parity-audit.zh.md)。
+Skill?parser/compiler ??
+examples/haitun-workspace/skills/fusion-method/????????????
+src/psi_agent/method_graph/ ? src/psi_agent/method_execution.py?
 
 ## 快速开始
 

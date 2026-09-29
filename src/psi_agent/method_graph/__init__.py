@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from psi_agent.workflow_graph.model import (
+from psi_agent.method_graph.model import (
     ArtifactNode,
     ArtifactNodeDict,
     ArtifactOperand,
@@ -19,6 +19,13 @@ from psi_agent.workflow_graph.model import (
     LogicalCondition,
     LogicalConditionDict,
     LogicalOperator,
+    MethodEdge,
+    MethodEdgeDict,
+    MethodGraph,
+    MethodGraphDict,
+    MethodGraphError,
+    MethodPolicy,
+    MethodPolicyDict,
     ProducesEdge,
     ProducesEdgeDict,
     ResourceRequirement,
@@ -29,13 +36,6 @@ from psi_agent.workflow_graph.model import (
     SelectNodeDict,
     StepNode,
     StepNodeDict,
-    WorkflowEdge,
-    WorkflowEdgeDict,
-    WorkflowGraph,
-    WorkflowGraphDict,
-    WorkflowGraphError,
-    WorkflowPolicy,
-    WorkflowPolicyDict,
 )
 
 __all__ = [
@@ -57,6 +57,13 @@ __all__ = [
     "LogicalCondition",
     "LogicalConditionDict",
     "LogicalOperator",
+    "MethodEdge",
+    "MethodEdgeDict",
+    "MethodGraph",
+    "MethodGraphDict",
+    "MethodGraphError",
+    "MethodPolicy",
+    "MethodPolicyDict",
     "ProducesEdge",
     "ProducesEdgeDict",
     "ResourceRequirement",
@@ -67,11 +74,4 @@ __all__ = [
     "SelectNodeDict",
     "StepNode",
     "StepNodeDict",
-    "WorkflowEdge",
-    "WorkflowEdgeDict",
-    "WorkflowGraph",
-    "WorkflowGraphDict",
-    "WorkflowGraphError",
-    "WorkflowPolicy",
-    "WorkflowPolicyDict",
 ]

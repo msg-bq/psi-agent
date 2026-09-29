@@ -1,4 +1,4 @@
-"""Compile and execute one FusionFlow G4 workflow."""
+"""Compile and execute one FusionMethod G4 method."""
 
 from __future__ import annotations
 
@@ -22,64 +22,64 @@ import anyio.to_thread
 from anyio.abc import ByteReceiveStream, Process
 from loguru import logger
 
+from psi_agent.method_execution import (
+    ExecutionCheckpoint,
+    ResourceCapacity,
+    create_execution_checkpoint,
+    generate_plan,
+)
 from psi_agent.session.agent import SessionAgent, current_tool_ai_socket
 from psi_agent.session.ai_client import AiClient
 from psi_agent.session.conversation import Conversation
 from psi_agent.session.protocol import AgentRunOutcome
 from psi_agent.session.schedule_registry import ScheduleRegistry
 from psi_agent.session.tool_registry import FileEntry, ToolFunction, ToolRegistry
-from psi_agent.workflow_execution import (
-    ExecutionCheckpoint,
-    ResourceCapacity,
-    create_execution_checkpoint,
-    generate_plan,
-)
 
 _TOOLS_DIR = Path(__file__).parent
 _AGENT_DIR = _TOOLS_DIR.parent
 _WORKSPACE_DIR = _AGENT_DIR
-_SKILL_DIR = _AGENT_DIR / "skills" / "fusion-flow"
+_SKILL_DIR = _AGENT_DIR / "skills" / "fusion-method"
 for _import_dir in (_TOOLS_DIR, _SKILL_DIR):
     if str(_import_dir) not in sys.path:
         sys.path.insert(0, str(_import_dir))
 
 _paths = __import__("_runtime_paths")
 
-from fusion_flow.artifact_store import ArtifactStore  # noqa: E402
-from fusion_flow.job_store import (  # noqa: E402
+from fusion_method.artifact_store import ArtifactStore  # noqa: E402
+from fusion_method.job_store import (  # noqa: E402
+    HumanMethodRun,
     HumanRequestSpec,
-    HumanWorkflowRun,
     JobStore,
     RunLease,
     new_opaque_id,
 )
-from fusion_flow.workflow_runner import (  # noqa: E402
-    CompiledWorkflow,
+from fusion_method.method_runner import (  # noqa: E402
+    CompiledMethod,
     CompletionContext,
     ProgramInvocation,
-    compile_workflow,
+    compile_method,
 )
-from fusion_flow.workflow_runner import execute_workflow as _execute_workflow  # noqa: E402
+from fusion_method.method_runner import execute_method as _execute_method  # noqa: E402
 
 _STEP_SYSTEM_PROMPT = (
-    "You execute exactly one assigned FusionFlow Agent step. "
+    "You execute exactly one assigned FusionMethod Agent step. "
     "Follow the step instruction and inputs in the user message, using workspace tools when needed. "
-    "Do not perform workspace onboarding and do not start another workflow. "
+    "Do not perform workspace onboarding and do not start another method. "
     "Submit final artifacts with submit_step_result when it is available; "
     "otherwise follow the requested JSON output contract exactly."
 )
 _JSON_FENCE_OPEN = re.compile(r"[ \t]*(?P<fence>`{3,})json[ \t]*", re.IGNORECASE)
 _JSON_FENCE_CLOSE = re.compile(r"[ \t]*(?P<fence>`{3,})[ \t]*")
 _HUMAN_PREPARER_SYSTEM_PROMPT = (
-    "You prepare exactly one assigned FusionFlow Human step for another person. "
+    "You prepare exactly one assigned FusionMethod Human step for another person. "
     "Use the workspace-confined read tool only when useful to inspect an instruction reference. "
-    "Do not change files, perform the task, ask the person directly, or start another workflow. "
+    "Do not change files, perform the task, ask the person directly, or start another method. "
     "Your final response must be exactly the requested JSON question contract."
 )
 _STEP_TOOL_SESSION_ID = f"{__name__}_step"
 _STEP_TOOLS_LOAD_LOCK = anyio.Lock()
 _STEP_TOOLS_SOURCE: ToolRegistry | None = None
-_WORKFLOW_LAUNCHERS = frozenset({"flow_run", "run_flow", "run_flow_resume"})
+_METHOD_LAUNCHERS = frozenset({"run_mtd", "run_mtd_resume"})
 _WORKSPACE_PATH_PARAMETERS = {
     "edit": "file_path",
     "read": "file_path",
@@ -87,12 +87,12 @@ _WORKSPACE_PATH_PARAMETERS = {
 }
 _NESTED_TURN_TOOLS = frozenset({"clarify"})
 _HUMAN_PREPARER_TOOLS = frozenset({"read"})
-_HUMAN_CONTROL_KEY = "$fusion_flow/control"
+_HUMAN_CONTROL_KEY = "$fusion_method/control"
 _PROGRAM_STDOUT_LIMIT_BYTES = 4 * 1024 * 1024
 _PROGRAM_STDERR_LIMIT_BYTES = 1 * 1024 * 1024
 _PROGRAM_TERMINATION_GRACE_SECONDS = 1.0
-_PROGRAM_STDOUT_LIMIT_ENV = "PSI_FUSION_FLOW_PROGRAM_STDOUT_LIMIT_BYTES"
-_PROGRAM_STDERR_LIMIT_ENV = "PSI_FUSION_FLOW_PROGRAM_STDERR_LIMIT_BYTES"
+_PROGRAM_STDOUT_LIMIT_ENV = "PSI_FUSION_METHOD_PROGRAM_STDOUT_LIMIT_BYTES"
+_PROGRAM_STDERR_LIMIT_ENV = "PSI_FUSION_METHOD_PROGRAM_STDERR_LIMIT_BYTES"
 _PROGRAM_PLATFORM = "win32" if sys.platform == "win32" else os.name
 _POSIX_EXEC_BOOTSTRAP = """\
 import json
@@ -106,7 +106,7 @@ argv = json.loads(sys.argv[4])
 os.fchdir(cwd_fd)
 os.execve(exec_path or executable_fd, argv, os.environ)
 """
-_JOB_STORE_RELATIVE_PATH = Path(".psi") / "fusion-flow" / "runs"
+_JOB_STORE_RELATIVE_PATH = Path(".psi") / "fusion-method" / "runs"
 
 
 def _workspace_dir() -> Path:
@@ -364,14 +364,14 @@ def _warn_agent_result_fallback(
         "unparseable_result" if isinstance(validation_error, _AgentStepResultParseError) else "output_keys_mismatch"
     )
     logger.bind(
-        event="fusion_flow.agent_result_fallback",
+        event="fusion_method.agent_result_fallback",
         step_id=step_id,
         executor_id=executor_id,
         output_artifact_ids=list(output_ids),
         fallback_mode=fallback_mode,
         validation_failure=validation_failure,
         repair_attempts=repair_attempts,
-    ).warning("FusionFlow Agent Step committed a raw-response fallback")
+    ).warning("FusionMethod Agent Step committed a raw-response fallback")
 
 
 def _parse_resource_capacities(value: str) -> Mapping[str, ResourceCapacity] | None:
@@ -509,7 +509,7 @@ def _checkpoint_human_response(
     values = dict(checkpoint.values)
     values.update(outputs)
     return ExecutionCheckpoint(
-        workflow_id=checkpoint.workflow_id,
+        method_id=checkpoint.method_id,
         plan_digest=checkpoint.plan_digest,
         values=values,
         completed_step_ids=tuple(sorted((*checkpoint.completed_step_ids, request.step_id))),
@@ -522,54 +522,54 @@ def _job_store() -> JobStore:
 
 
 async def _artifact_store(
-    flow_path: str,
+    mtd_path: str,
     run_id: str,
     *,
     reuse_existing: bool,
 ) -> ArtifactStore:
-    workflow_path = await _resolve_flow_path(flow_path)
+    method_path = await _resolve_mtd_path(mtd_path)
     return await ArtifactStore.open(
-        workflow_path.parent,
+        method_path.parent,
         run_id,
         reuse_existing=reuse_existing,
     )
 
 
-async def _new_artifact_store(flow_path: str) -> ArtifactStore:
+async def _new_artifact_store(mtd_path: str) -> ArtifactStore:
     for _attempt in range(10):
         try:
             return await _artifact_store(
-                flow_path,
+                mtd_path,
                 new_opaque_id(),
                 reuse_existing=False,
             )
         except FileExistsError:
             continue
-    raise RuntimeError("could not allocate a unique FusionFlow Artifact run directory")
+    raise RuntimeError("could not allocate a unique FusionMethod Artifact run directory")
 
 
-async def _read_flow_source(flow_path: str) -> str:
-    resolved = await _resolve_flow_path(flow_path)
+async def _read_mtd_source(mtd_path: str) -> str:
+    resolved = await _resolve_mtd_path(mtd_path)
     return await resolved.read_text(encoding="utf-8")
 
 
-async def _resolve_flow_path(flow_path: str) -> anyio.Path:
+async def _resolve_mtd_path(mtd_path: str) -> anyio.Path:
     workspace = await anyio.Path(_workspace_dir()).resolve()
-    candidate = anyio.Path(flow_path)
+    candidate = anyio.Path(mtd_path)
     if candidate.is_absolute():
-        raise ValueError("flow_path must be relative to the workspace")
-    candidate = workspace / flow_path
+        raise ValueError("mtd_path must be relative to the workspace")
+    candidate = workspace / mtd_path
     resolved = await candidate.resolve()
-    flows_dir = await (workspace / "flows").resolve()
-    if not Path(str(resolved)).is_relative_to(Path(str(flows_dir))):
-        raise ValueError("flow_path must stay inside the workspace flows directory")
-    if resolved.suffix != ".workflow":
-        raise ValueError("flow_path must name a .workflow file")
+    mtds_dir = await (workspace / "mtds").resolve()
+    if not Path(str(resolved)).is_relative_to(Path(str(mtds_dir))):
+        raise ValueError("mtd_path must stay inside the workspace mtds directory")
+    if resolved.suffix != ".method":
+        raise ValueError("mtd_path must name a .method file")
     return resolved
 
 
-def _instruction_resolver(flow_path: str) -> Callable[[str], Awaitable[str]]:
-    """Load ``./`` instruction files relative to their workflow bundle."""
+def _instruction_resolver(mtd_path: str) -> Callable[[str], Awaitable[str]]:
+    """Load ``./`` instruction files relative to their method bundle."""
 
     bundle_dir: anyio.Path | None = None
     workspace: anyio.Path | None = None
@@ -583,14 +583,14 @@ def _instruction_resolver(flow_path: str) -> Callable[[str], Awaitable[str]]:
         if relative.suffix.lower() != ".md":
             raise ValueError("instruction path must name a .md file")
         if ".." in relative.parts:
-            raise ValueError("instruction path must stay inside the workflow directory")
+            raise ValueError("instruction path must stay inside the method directory")
         if bundle_dir is None:
-            workflow_path = await _resolve_flow_path(flow_path)
-            bundle_dir = await workflow_path.parent.resolve()
+            method_path = await _resolve_mtd_path(mtd_path)
+            bundle_dir = await method_path.parent.resolve()
             workspace = await anyio.Path(_workspace_dir()).resolve()
         resolved = await (bundle_dir / str(relative)).resolve()
         if not Path(str(resolved)).is_relative_to(Path(str(bundle_dir))):
-            raise ValueError("instruction path must stay inside the workflow directory")
+            raise ValueError("instruction path must stay inside the method directory")
         if workspace is None:
             raise AssertionError("instruction resolver did not initialize its workspace")
         workspace_path = Path(str(resolved)).relative_to(Path(str(workspace))).as_posix()
@@ -628,10 +628,10 @@ def _agent_instruction_file_fallback(workspace_path: str) -> str:
 
 
 async def _materialize_instruction_files(
-    compiled: CompiledWorkflow,
-    flow_path: str,
+    compiled: CompiledMethod,
+    mtd_path: str,
 ) -> dict[str, str]:
-    """Read every referenced instruction once before workflow execution."""
+    """Read every referenced instruction once before method execution."""
 
     reference_kinds: dict[str, set[str]] = {}
     for step in compiled.graph.steps:
@@ -639,7 +639,7 @@ async def _materialize_instruction_files(
         if reference is not None and reference.startswith("./"):
             reference_kinds.setdefault(reference, set()).add(compiled.executor_kinds[step.executor_id])
 
-    resolve = _instruction_resolver(flow_path)
+    resolve = _instruction_resolver(mtd_path)
     instruction_files: dict[str, str] = {}
     for reference, executor_kinds in sorted(reference_kinds.items()):
         try:
@@ -651,7 +651,7 @@ async def _materialize_instruction_files(
     return instruction_files
 
 
-def _legacy_instruction_identities(compiled: CompiledWorkflow) -> dict[str, str]:
+def _legacy_instruction_identities(compiled: CompiledMethod) -> dict[str, str]:
     """Preserve pre-bundle ``./...`` instructions as literal identities."""
 
     return {
@@ -673,7 +673,7 @@ def _cached_instruction_resolver(
     return resolve
 
 
-def _workflow_definition_digest(
+def _method_definition_digest(
     source: str,
     instruction_files: Mapping[str, str],
 ) -> str:
@@ -1238,7 +1238,7 @@ async def _load_step_tools() -> ToolRegistry:
             await _STEP_TOOLS_SOURCE.refresh()
 
         workspace = _workspace_dir()
-        excluded_tools = _WORKFLOW_LAUNCHERS | _NESTED_TURN_TOOLS
+        excluded_tools = _METHOD_LAUNCHERS | _NESTED_TURN_TOOLS
         tools = {name: tool for name, tool in _STEP_TOOLS_SOURCE.tools.items() if name not in excluded_tools}
         funcs = {
             name: _bind_step_tool_to_workspace(name, func, workspace)
@@ -1247,7 +1247,7 @@ async def _load_step_tools() -> ToolRegistry:
         }
         return _StepToolRegistry(
             files={
-                "__fusion_flow_step_tools__": FileEntry(
+                "__fusion_method_step_tools__": FileEntry(
                     file_hash="",
                     tools=tools,
                     funcs=funcs,
@@ -1297,7 +1297,7 @@ def _build_human_preparer_tools(source: ToolRegistry) -> ToolRegistry:
         raise AssertionError(f"unexpected Human preparer tool name: {metadata.name}")
     return _StepToolRegistry(
         files={
-            "__fusion_flow_human_preparer_tools__": FileEntry(
+            "__fusion_method_human_preparer_tools__": FileEntry(
                 file_hash="",
                 tools={metadata.name: metadata},
                 funcs={metadata.name: read},
@@ -1394,7 +1394,7 @@ async def _complete_agent_step(
         ai_socket,
         _StepToolRegistry(
             files={
-                "__fusion_flow_step_result__": FileEntry(
+                "__fusion_method_step_result__": FileEntry(
                     file_hash="",
                     tools=tools,
                     funcs=funcs,
@@ -1403,7 +1403,7 @@ async def _complete_agent_step(
         ),
     )
     message = (
-        "Execute exactly one assigned FusionFlow step. Do not start another workflow.\n"
+        "Execute exactly one assigned FusionMethod step. Do not start another method.\n"
         f"Workspace root: {workspace}\n"
         "Resolve every relative file path against that workspace root.\n"
         f"Step: {context.step_id}\n"
@@ -1561,7 +1561,7 @@ def _is_cancellation(error: BaseException) -> bool:
 
 async def _execute_persisted_run(
     source: str,
-    run: HumanWorkflowRun,
+    run: HumanMethodRun,
     lease: RunLease,
     *,
     ai_socket: str,
@@ -1570,16 +1570,16 @@ async def _execute_persisted_run(
     if run.prepared_request is not None:
         raise ValueError("a Human response must be checkpointed before execution resumes")
     if run.checkpoint is None:
-        raise ValueError(f"FusionFlow run {run.run_id!r} has no execution checkpoint")
+        raise ValueError(f"FusionMethod run {run.run_id!r} has no execution checkpoint")
     run_state = run
     artifact_store = await _artifact_store(
-        run.flow_path,
+        run.mtd_path,
         run.run_id,
         reuse_existing=True,
     )
     await artifact_store.persist(run.checkpoint.values)
     if instruction_files is None:
-        compiled = compile_workflow(source, strict_executors=True)
+        compiled = compile_method(source, strict_executors=True)
         instruction_files = _legacy_instruction_identities(compiled)
     step_tools: ToolRegistry | None = None
     human_tools: ToolRegistry | None = None
@@ -1661,7 +1661,7 @@ async def _execute_persisted_run(
     outputs: dict[str, object] | None = None
     try:
         try:
-            outputs = await _execute_workflow(
+            outputs = await _execute_method(
                 source,
                 inputs=run.inputs,
                 contextual_complete=complete,
@@ -1715,7 +1715,7 @@ async def _execute_persisted_run(
         return _human_request_payload(waiting.run_id, request)
 
     if outputs is None:
-        raise AssertionError("workflow execution produced neither outputs nor a Human request")
+        raise AssertionError("method execution produced neither outputs nor a Human request")
     completed = replace(
         run_state,
         status="completed",
@@ -1727,34 +1727,34 @@ async def _execute_persisted_run(
     return json.dumps(outputs, ensure_ascii=False, sort_keys=True)
 
 
-async def run_flow(
-    flow_path: str,
+async def run_mtd(
+    mtd_path: str,
     inputs_json: str = "{}",
     resource_capacities_json: str = "",
 ) -> str:
-    """Start one G4 workflow and return outputs or a persisted Human request.
+    """Start one G4 method and return outputs or a persisted Human request.
 
     Args:
-        flow_path: Workspace-relative path to a UTF-8 ``.workflow`` file.
-        inputs_json: JSON object keyed by the workflow's input artifact IDs.
+        mtd_path: Workspace-relative path to a UTF-8 ``.method`` file.
+        inputs_json: JSON object keyed by the method's input artifact IDs.
         resource_capacities_json: Optional JSON object mapping resource IDs to
             positive counts or concrete instance-ID arrays.
 
     Returns:
         A JSON object keyed by output artifact IDs, or a
-        reserved ``$fusion_flow/control`` envelope whose request fields are
+        reserved ``$fusion_method/control`` envelope whose request fields are
         passed through ``clarify``.
     """
 
     ai_socket = current_tool_ai_socket()
     if ai_socket is None:
-        raise RuntimeError("run_flow must be called by a psi-agent Session")
+        raise RuntimeError("run_mtd must be called by a psi-agent Session")
 
-    source = await _read_flow_source(flow_path)
+    source = await _read_mtd_source(mtd_path)
     inputs = _parse_mapping(inputs_json, label="inputs_json")
     resource_capacities = _parse_resource_capacities(resource_capacities_json)
-    compiled = compile_workflow(source, strict_executors=True)
-    instruction_files = await _materialize_instruction_files(compiled, flow_path)
+    compiled = compile_method(source, strict_executors=True)
+    instruction_files = await _materialize_instruction_files(compiled, mtd_path)
     initial_checkpoint = create_execution_checkpoint(
         generate_plan(compiled.graph),
         compiled.graph,
@@ -1764,9 +1764,9 @@ async def run_flow(
     if has_human:
         store = _job_store()
         run = await store.create(
-            flow_path=flow_path,
-            flow_source=source,
-            definition_digest=_workflow_definition_digest(source, instruction_files),
+            mtd_path=mtd_path,
+            mtd_source=source,
+            definition_digest=_method_definition_digest(source, instruction_files),
             inputs=inputs,
             resource_capacities=resource_capacities,
             checkpoint=initial_checkpoint,
@@ -1799,13 +1799,13 @@ async def run_flow(
             tool_registry=await get_step_tools(),
         )
 
-    artifact_store = await _new_artifact_store(flow_path)
+    artifact_store = await _new_artifact_store(mtd_path)
     await artifact_store.persist(initial_checkpoint.values)
 
     async def observe_checkpoint(checkpoint: ExecutionCheckpoint) -> None:
         await artifact_store.persist(checkpoint.values)
 
-    outputs = await _execute_workflow(
+    outputs = await _execute_method(
         source,
         inputs=inputs,
         contextual_complete=complete,
@@ -1821,7 +1821,7 @@ async def run_flow(
     return json.dumps(outputs, ensure_ascii=False, sort_keys=True)
 
 
-async def run_flow_resume(
+async def run_mtd_resume(
     run_id: str,
     request_id: str,
     human_response_json: str,
@@ -1829,7 +1829,7 @@ async def run_flow_resume(
     """Resume one persisted Human Step with a choice, free text, or JSON value.
 
     Args:
-        run_id: Opaque run ID returned by ``run_flow``.
+        run_id: Opaque run ID returned by ``run_mtd``.
         request_id: Opaque Human request ID returned by the latest wait.
         human_response_json: The person's response encoded as any valid JSON
             value. For multiple output artifacts, use an object keyed exactly
@@ -1837,12 +1837,12 @@ async def run_flow_resume(
 
     Returns:
         The final output Artifact mapping, or the next
-        reserved ``$fusion_flow/control`` Human-wait envelope.
+        reserved ``$fusion_method/control`` Human-wait envelope.
     """
 
     ai_socket = current_tool_ai_socket()
     if ai_socket is None:
-        raise RuntimeError("run_flow_resume must be called by a psi-agent Session")
+        raise RuntimeError("run_mtd_resume must be called by a psi-agent Session")
     response = _parse_human_response(human_response_json)
     store = _job_store()
 
@@ -1858,18 +1858,18 @@ async def run_flow_resume(
             return json.dumps(run.outputs, ensure_ascii=False, sort_keys=True)
         if run.status in {"failed", "cancelled"}:
             details = "" if run.error is None else f": {run.error}"
-            raise ValueError(f"FusionFlow run {run_id!r} is {run.status}{details}")
+            raise ValueError(f"FusionMethod run {run_id!r} is {run.status}{details}")
 
-        source = await _read_flow_source(run.flow_path)
+        source = await _read_mtd_source(run.mtd_path)
         source_digest = hashlib.sha256(source.encode()).hexdigest()
         instruction_files: dict[str, str] | None = None
         definition_changed = False
         definition_error: Exception | None = None
-        if run.flow_source_digest != source_digest:
+        if run.mtd_source_digest != source_digest:
             try:
-                compiled = compile_workflow(source, strict_executors=True)
-                instruction_files = await _materialize_instruction_files(compiled, run.flow_path)
-                definition_changed = _workflow_definition_digest(source, instruction_files) != run.flow_source_digest
+                compiled = compile_method(source, strict_executors=True)
+                instruction_files = await _materialize_instruction_files(compiled, run.mtd_path)
+                definition_changed = _method_definition_digest(source, instruction_files) != run.mtd_source_digest
             except Exception as error:
                 definition_changed = True
                 definition_error = error
@@ -1878,15 +1878,15 @@ async def run_flow_resume(
                 run,
                 status="failed",
                 prepared_request=None,
-                error="workflow definition changed after the Human request was prepared",
+                error="method definition changed after the Human request was prepared",
             )
             with anyio.CancelScope(shield=True):
                 await lease.save(failed)
-            raise ValueError(f"workflow definition changed for FusionFlow run {run_id!r}") from definition_error
+            raise ValueError(f"method definition changed for FusionMethod run {run_id!r}") from definition_error
 
         if run.status == "running":
             if request_id not in run.human_responses:
-                raise ValueError(f"FusionFlow run {run_id!r} is not waiting for Human input")
+                raise ValueError(f"FusionMethod run {run_id!r} is not waiting for Human input")
             if not _json_values_equal(run.human_responses[request_id], response):
                 raise ValueError(f"request_id {request_id!r} already has a different response")
             return await _execute_persisted_run(
@@ -1901,15 +1901,15 @@ async def run_flow_resume(
             if not _json_values_equal(run.human_responses[request_id], response):
                 raise ValueError(f"request_id {request_id!r} already has a different response")
             if run.prepared_request is None:
-                raise ValueError(f"FusionFlow run {run_id!r} is not waiting for Human input")
+                raise ValueError(f"FusionMethod run {run_id!r} is not waiting for Human input")
             return _human_request_payload(run_id, run.prepared_request)
 
         if run.prepared_request is None:
-            raise ValueError(f"FusionFlow run {run_id!r} is not waiting for Human input")
+            raise ValueError(f"FusionMethod run {run_id!r} is not waiting for Human input")
         if run.prepared_request.request_id != request_id:
             raise ValueError(f"request_id does not match the active Human request for run {run_id!r}")
         if run.checkpoint is None:
-            raise ValueError(f"FusionFlow run {run_id!r} has no resumable checkpoint")
+            raise ValueError(f"FusionMethod run {run_id!r} has no resumable checkpoint")
         checkpoint = _checkpoint_human_response(
             run.checkpoint,
             run.prepared_request,
@@ -1925,7 +1925,7 @@ async def run_flow_resume(
             human_responses=responses,
         )
         artifact_store = await _artifact_store(
-            run.flow_path,
+            run.mtd_path,
             run.run_id,
             reuse_existing=True,
         )

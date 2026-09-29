@@ -12,34 +12,34 @@
 
     <div id="input-area">
       <div
-        v-if="workflowMenuOpen"
-        id="workflow-command-menu"
-        class="workflow-menu"
+        v-if="methodMenuOpen"
+        id="method-command-menu"
+        class="method-menu"
         role="listbox"
         aria-label="可复用工作流"
       >
-        <div v-if="loadingWorkflows" class="workflow-menu-state">正在加载工作流…</div>
-        <div v-else-if="workflowLoadError" class="workflow-menu-state error">
-          {{ workflowLoadError }}
+        <div v-if="loadingMethods" class="method-menu-state">正在加载工作流…</div>
+        <div v-else-if="methodLoadError" class="method-menu-state error">
+          {{ methodLoadError }}
         </div>
-        <div v-else-if="!workflowOptions.length" class="workflow-menu-state">
+        <div v-else-if="!methodOptions.length" class="method-menu-state">
           没有匹配的工作流
         </div>
         <template v-else>
           <button
-            v-for="(workflow, index) in workflowOptions"
-            :id="`workflow-option-${index}`"
-            :key="workflow.name"
+            v-for="(method, index) in methodOptions"
+            :id="`method-option-${index}`"
+            :key="method.name"
             type="button"
-            class="workflow-option"
-            :class="{ active: index === activeWorkflowIndex }"
+            class="method-option"
+            :class="{ active: index === activeMethodIndex }"
             role="option"
-            :aria-selected="index === activeWorkflowIndex"
-            @mouseenter="activeWorkflowIndex = index"
-            @mousedown.prevent="selectWorkflow(workflow)"
+            :aria-selected="index === activeMethodIndex"
+            @mouseenter="activeMethodIndex = index"
+            @mousedown.prevent="selectMethod(method)"
           >
-            <span class="workflow-option-heading">
-              <span class="workflow-command">/workflow:{{ workflow.name }}</span>
+            <span class="method-option-heading">
+              <span class="method-command">/method:{{ method.name }}</span>
             </span>
           </button>
         </template>
@@ -54,11 +54,11 @@
         rows="1"
         placeholder="问问 HaiTun"
         aria-autocomplete="list"
-        :aria-expanded="workflowMenuOpen"
-        :aria-controls="workflowMenuOpen ? 'workflow-command-menu' : undefined"
-        :aria-activedescendant="activeWorkflowDescendant"
-        @focus="restoreWorkflowMenu"
-        @blur="dismissWorkflowMenu"
+        :aria-expanded="methodMenuOpen"
+        :aria-controls="methodMenuOpen ? 'method-command-menu' : undefined"
+        :aria-activedescendant="activeMethodDescendant"
+        @focus="restoreMethodMenu"
+        @blur="dismissMethodMenu"
         @keydown="handleInputKeydown"
         @input="autoResizeInput"
       ></textarea>
@@ -82,19 +82,19 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { listWorkspaceWorkflows } from '../api.js'
+import { listWorkspaceMethods } from '../api.js'
 import { useChatStore } from '../stores/chat.js'
 import { useSessionStore } from '../stores/session.js'
 import { useUiStore } from '../stores/ui.js'
 import { sendMessage, stopMessage } from '../composables/useChat.js'
 import { resolveSessionWorkspace } from '../sessionList.js'
 import {
-  filterWorkflowOptions,
-  formatWorkflowCommand,
-  getWorkflowCommandQuery,
-  moveWorkflowSelection,
-  parseWorkflowCommand,
-} from '../workflowCommands.js'
+  filterMethodOptions,
+  formatMethodCommand,
+  getMethodCommandQuery,
+  moveMethodSelection,
+  parseMethodCommand,
+} from '../methodCommands.js'
 import ModelPanel from './ModelPanel.vue'
 
 const chat = useChatStore()
@@ -109,12 +109,12 @@ const {
 } = storeToRefs(session)
 const ui = useUiStore()
 
-const workflows = ref([])
-const loadingWorkflows = ref(false)
-const workflowLoadError = ref('')
-const activeWorkflowIndex = ref(0)
-const dismissedWorkflowText = ref(null)
-let workflowRequestVersion = 0
+const methods = ref([])
+const loadingMethods = ref(false)
+const methodLoadError = ref('')
+const activeMethodIndex = ref(0)
+const dismissedMethodText = ref(null)
+let methodRequestVersion = 0
 
 defineEmits(['select-backend', 'delete-ai', 'delete-router'])
 
@@ -128,14 +128,14 @@ const activeWorkspacePath = computed(() => {
   return selectedWorkspacePath.value || gatewayCwd.value
 })
 
-const workflowQuery = computed(() => getWorkflowCommandQuery(inputText.value))
-const workflowOptions = computed(() => filterWorkflowOptions(workflows.value, workflowQuery.value ?? ''))
-const workflowMenuOpen = computed(() => (
-  workflowQuery.value !== null && dismissedWorkflowText.value !== inputText.value
+const methodQuery = computed(() => getMethodCommandQuery(inputText.value))
+const methodOptions = computed(() => filterMethodOptions(methods.value, methodQuery.value ?? ''))
+const methodMenuOpen = computed(() => (
+  methodQuery.value !== null && dismissedMethodText.value !== inputText.value
 ))
-const activeWorkflowDescendant = computed(() => {
-  if (!workflowMenuOpen.value || !workflowOptions.value.length) return undefined
-  return `workflow-option-${activeWorkflowIndex.value}`
+const activeMethodDescendant = computed(() => {
+  if (!methodMenuOpen.value || !methodOptions.value.length) return undefined
+  return `method-option-${activeMethodIndex.value}`
 })
 
 function onFileSelected(e) {
@@ -143,47 +143,47 @@ function onFileSelected(e) {
   selectedFiles.value.push(...files)
 }
 
-function selectWorkflow(workflow) {
-  const command = formatWorkflowCommand(workflow)
+function selectMethod(method) {
+  const command = formatMethodCommand(method)
   inputText.value = command
-  dismissedWorkflowText.value = command
-  activeWorkflowIndex.value = 0
+  dismissedMethodText.value = command
+  activeMethodIndex.value = 0
   nextTick(() => document.getElementById('chat-input')?.focus())
 }
 
-function dismissWorkflowMenu() {
-  dismissedWorkflowText.value = inputText.value
+function dismissMethodMenu() {
+  dismissedMethodText.value = inputText.value
 }
 
-function restoreWorkflowMenu() {
-  dismissedWorkflowText.value = null
+function restoreMethodMenu() {
+  dismissedMethodText.value = null
 }
 
 async function submitMessage() {
-  const parsed = parseWorkflowCommand(inputText.value)
+  const parsed = parseMethodCommand(inputText.value)
   if (parsed.kind === 'invalid') {
     ui.showAlert(parsed.error)
     return
   }
-  if (parsed.kind === 'workflow' && selectedFiles.value.length) {
+  if (parsed.kind === 'method' && selectedFiles.value.length) {
     ui.showAlert('工作流指令暂不支持同时发送附件；请先移除附件')
     return
   }
-  dismissedWorkflowText.value = inputText.value
+  dismissedMethodText.value = inputText.value
   await sendMessage()
 }
 
 function handleInputKeydown(event) {
   if (event.isComposing || event.keyCode === 229) return
 
-  if (workflowMenuOpen.value) {
+  if (methodMenuOpen.value) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      if (workflowOptions.value.length) {
+      if (methodOptions.value.length) {
         event.preventDefault()
         const delta = event.key === 'ArrowDown' ? 1 : -1
-        activeWorkflowIndex.value = moveWorkflowSelection(
-          activeWorkflowIndex.value,
-          workflowOptions.value.length,
+        activeMethodIndex.value = moveMethodSelection(
+          activeMethodIndex.value,
+          methodOptions.value.length,
           delta,
         )
       }
@@ -191,7 +191,7 @@ function handleInputKeydown(event) {
     }
     if (event.key === 'Escape') {
       event.preventDefault()
-      dismissWorkflowMenu()
+      dismissMethodMenu()
       return
     }
     if (
@@ -200,10 +200,10 @@ function handleInputKeydown(event) {
       && !event.altKey
       && !event.ctrlKey
       && !event.metaKey
-      && workflowOptions.value.length
+      && methodOptions.value.length
     ) {
       event.preventDefault()
-      selectWorkflow(workflowOptions.value[activeWorkflowIndex.value] || workflowOptions.value[0])
+      selectMethod(methodOptions.value[activeMethodIndex.value] || methodOptions.value[0])
       return
     }
   }
@@ -230,35 +230,35 @@ function autoResizeInput() {
 
 watch(inputText, () => nextTick(autoResizeInput))
 
-watch(workflowOptions, () => {
-  activeWorkflowIndex.value = workflowOptions.value.length ? 0 : -1
+watch(methodOptions, () => {
+  activeMethodIndex.value = methodOptions.value.length ? 0 : -1
 })
 
 watch(
-  [workflowQuery, activeWorkspacePath],
+  [methodQuery, activeWorkspacePath],
   async ([query, workspacePath], [previousQuery, previousWorkspacePath] = []) => {
     if (query === null || !workspacePath) {
-      workflowRequestVersion++
-      loadingWorkflows.value = false
-      workflowLoadError.value = ''
-      workflows.value = []
+      methodRequestVersion++
+      loadingMethods.value = false
+      methodLoadError.value = ''
+      methods.value = []
       return
     }
     if (previousQuery !== null && previousWorkspacePath === workspacePath) return
 
-    const requestVersion = ++workflowRequestVersion
-    loadingWorkflows.value = true
-    workflowLoadError.value = ''
-    workflows.value = []
+    const requestVersion = ++methodRequestVersion
+    loadingMethods.value = true
+    methodLoadError.value = ''
+    methods.value = []
     try {
-      const result = await listWorkspaceWorkflows(workspacePath)
-      if (requestVersion === workflowRequestVersion) workflows.value = result
+      const result = await listWorkspaceMethods(workspacePath)
+      if (requestVersion === methodRequestVersion) methods.value = result
     } catch (error) {
-      if (requestVersion === workflowRequestVersion) {
-        workflowLoadError.value = error.message || '工作流加载失败'
+      if (requestVersion === methodRequestVersion) {
+        methodLoadError.value = error.message || '工作流加载失败'
       }
     } finally {
-      if (requestVersion === workflowRequestVersion) loadingWorkflows.value = false
+      if (requestVersion === methodRequestVersion) loadingMethods.value = false
     }
   },
   { immediate: true },
@@ -270,7 +270,7 @@ watch(uploadResetToken, () => {
 })
 
 onUnmounted(() => {
-  workflowRequestVersion++
+  methodRequestVersion++
 })
 </script>
 
@@ -330,7 +330,7 @@ onUnmounted(() => {
 #input-area button.send:disabled { opacity: .4; cursor: default; box-shadow: none; }
 #input-area button.send.stop { background: var(--md-text-error, #d32f2f); color: #fff; }
 
-.workflow-menu {
+.method-menu {
   position: absolute;
   left: 0;
   right: 0;
@@ -344,7 +344,7 @@ onUnmounted(() => {
   background: var(--md-surface-container-high);
   box-shadow: var(--md-elevation-2);
 }
-.workflow-option {
+.method-option {
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -358,30 +358,30 @@ onUnmounted(() => {
   text-align: left;
   cursor: pointer;
 }
-.workflow-option:hover,
-.workflow-option.active {
+.method-option:hover,
+.method-option.active {
   background: var(--md-surface-variant);
 }
-.workflow-option-heading {
+.method-option-heading {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
-.workflow-command {
+.method-command {
   color: var(--md-primary);
   font-family: monospace;
   font-weight: 600;
 }
-.workflow-menu-state {
+.method-menu-state {
   color: var(--md-text-secondary);
   font-size: 12px;
 }
-.workflow-menu-state {
+.method-menu-state {
   padding: 14px 12px;
 }
-.workflow-menu-state.error {
+.method-menu-state.error {
   color: var(--md-text-error);
 }
 

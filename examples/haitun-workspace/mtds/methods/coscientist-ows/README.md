@@ -1,22 +1,22 @@
-# Co-scientist OWS workflow
+# Co-scientist OWS method
 
 This directory is part of the `coscientist-ows` workspace overlay produced by
 CI. Extract the archive into the root of a compatible Haitun workspace, keeping
-the included `flows/` and `skills/` paths unchanged.
+the included `mtds/` and `skills/` paths unchanged.
 
-Invoke the saved workflow with this exact chat command:
+Invoke the saved method with this exact chat command:
 
 ```text
-/workflow:coscientist-ows
+/method:coscientist-ows
 ```
 
-The session asks for the seven values declared by `input_workflow`. The
+The session asks for the seven values declared by `input_method`. The
 `coscientist-ows.inputs.example.json` file is a sanitized input example for
-copying values; it is not loaded automatically by `/workflow:coscientist-ows`.
+copying values; it is not loaded automatically by `/method:coscientist-ows`.
 
 ## Host requirements
 
-- A current psi-agent Haitun workspace with the FusionFlow runner.
+- A current psi-agent Haitun workspace with the FusionMethod runner.
 - Python with `aiohttp`.
 - `data/knowledge-base/knowledge_base_for_agent.json`.
 - `data/laboratory-limitations/laboratory_limitations_for_agent.json`.

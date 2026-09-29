@@ -1,6 +1,6 @@
 ---
 name: psi-agent-help
-description: Configure, use, and understand psi-agent, including first-run onboarding, workspace structure, tools, skills, and common starter workflows.
+description: Configure, use, and understand psi-agent, including first-run onboarding, workspace structure, tools, skills, and common starter methods.
 category: agent
 ---
 
@@ -31,7 +31,7 @@ Important files and directories:
 | `HEARTBEAT.md` | Dynamic context re-read during prompt rebuilds. |
 | `tools/` | Callable Python tools exposed to the agent. |
 | `skills/` | Reusable task instructions. Each skill lives in a subdirectory with `SKILL.md`. |
-| `flows/` | Fusion Flow workflow assets. |
+| `mtds/` | Fusion Method method assets. |
 | `schedules/` | Scheduled tasks, each with a `TASK.md`. |
 | `systems/` | Prompt builder, prompt section constants, and future extension hooks. |
 
@@ -42,7 +42,7 @@ Explain tools by capability, because exact runtime availability may vary by sess
 - File operations: `read`, `write`, `edit`
 - Shell execution: `bash`, `powershell`
 - Skill management: `skill_manage`
-- Fusion Flow management: `flow_manage`
+- Fusion Method management: `mtd_manage`
 - Durable memory, if enabled: `memory_add`, `memory_search`, `memory_answer_context`
 - Spreadsheet creation: `write_excel`
 - Web/search tools, if configured in the current runtime
@@ -59,11 +59,11 @@ Common useful skills in this workspace include:
 
 - `psi-agent-help`: this help and onboarding guide.
 - `code-review-checklist`: structured code review.
-- `git-workflow`: safe git branching, commits, PRs, and conflict resolution.
+- `git-method`: safe git branching, commits, PRs, and conflict resolution.
 - `python-async-basics`: Python async guidance.
 - `python-static-analysis`: Python static analysis.
 - `user-preferences-and-language`: user preference and language handling.
-- `fusion-flow`: authoring and managing Fusion Flow workflows.
+- `fusion-method`: authoring and managing Fusion Method methods.
 - `fusion-memory-setup`: setting up durable Fusion Memory.
 - Domain skills for systems, data/text processing, ML, media, circuits, cryptanalysis, and other specialized work.
 
@@ -78,10 +78,10 @@ Offer these examples when the user asks how to begin:
 - `帮我读这个文件并总结`: use file tools to inspect a file and produce a summary.
 - `帮我检查这段代码`: use code-review guidance and relevant language skills.
 - `帮我创建一个新技能`: use `skill_manage` and the local skill format.
-- `帮我写一个 Fusion Flow`: use the `fusion-flow` skill and `flow_manage`.
+- `帮我写一个 Fusion Method`: use the `fusion-method` skill and `mtd_manage`.
 - `帮我配置长期记忆`: read `fusion-memory-setup` and walk through setup.
 - `帮我把表格生成 Excel`: use `write_excel`, not a markdown table.
-- `新手指导`: provide this onboarding flow again.
+- `新手指导`: provide this onboarding mtd again.
 
 ## Starting The Agent
 
@@ -191,6 +191,6 @@ When the user asks for help or new-user guidance, use this shape:
 2. Show the main structure in 4-6 bullets.
 3. Summarize tool groups and skill usage.
 4. Give concrete starter phrases the user can type.
-5. Offer one immediate next step, such as listing current skills, inspecting a file, creating a skill, or writing a flow.
+5. Offer one immediate next step, such as listing current skills, inspecting a file, creating a skill, or writing a mtd.
 
 Do not overwhelm the user with every implementation detail unless they ask for depth.

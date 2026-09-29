@@ -4,18 +4,18 @@ import importlib
 import re
 from pathlib import Path
 
-from fusion_flow.core_ir import CompoundTerm, Concept, Constant, ListTerm, Operator
-from fusion_flow.parser import ParseContext, parse_workflow
-from fusion_flow.workflow_runner import compile_workflow
+from fusion_method.core_ir import CompoundTerm, Concept, Constant, ListTerm, Operator
+from fusion_method.method_runner import compile_method
+from fusion_method.parser import ParseContext, parse_method
 
 ROOT = Path(__file__).resolve().parents[1]
-GRAMMAR = ROOT / "grammar" / "FusionFlow.g4"
-GENERATED = ROOT / "fusion_flow" / "generated"
+GRAMMAR = ROOT / "grammar" / "FusionMethod.g4"
+GENERATED = ROOT / "fusion_method" / "generated"
 SKILL = ROOT / "SKILL.md"
 
 CANONICAL_DATAFLOW_OPERATORS = {
-    "input_workflow",
-    "output_workflow",
+    "input_method",
+    "output_method",
     "consumes",
     "produces",
 }
@@ -36,11 +36,11 @@ EXPECTED_PRESET_OPERATORS = CANONICAL_DATAFLOW_OPERATORS | {
     "step_name",
     "step_timeout",
     "temperature",
-    "workflow_timeout",
+    "method_timeout",
 }
 REMOVED_DATAFLOW_OPERATORS = {
-    "input_workflow_multi",
-    "output_workflow_multi",
+    "input_method_multi",
+    "output_method_multi",
     "consumes_multi",
     "produces_multi",
 }
@@ -103,10 +103,10 @@ def test_preset_operators_document_signatures() -> None:
         "agent_system_prompt": ("Agent", "Instruction", "1"),
     }
     canonical_list_operators = {
-        "input_workflow": ("Workflow", "List", "1"),
+        "input_method": ("Method", "List", "1"),
         "consumes": ("Step", "List", "1"),
         "produces": ("Step", "List", "1"),
-        "output_workflow": ("Workflow", "List", "1"),
+        "output_method": ("Method", "List", "1"),
     }
     assert {
         name: (parameters, return_type, arity)
@@ -122,7 +122,7 @@ def test_preset_operators_document_signatures() -> None:
 
 def test_skill_examples_follow_canonical_dataflow_contract() -> None:
     skill = SKILL.read_text(encoding="utf-8")
-    examples = re.findall(r"```fusionflow\s*\n(.*?)\n```", skill, re.DOTALL)
+    examples = re.findall(r"```fusionmethod\s*\n(.*?)\n```", skill, re.DOTALL)
 
     assert examples
     removed_operator_pattern = "|".join(re.escape(name) for name in sorted(REMOVED_DATAFLOW_OPERATORS))
@@ -130,15 +130,15 @@ def test_skill_examples_follow_canonical_dataflow_contract() -> None:
 
     seen_operators: set[str] = set()
     for index, source in enumerate(examples, start=1):
-        parsed = parse_workflow(source, context=_skill_parse_context())
-        assert parsed.diagnostics == (), f"FusionFlow example {index}"
+        parsed = parse_method(source, context=_skill_parse_context())
+        assert parsed.diagnostics == (), f"FusionMethod example {index}"
         assert parsed.core_ir is not None
-        for workflow in parsed.core_ir.workflows:
-            for assertion in workflow.assertions:
+        for method in parsed.core_ir.methods:
+            for assertion in method.assertions:
                 assert not (
                     isinstance(assertion.rhs, CompoundTerm)
                     and assertion.rhs.operator.name in CANONICAL_DATAFLOW_OPERATORS
-                ), f"FusionFlow example {index} reverses a canonical dataflow assertion"
+                ), f"FusionMethod example {index} reverses a canonical dataflow assertion"
                 if not isinstance(assertion.lhs, CompoundTerm):
                     continue
                 operator_name = assertion.lhs.operator.name
@@ -146,13 +146,13 @@ def test_skill_examples_follow_canonical_dataflow_contract() -> None:
                     continue
                 seen_operators.add(operator_name)
                 assert len(assertion.lhs.arguments) == 1, (
-                    f"FusionFlow example {index} uses legacy arity for {operator_name}"
+                    f"FusionMethod example {index} uses legacy arity for {operator_name}"
                 )
                 assert isinstance(assertion.rhs, ListTerm), (
-                    f"FusionFlow example {index} must give {operator_name} an explicit List RHS"
+                    f"FusionMethod example {index} must give {operator_name} an explicit List RHS"
                 )
                 assert all(isinstance(item, Constant) for item in assertion.rhs.items), (
-                    f"FusionFlow example {index} must name Artifacts directly in {operator_name}"
+                    f"FusionMethod example {index} must name Artifacts directly in {operator_name}"
                 )
 
     assert seen_operators == CANONICAL_DATAFLOW_OPERATORS
@@ -160,24 +160,24 @@ def test_skill_examples_follow_canonical_dataflow_contract() -> None:
 
 def test_skill_examples_compile_for_the_one_shot_runner() -> None:
     skill = SKILL.read_text(encoding="utf-8")
-    examples = re.findall(r"```fusionflow\s*\n(.*?)\n```", skill, re.DOTALL)
+    examples = re.findall(r"```fusionmethod\s*\n(.*?)\n```", skill, re.DOTALL)
 
     assert examples
     for index, source in enumerate(examples, start=1):
-        compiled = compile_workflow(source, strict_executors=True)
-        assert set(compiled.executor_kinds.values()) == {"Agent"}, f"FusionFlow example {index}"
+        compiled = compile_method(source, strict_executors=True)
+        assert set(compiled.executor_kinds.values()) == {"Agent"}, f"FusionMethod example {index}"
 
 
 def test_preset_operators_have_five_disjoint_owner_groups() -> None:
     grammar = GRAMMAR.read_text(encoding="utf-8")
     builtin_rule = re.search(
-        r"^workflowBuiltinOperator\s*\n(?P<body>.*?^\s*;)",
+        r"^methodBuiltinOperator\s*\n(?P<body>.*?^\s*;)",
         grammar,
         re.MULTILINE | re.DOTALL,
     )
     assert builtin_rule is not None
     assert set(re.findall(r"\b([a-z][A-Za-z]+Operator)\b", builtin_rule.group("body"))) == {
-        "workflowOwnerOperator",
+        "methodOwnerOperator",
         "programOwnerOperator",
         "stepOwnerOperator",
         "dataResourceOperator",
@@ -210,12 +210,12 @@ def test_preset_operators_have_five_disjoint_owner_groups() -> None:
 
 def test_generated_directory_contains_runtime_sources_only() -> None:
     assert {path.name for path in GENERATED.iterdir() if path.is_file()} == {
-        "FusionFlowLexer.py",
-        "FusionFlowParser.py",
+        "FusionMethodLexer.py",
+        "FusionMethodParser.py",
         "__init__.py",
     }
 
 
 def test_generated_parser_imports() -> None:
-    importlib.import_module("fusion_flow.generated.FusionFlowLexer")
-    importlib.import_module("fusion_flow.generated.FusionFlowParser")
+    importlib.import_module("fusion_method.generated.FusionMethodLexer")
+    importlib.import_module("fusion_method.generated.FusionMethodParser")

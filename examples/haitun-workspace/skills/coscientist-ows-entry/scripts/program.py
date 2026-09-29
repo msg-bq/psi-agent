@@ -85,9 +85,9 @@ def prepare(inputs: dict[str, object], workspace: Path) -> dict[str, object]:
     ):
         path.mkdir(parents=True, exist_ok=True)
 
-    prepare_result = entry_dir / "PREPARE_WORKFLOW_STEP_RESULT.json"
+    prepare_result = entry_dir / "PREPARE_METHOD_STEP_RESULT.json"
     outputs: dict[str, object] = {
-        "workflow_run_context": {
+        "method_run_context": {
             "output_root": _relative(workspace, output_root),
             "scheduler": scheduler_result,
         },
@@ -97,7 +97,7 @@ def prepare(inputs: dict[str, object], workspace: Path) -> dict[str, object]:
         ),
         **{key: _relative(workspace, path) for key, path in paths.items()},
         "candidate_knowledge_base": inputs.get("candidate_knowledge_base_initial"),
-        "prepare_workflow_step_result": _relative(workspace, prepare_result),
+        "prepare_method_step_result": _relative(workspace, prepare_result),
     }
     prepare_result.write_text(
         json.dumps(outputs, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

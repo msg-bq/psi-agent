@@ -9,20 +9,20 @@ from dataclasses import replace
 from typing import Any
 
 import anyio
-import fusion_flow.job_store as job_store_module
+import fusion_method.job_store as job_store_module
 import pytest
-from fusion_flow.job_store import (
+from fusion_method.job_store import (
+    HumanMethodRun,
     HumanRequestSpec,
-    HumanWorkflowRun,
     InvalidRunStateError,
     JobStore,
     JobStoreError,
     RunAlreadyActiveError,
 )
 
-from psi_agent.workflow_execution import ExecutionCheckpoint
+from psi_agent.method_execution import ExecutionCheckpoint
 
-_WORKFLOW_ID = "review_workflow"
+_METHOD_ID = "review_method"
 _PLAN_DIGEST = "c" * 64
 
 
@@ -30,8 +30,8 @@ _PLAN_DIGEST = "c" * 64
 async def test_job_store_round_trips_waiting_human_state(tmp_path: Any) -> None:
     store = JobStore(tmp_path / "runs")
     run = await store.create(
-        flow_path="flows/review.workflow",
-        flow_source="const review: Workflow;",
+        mtd_path="mtds/review.method",
+        mtd_source="const review: Method;",
         inputs={"proposal": {"version": 2}},
         resource_capacities={"gpu": ("gpu-a", "gpu-b"), "browser": 1},
     )
@@ -39,7 +39,7 @@ async def test_job_store_round_trips_waiting_human_state(tmp_path: Any) -> None:
     assert re.fullmatch(r"[0-9a-f]{32}", run.run_id)
     assert run.status == "running"
     checkpoint = ExecutionCheckpoint(
-        workflow_id=_WORKFLOW_ID,
+        method_id=_METHOD_ID,
         plan_digest=_PLAN_DIGEST,
         values={"proposal": {"version": 2}, "draft": "ready"},
         completed_step_ids=("draft_step",),
@@ -73,7 +73,7 @@ async def test_job_store_round_trips_waiting_human_state(tmp_path: Any) -> None:
     assert payload["version"] == 2
     assert payload["prepared_request"]["request_id"] == request.request_id
     assert payload["checkpoint"] == {
-        "workflow_id": _WORKFLOW_ID,
+        "method_id": _METHOD_ID,
         "plan_digest": _PLAN_DIGEST,
         "values": {"draft": "ready", "proposal": {"version": 2}},
         "completed_step_ids": ["draft_step"],
@@ -82,30 +82,30 @@ async def test_job_store_round_trips_waiting_human_state(tmp_path: Any) -> None:
 
 
 @pytest.mark.anyio
-async def test_job_store_accepts_a_precomputed_workflow_definition_digest(tmp_path: Any) -> None:
+async def test_job_store_accepts_a_precomputed_method_definition_digest(tmp_path: Any) -> None:
     store = JobStore(tmp_path / "runs")
     definition_digest = "d" * 64
 
     run = await store.create(
-        flow_path="flows/review.workflow",
-        flow_source="workflow source",
+        mtd_path="mtds/review.method",
+        mtd_source="method source",
         definition_digest=definition_digest,
         inputs={},
     )
 
-    assert run.flow_source_digest == definition_digest
-    assert (await store.load(run.run_id)).flow_source_digest == definition_digest
+    assert run.mtd_source_digest == definition_digest
+    assert (await store.load(run.run_id)).mtd_source_digest == definition_digest
 
 
 @pytest.mark.anyio
 async def test_job_store_persists_response_and_completed_outputs(tmp_path: Any) -> None:
     store = JobStore(tmp_path)
     run = await store.create(
-        flow_path="review.workflow",
-        flow_source="workflow",
+        mtd_path="review.method",
+        mtd_source="method",
         inputs={"request": "review"},
         checkpoint=ExecutionCheckpoint(
-            workflow_id=_WORKFLOW_ID,
+            method_id=_METHOD_ID,
             plan_digest=_PLAN_DIGEST,
             values={"request": "review"},
         ),
@@ -148,8 +148,8 @@ async def test_acquire_rejects_duplicate_active_run_and_releases_after_error(
 ) -> None:
     store = JobStore(tmp_path)
     run = await store.create(
-        flow_path="flow.workflow",
-        flow_source="workflow",
+        mtd_path="mtd.method",
+        mtd_source="method",
         inputs={},
     )
 
@@ -177,8 +177,8 @@ async def test_process_guard_rejects_duplicate_when_os_backend_is_permissive(
     first_store = JobStore(root)
     second_store = JobStore(os.path.join(str(root), "."))
     run = await first_store.create(
-        flow_path="flow.workflow",
-        flow_source="workflow",
+        mtd_path="mtd.method",
+        mtd_source="method",
         inputs={},
     )
     backend_calls = 0
@@ -210,8 +210,8 @@ async def test_process_guard_rejects_duplicate_when_os_backend_is_permissive(
 async def test_acquire_releases_lock_when_holder_is_cancelled(tmp_path: Any) -> None:
     store = JobStore(tmp_path)
     run = await store.create(
-        flow_path="flow.workflow",
-        flow_source="workflow",
+        mtd_path="mtd.method",
+        mtd_source="method",
         inputs={},
     )
     acquired = anyio.Event()
@@ -236,8 +236,8 @@ async def test_advisory_lock_is_released_after_holder_process_crashes(
 ) -> None:
     store = JobStore(tmp_path / "runs")
     run = await store.create(
-        flow_path="flow.workflow",
-        flow_source="workflow",
+        mtd_path="mtd.method",
+        mtd_source="method",
         inputs={},
     )
     ready_path = anyio.Path(tmp_path / "child-holds-lock")
@@ -247,7 +247,7 @@ import sys
 
 import anyio
 
-from fusion_flow.job_store import JobStore
+from fusion_method.job_store import JobStore
 
 
 async def main() -> None:
@@ -296,8 +296,8 @@ anyio.run(main)
 async def test_acquire_ignores_pre_advisory_lock_directory(tmp_path: Any) -> None:
     store = JobStore(tmp_path)
     run = await store.create(
-        flow_path="flow.workflow",
-        flow_source="workflow",
+        mtd_path="mtd.method",
+        mtd_source="method",
         inputs={},
     )
     legacy_lock_dir = anyio.Path(tmp_path / "locks" / f"{run.run_id}.lock")
@@ -315,8 +315,8 @@ async def test_load_strictly_rejects_unknown_fields_and_filename_mismatch(
 ) -> None:
     store = JobStore(tmp_path)
     run = await store.create(
-        flow_path="flow.workflow",
-        flow_source="workflow",
+        mtd_path="mtd.method",
+        mtd_source="method",
         inputs={},
     )
     state_path = anyio.Path(tmp_path / f"{run.run_id}.json")
@@ -332,20 +332,20 @@ async def test_load_strictly_rejects_unknown_fields_and_filename_mismatch(
 async def test_load_rejects_legacy_unbound_checkpoint_schema(tmp_path: Any) -> None:
     store = JobStore(tmp_path)
     checkpoint = ExecutionCheckpoint(
-        workflow_id=_WORKFLOW_ID,
+        method_id=_METHOD_ID,
         plan_digest=_PLAN_DIGEST,
         values={},
     )
     run = await store.create(
-        flow_path="flow.workflow",
-        flow_source="workflow",
+        mtd_path="mtd.method",
+        mtd_source="method",
         inputs={},
         checkpoint=checkpoint,
     )
     state_path = anyio.Path(tmp_path / f"{run.run_id}.json")
     payload = json.loads(await state_path.read_text(encoding="utf-8"))
     payload["version"] = 1
-    del payload["checkpoint"]["workflow_id"]
+    del payload["checkpoint"]["method_id"]
     del payload["checkpoint"]["plan_digest"]
     await state_path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -361,8 +361,8 @@ async def test_load_rejects_non_integer_state_version(
 ) -> None:
     store = JobStore(tmp_path)
     run = await store.create(
-        flow_path="flow.workflow",
-        flow_source="workflow",
+        mtd_path="mtd.method",
+        mtd_source="method",
         inputs={},
     )
     state_path = anyio.Path(tmp_path / f"{run.run_id}.json")
@@ -384,11 +384,11 @@ async def test_load_rejects_path_traversal_identifier(tmp_path: Any) -> None:
 
 def test_run_state_rejects_non_json_values_and_invalid_clarify_spec() -> None:
     with pytest.raises(ValueError, match="non-finite"):
-        HumanWorkflowRun(
+        HumanMethodRun(
             run_id="a" * 32,
             status="running",
-            flow_path="flow.workflow",
-            flow_source_digest="b" * 64,
+            mtd_path="mtd.method",
+            mtd_source_digest="b" * 64,
             inputs={"bad": float("nan")},
             resource_capacities={},
         )

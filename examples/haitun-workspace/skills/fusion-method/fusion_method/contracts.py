@@ -1,11 +1,11 @@
-"""Result contracts shared by the FusionFlow parsing and checking phases."""
+"""Result contracts shared by the FusionMethod parsing and checking phases."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
 
-from .core_ir import WorkflowFile
+from .core_ir import MethodFile
 
 type DiagnosticSeverity = Literal["error", "warning"]
 
@@ -44,7 +44,7 @@ class Diagnostic:
 class ParseResult:
     """Parser-only result; ``core_ir`` exists exactly when parsing has no errors."""
 
-    core_ir: WorkflowFile | None
+    core_ir: MethodFile | None
     diagnostics: tuple[Diagnostic, ...]
 
 
@@ -52,5 +52,5 @@ class ParseResult:
 class CheckResult:
     """Checker-only result created from Core IR produced by a successful parse."""
 
-    core_ir: WorkflowFile
+    core_ir: MethodFile
     diagnostics: tuple[Diagnostic, ...]

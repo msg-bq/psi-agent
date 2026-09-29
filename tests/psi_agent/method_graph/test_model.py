@@ -7,17 +7,17 @@ from typing import Literal, cast
 
 import pytest
 
-from psi_agent.workflow_graph import model as graph_model
-from psi_agent.workflow_graph.model import (
+from psi_agent.method_graph import model as graph_model
+from psi_agent.method_graph.model import (
     ArtifactNode,
     ConsumesEdge,
     ForeachEdge,
     ProducesEdge,
     ResourceRequirement,
     StepNode,
-    WorkflowGraph,
-    WorkflowGraphError,
-    WorkflowPolicy,
+    MethodGraph,
+    MethodGraphError,
+    MethodPolicy,
 )
 
 
@@ -56,14 +56,14 @@ def test_cycle_is_valid_and_serialization_is_deterministic() -> None:
         ProducesEdge("s2", "a"),
     )
 
-    left = WorkflowGraph(
-        "flow",
+    left = MethodGraph(
+        "mtd",
         (s2, s1),
         (b, a),
         tuple(reversed(edges)),
     )
-    right = WorkflowGraph(
-        "flow",
+    right = MethodGraph(
+        "mtd",
         (s1, s2),
         (a, b),
         edges,
@@ -88,7 +88,7 @@ def test_cycle_is_valid_and_serialization_is_deterministic() -> None:
 
 
 def test_default_catalog_fields_preserve_the_exact_legacy_payload() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "legacy",
         (
             StepNode(
@@ -109,11 +109,11 @@ def test_default_catalog_fields_preserve_the_exact_legacy_payload() -> None:
             ConsumesEdge("input", "step"),
             ProducesEdge("step", "output"),
         ),
-        policy=WorkflowPolicy(max_concurrency=1, timeout_seconds=60),
+        policy=MethodPolicy(max_concurrency=1, timeout_seconds=60),
     )
 
     assert graph.to_dict() == {
-        "workflow_id": "legacy",
+        "method_id": "legacy",
         "steps": [
             {
                 "step_id": "step",
@@ -160,7 +160,7 @@ def test_default_catalog_fields_preserve_the_exact_legacy_payload() -> None:
 
 
 def test_input_artifact_may_also_have_a_producer() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "feedback",
         (StepNode("step", "step-name", "agent"),),
         (ArtifactNode("state", is_input=True, is_output=True),),
@@ -180,9 +180,9 @@ def test_input_artifact_may_also_have_a_producer() -> None:
     ]
 
 
-def test_validation_uses_public_workflow_graph_error() -> None:
-    with pytest.raises(WorkflowGraphError, match="workflow_id"):
-        WorkflowGraph("", (), ())
+def test_validation_uses_public_method_graph_error() -> None:
+    with pytest.raises(MethodGraphError, match="method_id"):
+        MethodGraph("", (), ())
 
 
 @pytest.mark.parametrize(
@@ -191,7 +191,7 @@ def test_validation_uses_public_workflow_graph_error() -> None:
         (StepNode("step", "name", "agent"), "step_id", "other"),
         (ArtifactNode("input", is_input=True), "is_input", False),
         (ConsumesEdge("input", "step"), "kind", "other"),
-        (WorkflowGraph("flow", (), ()), "workflow_id", "other"),
+        (MethodGraph("mtd", (), ()), "method_id", "other"),
     ],
 )
 def test_graph_components_are_frozen(
@@ -207,24 +207,24 @@ def test_graph_components_are_frozen(
     ("factory", "message"),
     [
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 cast(tuple[StepNode, ...], [StepNode("step", "name", "agent")]),
                 (),
             ),
             "steps must be a tuple",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (),
                 cast(tuple[ArtifactNode, ...], [ArtifactNode("artifact")]),
             ),
             "artifacts must be a tuple",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (),
                 (),
                 cast(tuple[ConsumesEdge, ...], []),
@@ -258,7 +258,7 @@ def test_mutable_collections_are_rejected(
     factory: Callable[[], object],
     message: str,
 ) -> None:
-    with pytest.raises(WorkflowGraphError, match=message):
+    with pytest.raises(MethodGraphError, match=message):
         factory()
 
 
@@ -266,29 +266,29 @@ def test_mutable_collections_are_rejected(
     ("factory", "message"),
     [
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 cast(tuple[StepNode, ...], ("not-step",)),
                 (),
             ),
             "steps must contain only StepNode",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (),
                 cast(tuple[ArtifactNode, ...], ("not-artifact",)),
             ),
             "artifacts must contain only ArtifactNode",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (),
                 (),
                 cast(tuple[ConsumesEdge, ...], ("not-edge",)),
             ),
-            "edges must contain only workflow edges",
+            "edges must contain only method edges",
         ),
         (
             lambda: StepNode(
@@ -303,13 +303,13 @@ def test_mutable_collections_are_rejected(
             "resources must contain only ResourceRequirement",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (),
                 (),
-                policy=cast(WorkflowPolicy, "not-policy"),
+                policy=cast(MethodPolicy, "not-policy"),
             ),
-            "policy must be a WorkflowPolicy",
+            "policy must be a MethodPolicy",
         ),
     ],
 )
@@ -317,7 +317,7 @@ def test_wrong_component_types_use_public_graph_error(
     factory: Callable[[], object],
     message: str,
 ) -> None:
-    with pytest.raises(WorkflowGraphError, match=message):
+    with pytest.raises(MethodGraphError, match=message):
         factory()
 
 
@@ -335,11 +335,11 @@ def test_edge_subclasses_are_rejected(
     edges: tuple[ConsumesEdge, ...],
 ) -> None:
     with pytest.raises(
-        WorkflowGraphError,
-        match="edges must contain only workflow edges",
+        MethodGraphError,
+        match="edges must contain only method edges",
     ):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (StepNode("step", "name", "agent"),),
             (ArtifactNode("input", is_input=True),),
             edges,
@@ -350,44 +350,44 @@ def test_edge_subclasses_are_rejected(
     ("factory", "message"),
     [
         (
-            lambda: WorkflowGraph(
+            lambda: MethodGraph(
                 "",
                 (StepNode("step", "name", "agent"),),
                 (),
             ),
-            "workflow_id",
+            "method_id",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (StepNode("", "name", "agent"),),
                 (),
             ),
             "step_id",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (StepNode("step", "", "agent"),),
                 (),
             ),
             "name_id",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (StepNode("step", "name", ""),),
                 (),
             ),
             "executor_id",
         ),
         (
-            lambda: WorkflowGraph("flow", (), (ArtifactNode(""),)),
+            lambda: MethodGraph("mtd", (), (ArtifactNode(""),)),
             "artifact_id",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (
                     StepNode(
                         "step",
@@ -401,8 +401,8 @@ def test_edge_subclasses_are_rejected(
             "instruction_id",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (
                     StepNode(
                         "step",
@@ -427,7 +427,7 @@ def test_edge_subclasses_are_rejected(
     ],
 )
 def test_empty_identities_are_rejected(
-    factory: Callable[[], WorkflowGraph],
+    factory: Callable[[], MethodGraph],
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
@@ -438,8 +438,8 @@ def test_empty_identities_are_rejected(
     ("factory", "message"),
     [
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (
                     StepNode("duplicate", "first", "agent"),
                     StepNode("duplicate", "second", "agent"),
@@ -449,24 +449,24 @@ def test_empty_identities_are_rejected(
             "duplicate step",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (),
                 (ArtifactNode("duplicate"), ArtifactNode("duplicate")),
             ),
             "duplicate artifact",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (StepNode("shared", "name", "agent"),),
                 (ArtifactNode("shared"),),
             ),
             "both",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (
                     StepNode(
                         "step",
@@ -492,8 +492,8 @@ def test_empty_identities_are_rejected(
             "duplicate depends_on",
         ),
         (
-            lambda: WorkflowGraph(
-                "flow",
+            lambda: MethodGraph(
+                "mtd",
                 (StepNode("step", "name", "agent"),),
                 (ArtifactNode("input", is_input=True),),
                 (
@@ -506,7 +506,7 @@ def test_empty_identities_are_rejected(
     ],
 )
 def test_duplicate_identities_and_relationships_are_rejected(
-    factory: Callable[[], WorkflowGraph],
+    factory: Callable[[], MethodGraph],
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
@@ -530,8 +530,8 @@ def test_missing_edge_endpoints_are_rejected(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (StepNode("step", "name", "agent"),),
             (
                 ArtifactNode("input", is_input=True),
@@ -558,8 +558,8 @@ def test_consumed_or_output_global_artifact_requires_input_or_producer(
         edges = (ConsumesEdge(artifact.artifact_id, "step"),)
 
     with pytest.raises(ValueError, match="input or producer"):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (StepNode("step", "name", "agent"),),
             (artifact,),
             edges,
@@ -568,8 +568,8 @@ def test_consumed_or_output_global_artifact_requires_input_or_producer(
 
 def test_foreach_source_requires_input_or_producer() -> None:
     with pytest.raises(ValueError, match="input or producer"):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (StepNode("step", "name", "agent"),),
             (
                 ArtifactNode("source"),
@@ -581,8 +581,8 @@ def test_foreach_source_requires_input_or_producer() -> None:
 
 def test_artifact_has_at_most_one_producer() -> None:
     with pytest.raises(ValueError, match="multiple producers"):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (
                 StepNode("left", "left-name", "agent"),
                 StepNode("right", "right-name", "agent"),
@@ -597,8 +597,8 @@ def test_artifact_has_at_most_one_producer() -> None:
 
 def test_step_has_at_most_one_foreach_source() -> None:
     with pytest.raises(ValueError, match="multiple foreach"):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (StepNode("step", "name", "agent"),),
             (
                 ArtifactNode("left", is_input=True),
@@ -631,12 +631,12 @@ def test_step_has_at_most_one_foreach_source() -> None:
         (
             (ArtifactNode("item", is_input=True, binding_step_id="owner"),),
             (),
-            "workflow input or output",
+            "method input or output",
         ),
         (
             (ArtifactNode("item", is_output=True, binding_step_id="owner"),),
             (),
-            "workflow input or output",
+            "method input or output",
         ),
         (
             (ArtifactNode("item", binding_step_id="owner"),),
@@ -664,8 +664,8 @@ def test_local_binding_cannot_leak(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (
                 StepNode("owner", "owner-name", "agent"),
                 StepNode("other", "other-name", "agent"),
@@ -676,8 +676,8 @@ def test_local_binding_cannot_leak(
 
 
 def test_owner_step_may_consume_its_local_binding() -> None:
-    graph = WorkflowGraph(
-        "flow",
+    graph = MethodGraph(
+        "mtd",
         (StepNode("step", "name", "agent"),),
         (
             ArtifactNode("source", is_input=True),
@@ -694,11 +694,11 @@ def test_owner_step_may_consume_its_local_binding() -> None:
 
 def test_local_binding_requires_exactly_one_foreach_edge() -> None:
     with pytest.raises(
-        WorkflowGraphError,
+        MethodGraphError,
         match="exactly one foreach edge",
     ):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (StepNode("step", "name", "agent"),),
             (ArtifactNode("item", binding_step_id="step"),),
         )
@@ -706,11 +706,11 @@ def test_local_binding_requires_exactly_one_foreach_edge() -> None:
 
 def test_local_binding_cannot_be_referenced_by_multiple_foreach_edges() -> None:
     with pytest.raises(
-        WorkflowGraphError,
+        MethodGraphError,
         match="multiple foreach edges",
     ):
-        WorkflowGraph(
-            "flow",
+        MethodGraph(
+            "mtd",
             (StepNode("step", "name", "agent"),),
             (
                 ArtifactNode("left", is_input=True),
@@ -747,7 +747,7 @@ def test_local_binding_cannot_be_referenced_by_multiple_foreach_edges() -> None:
 )
 def test_step_limits_must_be_positive_integers(step: StepNode) -> None:
     with pytest.raises(ValueError, match="positive integer"):
-        WorkflowGraph("flow", (step,), ())
+        MethodGraph("mtd", (step,), ())
 
 
 @pytest.mark.parametrize("value", [1, "true", None])
@@ -757,12 +757,12 @@ def test_independent_requires_an_actual_boolean(
     step = StepNode("step", "name", "agent")
     object.__setattr__(step, "independent", value)
 
-    with pytest.raises(WorkflowGraphError, match="independent must be a boolean"):
-        WorkflowGraph("flow", (step,), ())
+    with pytest.raises(MethodGraphError, match="independent must be a boolean"):
+        MethodGraph("mtd", (step,), ())
 
 
 def test_explicit_step_dependencies_validate_and_round_trip_through_json() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "ordered",
         (
             StepNode("third", "third-name", "agent", depends_on=("second", "first")),
@@ -810,8 +810,8 @@ def test_explicit_step_dependencies_validate_and_round_trip_through_json() -> No
 def test_explicit_step_dependency_references_must_exist() -> None:
     step = StepNode("step", "name", "agent", depends_on=("missing",))
 
-    with pytest.raises(WorkflowGraphError, match="unknown depends_on step"):
-        WorkflowGraph("flow", (step,), ())
+    with pytest.raises(MethodGraphError, match="unknown depends_on step"):
+        MethodGraph("mtd", (step,), ())
 
 
 @pytest.mark.parametrize(
@@ -837,8 +837,8 @@ def test_required_positive_integers_reject_none(
             resources=(component,),
         )
 
-    with pytest.raises(WorkflowGraphError, match=field_name):
-        WorkflowGraph("flow", (step,), ())
+    with pytest.raises(MethodGraphError, match=field_name):
+        MethodGraph("mtd", (step,), ())
 
 
 @pytest.mark.parametrize("field_name", ["is_input", "is_output"])
@@ -850,24 +850,24 @@ def test_artifact_flags_require_actual_booleans(
     artifact = ArtifactNode("artifact")
     object.__setattr__(artifact, field_name, value)
 
-    with pytest.raises(WorkflowGraphError, match=f"{field_name} must be a boolean"):
-        WorkflowGraph("flow", (), (artifact,))
+    with pytest.raises(MethodGraphError, match=f"{field_name} must be a boolean"):
+        MethodGraph("mtd", (), (artifact,))
 
 
 @pytest.mark.parametrize(
     "policy",
     [
-        WorkflowPolicy(max_concurrency=0),
-        WorkflowPolicy(max_concurrency=True),
-        WorkflowPolicy(timeout_seconds=0),
-        WorkflowPolicy(timeout_seconds=True),
+        MethodPolicy(max_concurrency=0),
+        MethodPolicy(max_concurrency=True),
+        MethodPolicy(timeout_seconds=0),
+        MethodPolicy(timeout_seconds=True),
     ],
 )
-def test_workflow_limits_must_be_positive_integers(
-    policy: WorkflowPolicy,
+def test_method_limits_must_be_positive_integers(
+    policy: MethodPolicy,
 ) -> None:
     with pytest.raises(ValueError, match="positive integer"):
-        WorkflowGraph("flow", (), (), policy=policy)
+        MethodGraph("mtd", (), (), policy=policy)
 
 
 def test_select_node_serialization_is_deterministic() -> None:
@@ -897,8 +897,8 @@ def test_select_node_serialization_is_deterministic() -> None:
         "fallback",
         condition,
     )
-    graph = WorkflowGraph(
-        "flow",
+    graph = MethodGraph(
+        "mtd",
         (),
         (
             ArtifactNode("score", is_input=True),
@@ -980,8 +980,8 @@ def test_select_comparison_operators_are_serializable(operator: str) -> None:
         "fallback",
         condition,
     )
-    graph = WorkflowGraph(
-        "flow",
+    graph = MethodGraph(
+        "mtd",
         (),
         (
             ArtifactNode("selected", is_output=True),
@@ -1023,7 +1023,7 @@ def test_select_input_artifact_ids_are_sorted_and_deduplicated() -> None:
     )
 
 
-def test_select_output_backs_workflow_output_and_consumer() -> None:
+def test_select_output_backs_method_output_and_consumer() -> None:
     selector = graph_model.SelectNode(
         "selected",
         "primary",
@@ -1034,8 +1034,8 @@ def test_select_output_backs_workflow_output_and_consumer() -> None:
             graph_model.LiteralOperand(True),
         ),
     )
-    graph = WorkflowGraph(
-        "flow",
+    graph = MethodGraph(
+        "mtd",
         (StepNode("consumer", "consumer-name", "agent"),),
         (
             ArtifactNode("enabled", is_input=True),
@@ -1098,9 +1098,9 @@ def test_missing_select_artifacts_are_rejected(
     selector: Callable[[], object],
     message: str,
 ) -> None:
-    with pytest.raises(WorkflowGraphError, match=message):
-        WorkflowGraph(
-            "flow",
+    with pytest.raises(MethodGraphError, match=message):
+        MethodGraph(
+            "mtd",
             (),
             (
                 ArtifactNode("enabled", is_input=True),
@@ -1128,9 +1128,9 @@ def test_local_artifacts_cannot_be_referenced_by_select(role: str) -> None:
         ),
     )
 
-    with pytest.raises(WorkflowGraphError, match="select artifact must be global"):
-        WorkflowGraph(
-            "flow",
+    with pytest.raises(MethodGraphError, match="select artifact must be global"):
+        MethodGraph(
+            "mtd",
             (StepNode("owner", "owner-name", "agent"),),
             (
                 ArtifactNode("source", is_input=True),
@@ -1167,9 +1167,9 @@ def test_select_output_cannot_have_multiple_producers(
         edges = (ProducesEdge("producer", "selected"),)
         selectors = (selector,)
 
-    with pytest.raises(WorkflowGraphError, match="multiple producers"):
-        WorkflowGraph(
-            "flow",
+    with pytest.raises(MethodGraphError, match="multiple producers"):
+        MethodGraph(
+            "mtd",
             steps,
             (
                 ArtifactNode("enabled", is_input=True),
@@ -1193,9 +1193,9 @@ def test_invalid_select_containers_are_rejected(
     selectors: object,
     message: str,
 ) -> None:
-    with pytest.raises(WorkflowGraphError, match=message):
-        WorkflowGraph(
-            "flow",
+    with pytest.raises(MethodGraphError, match=message):
+        MethodGraph(
+            "mtd",
             (),
             (),
             selectors=cast(tuple[graph_model.SelectNode, ...], selectors),
@@ -1217,9 +1217,9 @@ def test_graph_rejects_mutated_select_condition_container() -> None:
     )
     object.__setattr__(condition, "conditions", [comparison])
 
-    with pytest.raises(WorkflowGraphError, match="conditions must be a tuple"):
-        WorkflowGraph(
-            "flow",
+    with pytest.raises(MethodGraphError, match="conditions must be a tuple"):
+        MethodGraph(
+            "mtd",
             (),
             (
                 ArtifactNode("enabled", is_input=True),
@@ -1245,9 +1245,9 @@ def test_graph_rejects_mutated_select_literal() -> None:
     )
     object.__setattr__(literal, "value", [])
 
-    with pytest.raises(WorkflowGraphError, match="literal value"):
-        WorkflowGraph(
-            "flow",
+    with pytest.raises(MethodGraphError, match="literal value"):
+        MethodGraph(
+            "mtd",
             (),
             (
                 ArtifactNode("enabled", is_input=True),
@@ -1264,7 +1264,7 @@ def test_graph_rejects_mutated_select_literal() -> None:
     [float("nan"), float("inf"), float("-inf")],
 )
 def test_select_literals_must_be_finite(value: float) -> None:
-    with pytest.raises(WorkflowGraphError, match="finite"):
+    with pytest.raises(MethodGraphError, match="finite"):
         graph_model.LiteralOperand(value)
 
 
@@ -1297,9 +1297,9 @@ def test_graph_rejects_mutated_select_artifact_ids(
         [],
     )
 
-    with pytest.raises(WorkflowGraphError, match="non-empty string"):
-        WorkflowGraph(
-            "flow",
+    with pytest.raises(MethodGraphError, match="non-empty string"):
+        MethodGraph(
+            "mtd",
             (),
             (
                 ArtifactNode("enabled", is_input=True),

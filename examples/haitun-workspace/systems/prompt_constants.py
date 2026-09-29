@@ -136,7 +136,7 @@ COMPUTER_USE_GUIDANCE = (
     "BACKGROUND - your actions do not steal the user's cursor, keyboard "
     "focus, or Space. You and the user can share the same Mac at the same "
     "time.\n\n"
-    "## Preferred workflow\n"
+    "## Preferred method\n"
     "1. Call `computer_use` with `action='capture'` and `mode='som'` "
     "(default). You get a screenshot with numbered overlays on every "
     "interactable element plus an AX-tree index listing role, label, and "

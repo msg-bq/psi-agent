@@ -1,4 +1,4 @@
-# FusionFlow Executor Declarations
+# FusionMethod Executor Declarations
 
 ## Goal
 

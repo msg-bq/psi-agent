@@ -32,9 +32,9 @@ Say that this is `haitun-workspace`, a self-contained psi-agent workspace.
 
 Explain the main directories and files:
 
-- `tools/`: callable tools, including shell, file read/write/edit, memory, flow management, and spreadsheet helpers.
+- `tools/`: callable tools, including shell, file read/write/edit, memory, mtd management, and spreadsheet helpers.
 - `skills/`: reusable task instructions. When a task matches a skill, read that skill's `SKILL.md` and follow it.
-- `flows/`: Fusion Flow workflow assets and reusable workflow drafts.
+- `mtds/`: FusionMethod assets and reusable method drafts.
 - `schedules/`: scheduled tasks, such as heartbeat.
 - `systems/`: system prompt builder, prompt sections, and future extension hooks.
 - `AGENTS.md`: workspace overview and operating notes.
@@ -48,13 +48,13 @@ Summarize the important tool groups:
 - File tools: `read`, `write`, `edit`
 - Shell tools: `bash`, `powershell`
 - Skill tools: `skill_manage`
-- Flow tools: `flow_manage`
+- Mtd tools: `mtd_manage`
 - Memory tools: `memory_add`, `memory_search`, `memory_answer_context` (durable semantic memory requires an operator-provisioned remote Fusion Memory MCP Streamable HTTP service)
 - Spreadsheet tool: `write_excel`
 - Search tools, if configured in this runtime
 
 Explain that skills cover areas such as psi-agent usage, code review, Python, static analysis,
-systems work, data/text processing, Fusion Flow, memory setup, and other domain tasks.
+systems work, data/text processing, Fusion Method, memory setup, and other domain tasks.
 
 ### 4. Memory Status
 
@@ -81,7 +81,7 @@ Offer concrete things the user can say, for example:
 - `介绍这个工作区`
 - `列出可用工具和技能`
 - `帮我创建一个新技能`
-- `帮我写一个 Fusion Flow`
+- `帮我写一个 Fusion Method`
 - `帮我检查某段代码`
 - `帮我读一个文件并总结`
 - `帮我配置长期记忆`

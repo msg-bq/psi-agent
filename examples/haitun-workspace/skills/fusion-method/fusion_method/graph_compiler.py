@@ -1,4 +1,4 @@
-"""Lower checked FusionFlow Core IR into the psi-agent workflow graph model.
+"""Lower checked FusionMethod Core IR into the psi-agent method graph model.
 
 The shared :class:`CoreIRCompiler` owns traversal.  This module only implements
 the target-specific hooks: it classifies graph assertions, collects their
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from psi_agent.workflow_graph.model import (
+from psi_agent.method_graph.model import (
     ArtifactNode,
     ArtifactOperand,
     ComparisonCondition,
@@ -18,30 +18,30 @@ from psi_agent.workflow_graph.model import (
     ForeachEdge,
     LiteralOperand,
     LogicalCondition,
+    MethodEdge,
+    MethodGraph,
+    MethodGraphError,
+    MethodPolicy,
     ProducesEdge,
     ResourceRequirement,
     SelectCondition,
     SelectNode,
     StepNode,
-    WorkflowEdge,
-    WorkflowGraph,
-    WorkflowGraphError,
-    WorkflowPolicy,
 )
 
 from .compiler import CoreIRCompiler, _CompiledDeclarations
-from .core_ir import Assertion, CompoundTerm, ConnectiveFormula, Constant, IfTerm, ListTerm, Workflow
+from .core_ir import Assertion, CompoundTerm, ConnectiveFormula, Constant, IfTerm, ListTerm, Method
 
 
-class WorkflowGraphCompilationError(ValueError):
-    """A checked Core IR workflow cannot be represented by the graph target."""
+class MethodGraphCompilationError(ValueError):
+    """A checked Core IR method cannot be represented by the graph target."""
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowGraphCompilation:
+class MethodGraphCompilation:
     """One graph plus the assertions deliberately left for another backend."""
 
-    graph: WorkflowGraph
+    graph: MethodGraph
     residual_assertions: tuple[Assertion, ...]
 
 
@@ -49,9 +49,9 @@ class WorkflowGraphCompilation:
 class _CompiledCall:
     """Transient result of the ``CompoundTerm`` compiler hook.
 
-    ``_build_workflow`` consumes this operator name and its recursively
+    ``_build_method`` consumes this operator name and its recursively
     compiled arguments to dispatch graph lowering.  This is not a public graph
-    node and never appears in ``WorkflowGraph`` or its serialized payload.
+    node and never appears in ``MethodGraph`` or its serialized payload.
     """
 
     operator_name: str
@@ -65,7 +65,7 @@ class _CompiledList:
     The wrapper preserves the Core IR list boundary while its items are being
     compiled; a bare tuple would be indistinguishable from a call's argument
     tuple.  It is consumed during lowering and is not a graph Artifact or any
-    other public ``WorkflowGraph`` value.
+    other public ``MethodGraph`` value.
     """
 
     items: tuple[object, ...]
@@ -73,11 +73,11 @@ class _CompiledList:
 
 @dataclass(frozen=True, slots=True)
 class _GraphFact:
-    """One graph-vocabulary equality normalized for workflow assembly.
+    """One graph-vocabulary equality normalized for method assembly.
 
     The Core IR equality may put its graph call on either side.  This private
     work item records the functional shape ``operator(arguments...) = value``
-    consumed by ``_build_workflow``; it is not part of ``WorkflowGraph``.
+    consumed by ``_build_method``; it is not part of ``MethodGraph``.
     """
 
     operator_name: str
@@ -89,7 +89,7 @@ class _GraphFact:
 class _StepDraft:
     """Mutable StepNode payload until required fields are fully known.
 
-    ``WorkflowGraph`` values are frozen and validated eagerly, so step facts
+    ``MethodGraph`` values are frozen and validated eagerly, so step facts
     accumulate here until every order-independent assertion has been seen.
     Complete sub-values such as ``ResourceRequirement`` are stored directly.
     """
@@ -106,12 +106,12 @@ class _StepDraft:
     depends_on: set[str] = field(default_factory=set)
 
 
-class WorkflowGraphCompiler(CoreIRCompiler):
+class MethodGraphCompiler(CoreIRCompiler):
     """Compile graph operators while preserving unrelated assertions.
 
     Graph operators fall into four groups:
 
-    * workflow boundaries: ``input_workflow`` and ``output_workflow``;
+    * method boundaries: ``input_method`` and ``output_method``;
     * step metadata: ``step_name``, ``step_instruction``, and ``step_executor``;
     * dataflow: ``consumes``, ``produces``, and ``foreach_item``;
     * policies: timeouts, retries, resources, and concurrency.
@@ -122,9 +122,9 @@ class WorkflowGraphCompiler(CoreIRCompiler):
 
     SUPPORTED_OPERATORS = frozenset(
         {
-            # Workflow boundary operators.
-            "input_workflow",
-            "output_workflow",
+            # Method boundary operators.
+            "input_method",
+            "output_method",
             # Required and optional step metadata.
             "step_name",
             "step_instruction",
@@ -133,12 +133,12 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             "consumes",
             "produces",
             "foreach_item",
-            # Step and workflow policies.
+            # Step and method policies.
             "step_timeout",
             "max_attempts",
             "resource_requirement",
             "max_concurrency",
-            "workflow_timeout",
+            "method_timeout",
             # Catalog-backed scheduling metadata.
             "independent",
             "depends_on",
@@ -155,7 +155,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
     def _compile_compound_term(self, term: CompoundTerm) -> object:
         """Compile an operator application without interpreting the operator yet.
 
-        Interpretation belongs to ``_build_workflow``, where the workflow name
+        Interpretation belongs to ``_build_method``, where the method name
         and the other assertions are available for cross-assertion validation.
         """
 
@@ -179,7 +179,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         try:
             return super()._compile_if_term(term)
         except ValueError as error:
-            raise WorkflowGraphCompilationError(str(error)) from error
+            raise MethodGraphCompilationError(str(error)) from error
 
     def _compile_assertion(self, assertion: Assertion) -> object:
         """Compile one equality into a graph fact or untouched residual IR.
@@ -220,9 +220,9 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             return assertion
 
         if len(graph_fact_candidates) > 1:
-            raise WorkflowGraphCompilationError("one equality cannot declare multiple graph facts")
+            raise MethodGraphCompilationError("one equality cannot declare multiple graph facts")
 
-        # FIXME(#20): Before built-in operators grow or the workflow scheduler
+        # FIXME(#20): Before built-in operators grow or the method scheduler
         # is added, give each assertion an operator-specific compile attr/handler
         # and carry its full Assertion/Formula context through graph lowering and
         # scheduling.  The compiler and scheduler must consume the same operator
@@ -249,9 +249,9 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             value=self._compile_term(value_term),
         )
 
-    def _build_workflow(
+    def _build_method(
         self,
-        workflow: Workflow,
+        method: Method,
         *,
         assertions: tuple[object, ...],
     ) -> object:
@@ -265,11 +265,11 @@ class WorkflowGraphCompiler(CoreIRCompiler):
 
         step_drafts: dict[str, _StepDraft] = {}
         artifacts: dict[str, ArtifactNode] = {}
-        edges: set[WorkflowEdge] = set()
+        edges: set[MethodEdge] = set()
         selectors: list[SelectNode] = []
 
-        # Workflow-wide policies are optional but singular.
-        policy = WorkflowPolicy()
+        # Method-wide policies are optional but singular.
+        policy = MethodPolicy()
 
         # Assertions outside the graph vocabulary remain available to callers.
         residual: list[Assertion] = []
@@ -293,7 +293,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             # Every other value must be one normalized graph fact produced by
             # _compile_assertion; anything else breaks the compiler hook contract.
             if not isinstance(compiled, _GraphFact):
-                raise TypeError("workflow graph compiler received an invalid graph fact")
+                raise TypeError("method graph compiler received an invalid graph fact")
 
             operator_name = compiled.operator_name
             arguments = compiled.arguments
@@ -303,28 +303,28 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             # a shared IR contract, so lowering must not infer behavior from a
             # prefix, suffix, or grouped fallback.
             match operator_name:
-                case "input_workflow":
-                    # input_workflow(workflow) == [artifact, ...]
+                case "input_method":
+                    # input_method(method) == [artifact, ...]
                     self._require_arity(arguments, 1, operator_name)
                     artifact_ids = self._list_symbols(fact_value, operator_name)
-                    owner_id = self._symbol(arguments[0], "input_workflow owner")
-                    self._require_owner(owner_id, workflow.name, operator_name)
+                    owner_id = self._symbol(arguments[0], "input_method owner")
+                    self._require_owner(owner_id, method.name, operator_name)
                     for artifact_id in artifact_ids:
                         artifact = artifacts.setdefault(artifact_id, ArtifactNode(artifact_id=artifact_id))
                         if artifact.is_input:
-                            raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {artifact_id!r}")
+                            raise MethodGraphCompilationError(f"duplicate {operator_name}: {artifact_id!r}")
                         artifacts[artifact_id] = replace(artifact, is_input=True)
 
-                case "output_workflow":
-                    # output_workflow(workflow) == [artifact, ...]
+                case "output_method":
+                    # output_method(method) == [artifact, ...]
                     self._require_arity(arguments, 1, operator_name)
                     artifact_ids = self._list_symbols(fact_value, operator_name)
-                    owner_id = self._symbol(arguments[0], "output_workflow owner")
-                    self._require_owner(owner_id, workflow.name, operator_name)
+                    owner_id = self._symbol(arguments[0], "output_method owner")
+                    self._require_owner(owner_id, method.name, operator_name)
                     for artifact_id in artifact_ids:
                         artifact = artifacts.setdefault(artifact_id, ArtifactNode(artifact_id=artifact_id))
                         if artifact.is_output:
-                            raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {artifact_id!r}")
+                            raise MethodGraphCompilationError(f"duplicate {operator_name}: {artifact_id!r}")
                         artifacts[artifact_id] = replace(artifact, is_output=True)
 
                 case "consumes":
@@ -356,24 +356,24 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                         )
 
                 case "max_concurrency":
-                    # max_concurrency(workflow) = count
+                    # max_concurrency(method) = count
                     self._require_arity(arguments, 1, operator_name)
                     owner_id = self._symbol(arguments[0], "max_concurrency owner")
-                    self._require_owner(owner_id, workflow.name, operator_name)
+                    self._require_owner(owner_id, method.name, operator_name)
                     value = self._positive_integer(fact_value, operator_name)
                     # None distinguishes "not supplied" from a duplicate value.
                     if policy.max_concurrency is not None:
-                        raise WorkflowGraphCompilationError("duplicate max_concurrency")
+                        raise MethodGraphCompilationError("duplicate max_concurrency")
                     policy = replace(policy, max_concurrency=value)
 
-                case "workflow_timeout":
-                    # workflow_timeout(workflow) = seconds
+                case "method_timeout":
+                    # method_timeout(method) = seconds
                     self._require_arity(arguments, 1, operator_name)
-                    owner_id = self._symbol(arguments[0], "workflow_timeout owner")
-                    self._require_owner(owner_id, workflow.name, operator_name)
+                    owner_id = self._symbol(arguments[0], "method_timeout owner")
+                    self._require_owner(owner_id, method.name, operator_name)
                     value = self._positive_integer(fact_value, operator_name)
                     if policy.timeout_seconds is not None:
-                        raise WorkflowGraphCompilationError("duplicate workflow_timeout")
+                        raise MethodGraphCompilationError("duplicate method_timeout")
                     policy = replace(policy, timeout_seconds=value)
 
                 case "step_name":
@@ -383,7 +383,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     step_draft = step_drafts.setdefault(step_id, _StepDraft())
                     name_id = self._symbol(fact_value, "step_name value")
                     if step_draft.name_id is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                        raise MethodGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
                     step_draft.name_id = name_id
 
                 case "step_instruction":
@@ -393,7 +393,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     step_draft = step_drafts.setdefault(step_id, _StepDraft())
                     instruction_id = self._symbol(fact_value, "step_instruction value")
                     if step_draft.instruction_id is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                        raise MethodGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
                     step_draft.instruction_id = instruction_id
 
                 case "step_executor":
@@ -405,7 +405,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     executor = self._constant(fact_value, "step_executor value")
                     self._validate_executor_concepts(executor)
                     if step_draft.executor_id is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                        raise MethodGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
                     step_draft.executor_id = executor.symbol
 
                 case "foreach_item":
@@ -417,12 +417,12 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     source_id = self._symbol(arguments[1], "foreach source")
                     binding_id = self._symbol(fact_value, "foreach item binding")
                     # ponytail: keep the edge collection as the source of truth;
-                    # add a foreach index only if large workflows make this scan hot.
+                    # add a foreach index only if large methods make this scan hot.
                     if any(isinstance(edge, ForeachEdge) and edge.step_id == step_id for edge in edges):
-                        raise WorkflowGraphCompilationError(f"duplicate foreach_item for step {step_id!r}")
+                        raise MethodGraphCompilationError(f"duplicate foreach_item for step {step_id!r}")
                     binding_artifact = artifacts.setdefault(binding_id, ArtifactNode(artifact_id=binding_id))
                     if binding_artifact.binding_step_id is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate foreach item binding {binding_id!r}")
+                        raise MethodGraphCompilationError(f"duplicate foreach item binding {binding_id!r}")
                     artifacts.setdefault(source_id, ArtifactNode(artifact_id=source_id))
                     artifacts[binding_id] = replace(binding_artifact, binding_step_id=step_id)
                     edges.add(
@@ -440,7 +440,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     step_draft = step_drafts.setdefault(step_id, _StepDraft())
                     timeout_seconds = self._positive_integer(fact_value, operator_name)
                     if step_draft.timeout_seconds is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                        raise MethodGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
                     step_draft.timeout_seconds = timeout_seconds
 
                 case "max_attempts":
@@ -450,7 +450,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     step_draft = step_drafts.setdefault(step_id, _StepDraft())
                     max_attempts = self._positive_integer(fact_value, operator_name)
                     if step_draft.max_attempts is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                        raise MethodGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
                     step_draft.max_attempts = max_attempts
 
                 case "independent":
@@ -464,7 +464,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     )
                     step_draft = step_drafts.setdefault(step_id, _StepDraft())
                     if step_draft.independent is not None:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
+                        raise MethodGraphCompilationError(f"duplicate {operator_name}: {step_id!r}")
                     step_draft.independent = True
 
                 case "resource_requirement":
@@ -483,7 +483,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     )
                     amount = self._positive_integer(fact_value, operator_name)
                     if resource_id in step_draft.resources:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, resource_id)!r}")
+                        raise MethodGraphCompilationError(f"duplicate {operator_name}: {(step_id, resource_id)!r}")
                     step_draft.resources[resource_id] = amount
 
                 case "depends_on":
@@ -503,14 +503,14 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     )
                     step_draft = step_drafts.setdefault(step_id, _StepDraft())
                     if predecessor_id in step_draft.depends_on:
-                        raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {(step_id, predecessor_id)!r}")
+                        raise MethodGraphCompilationError(f"duplicate {operator_name}: {(step_id, predecessor_id)!r}")
                     step_draft.depends_on.add(predecessor_id)
 
                 case _:
                     # _compile_assertion recognizes names through
                     # SUPPORTED_OPERATORS.  Fail closed if that vocabulary grows
                     # without a matching, operator-specific lowering case.
-                    raise WorkflowGraphCompilationError(f"unsupported graph operator: {operator_name}")
+                    raise MethodGraphCompilationError(f"unsupported graph operator: {operator_name}")
 
         try:
             # A StepNode becomes valid only after its required name and executor
@@ -519,17 +519,17 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             steps: list[StepNode] = []
             for step_id, step_draft in sorted(step_drafts.items()):
                 if step_draft.depends_on and (step_draft.name_id is None or step_draft.executor_id is None):
-                    raise WorkflowGraphCompilationError(f"depends_on target {step_id!r} is not a fully declared step")
+                    raise MethodGraphCompilationError(f"depends_on target {step_id!r} is not a fully declared step")
                 for predecessor_id in sorted(step_draft.depends_on):
                     predecessor = step_drafts.get(predecessor_id)
                     if predecessor is None or predecessor.name_id is None or predecessor.executor_id is None:
-                        raise WorkflowGraphCompilationError(
+                        raise MethodGraphCompilationError(
                             f"depends_on predecessor {predecessor_id!r} is not a fully declared step"
                         )
                 if step_draft.name_id is None:
-                    raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_name")
+                    raise MethodGraphCompilationError(f"step {step_id!r} has no step_name")
                 if step_draft.executor_id is None:
-                    raise WorkflowGraphCompilationError(f"step {step_id!r} has no step_executor")
+                    raise MethodGraphCompilationError(f"step {step_id!r} has no step_executor")
                 resources = [
                     ResourceRequirement(
                         resource_id=resource_id,
@@ -555,8 +555,8 @@ class WorkflowGraphCompiler(CoreIRCompiler):
 
             # All other collections already contain target graph values.  Sort
             # only to make equality and serialization independent of IR order.
-            graph = WorkflowGraph(
-                workflow_id=workflow.name,
+            graph = MethodGraph(
+                method_id=method.name,
                 steps=tuple(steps),
                 artifacts=tuple(artifacts[artifact_id] for artifact_id in sorted(artifacts)),
                 # Kind order is consumes, foreach, produces.  Within each kind,
@@ -580,12 +580,12 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     )
                 ),
             )
-        except WorkflowGraphError as error:
+        except MethodGraphError as error:
             # Present target-model invariant failures through the compiler's
             # public error type while preserving the original cause.
-            raise WorkflowGraphCompilationError(str(error)) from error
+            raise MethodGraphCompilationError(str(error)) from error
 
-        return WorkflowGraphCompilation(
+        return MethodGraphCompilation(
             graph=graph,
             residual_assertions=tuple(residual),
         )
@@ -594,32 +594,32 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         self,
         declarations: _CompiledDeclarations,
         *,
-        workflows: tuple[object, ...],
+        methods: tuple[object, ...],
     ) -> object:
-        """Return one compilation result per workflow in source order.
+        """Return one compilation result per method in source order.
 
         Global constants have already served as term values; the graph target
         has no declaration table of its own.
         """
 
         del declarations
-        return workflows
+        return methods
 
     @classmethod
     def _compile_select(cls, output: object, conditional: IfTerm) -> SelectNode:
         """Lower one named Artifact equality into an eager graph selector."""
 
         if not isinstance(output, Constant) or not cls._has_concept(output, "Artifact"):
-            raise WorkflowGraphCompilationError("selected if output must be an Artifact constant")
+            raise MethodGraphCompilationError("selected if output must be an Artifact constant")
 
         when_true = conditional.when_true
         when_false = conditional.when_false
         if isinstance(when_true, IfTerm) or isinstance(when_false, IfTerm):
-            raise WorkflowGraphCompilationError("nested if branches are unsupported")
+            raise MethodGraphCompilationError("nested if branches are unsupported")
         if not isinstance(when_true, Constant) or not cls._has_concept(when_true, "Artifact"):
-            raise WorkflowGraphCompilationError("if branches must be Artifact constants")
+            raise MethodGraphCompilationError("if branches must be Artifact constants")
         if not isinstance(when_false, Constant) or not cls._has_concept(when_false, "Artifact"):
-            raise WorkflowGraphCompilationError("if branches must be Artifact constants")
+            raise MethodGraphCompilationError("if branches must be Artifact constants")
 
         try:
             return SelectNode(
@@ -628,12 +628,12 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 when_false_artifact_id=when_false.symbol,
                 condition=cls._select_condition(conditional.condition),
             )
-        except WorkflowGraphError as error:
-            raise WorkflowGraphCompilationError(str(error)) from error
+        except MethodGraphError as error:
+            raise MethodGraphCompilationError(str(error)) from error
 
     @classmethod
     def _select_condition(cls, formula: object) -> SelectCondition:
-        """Lower the closed FusionFlow condition subset into graph-owned values."""
+        """Lower the closed FusionMethod condition subset into graph-owned values."""
 
         if isinstance(formula, ConnectiveFormula):
             left = cls._select_condition(formula.formula_left)
@@ -642,23 +642,23 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                     return LogicalCondition(operator="not", conditions=(left,))
                 case "AND":
                     if formula.formula_right is None:
-                        raise WorkflowGraphCompilationError("AND condition requires a right formula")
+                        raise MethodGraphCompilationError("AND condition requires a right formula")
                     return LogicalCondition(
                         operator="and",
                         conditions=(left, cls._select_condition(formula.formula_right)),
                     )
                 case "OR":
                     if formula.formula_right is None:
-                        raise WorkflowGraphCompilationError("OR condition requires a right formula")
+                        raise MethodGraphCompilationError("OR condition requires a right formula")
                     return LogicalCondition(
                         operator="or",
                         conditions=(left, cls._select_condition(formula.formula_right)),
                     )
                 case _:
-                    raise WorkflowGraphCompilationError(f"unsupported logical connective: {formula.connective}")
+                    raise MethodGraphCompilationError(f"unsupported logical connective: {formula.connective}")
 
         if not isinstance(formula, Assertion):
-            raise WorkflowGraphCompilationError("if condition must be an equality or logical formula")
+            raise MethodGraphCompilationError("if condition must be an equality or logical formula")
 
         ordered = tuple(
             (term, asserted)
@@ -677,12 +677,12 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         )
         if ordered:
             if len(ordered) != 1:
-                raise WorkflowGraphCompilationError("one condition cannot contain multiple ordered comparisons")
+                raise MethodGraphCompilationError("one condition cannot contain multiple ordered comparisons")
             comparison, asserted = ordered[0]
             if cls._boolean_literal(asserted) is not True:
-                raise WorkflowGraphCompilationError("ordered comparison must be asserted against True")
+                raise MethodGraphCompilationError("ordered comparison must be asserted against True")
             if len(comparison.arguments) != 2:
-                raise WorkflowGraphCompilationError("ordered comparison expects two operands")
+                raise MethodGraphCompilationError("ordered comparison expects two operands")
             operator: ComparisonOperator
             match comparison.operator.name:
                 case "comparison_lt_op":
@@ -702,7 +702,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             )
 
         if not isinstance(formula.lhs, Constant) or not isinstance(formula.rhs, Constant):
-            raise WorkflowGraphCompilationError("condition operands must be constants")
+            raise MethodGraphCompilationError("condition operands must be constants")
         return ComparisonCondition(
             operator="eq",
             left=cls._select_operand(formula.lhs),
@@ -714,13 +714,13 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         """Lower one condition operand without evaluating arbitrary terms."""
 
         if not isinstance(term, Constant):
-            raise WorkflowGraphCompilationError("condition operands must be constants")
+            raise MethodGraphCompilationError("condition operands must be constants")
         if cls._has_concept(term, "Artifact"):
             return ArtifactOperand(artifact_id=term.symbol)
         if cls._has_concept(term, "Bool"):
             boolean = cls._boolean_literal(term)
             if boolean is None:
-                raise WorkflowGraphCompilationError("Bool condition operand must be True or False")
+                raise MethodGraphCompilationError("Bool condition operand must be True or False")
             return LiteralOperand(value=boolean)
         if cls._has_concept(term, "ComplexNumber"):
             try:
@@ -729,7 +729,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
                 try:
                     value = float(term.symbol)
                 except ValueError as error:
-                    raise WorkflowGraphCompilationError("ComplexNumber condition operand must be numeric") from error
+                    raise MethodGraphCompilationError("ComplexNumber condition operand must be numeric") from error
             return LiteralOperand(value=value)
         return LiteralOperand(value=term.symbol)
 
@@ -758,14 +758,14 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         """Require the exact arity defined by one graph operator."""
 
         if len(arguments) != expected:
-            raise WorkflowGraphCompilationError(f"{operator_name} expects {expected} arguments, got {len(arguments)}")
+            raise MethodGraphCompilationError(f"{operator_name} expects {expected} arguments, got {len(arguments)}")
 
     @staticmethod
     def _constant(value: object, context: str) -> Constant:
         """Narrow a compiled value to a non-empty Core IR constant."""
 
         if not isinstance(value, Constant) or not value.symbol:
-            raise WorkflowGraphCompilationError(f"{context} must be a non-empty constant")
+            raise MethodGraphCompilationError(f"{context} must be a non-empty constant")
         return value
 
     @classmethod
@@ -790,7 +790,7 @@ class WorkflowGraphCompiler(CoreIRCompiler):
 
         constant = cls._constant(value, context)
         if constant.belong_concepts and concept_name not in {concept.name for concept in constant.belong_concepts}:
-            raise WorkflowGraphCompilationError(f"{context} must belong to {concept_name}")
+            raise MethodGraphCompilationError(f"{context} must belong to {concept_name}")
         return constant.symbol
 
     @classmethod
@@ -800,14 +800,14 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         constant = cls._constant(value, f"{operator_name} RHS")
         concept_names = {concept.name for concept in constant.belong_concepts}
         if constant.symbol != "True" or (concept_names and "Bool" not in concept_names):
-            raise WorkflowGraphCompilationError(f"{operator_name} RHS must be the Boolean constant True")
+            raise MethodGraphCompilationError(f"{operator_name} RHS must be the Boolean constant True")
 
     @classmethod
     def _list_symbols(cls, value: object, operator_name: str) -> tuple[str, ...]:
         """Extract a duplicate-free ordered symbol list from a compiled ListTerm."""
 
         if not isinstance(value, _CompiledList):
-            raise WorkflowGraphCompilationError(f"{operator_name} RHS must be a List term")
+            raise MethodGraphCompilationError(f"{operator_name} RHS must be a List term")
         symbols: list[str] = []
         seen: set[str] = set()
         for item in value.items:
@@ -815,19 +815,17 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             # Reject duplicates here because a set conversion would silently
             # erase an invalid repeated edge/boundary declaration.
             if symbol in seen:
-                raise WorkflowGraphCompilationError(f"duplicate {operator_name} list item: {symbol!r}")
+                raise MethodGraphCompilationError(f"duplicate {operator_name} list item: {symbol!r}")
             seen.add(symbol)
             symbols.append(symbol)
         return tuple(symbols)
 
     @staticmethod
-    def _require_owner(owner_id: str, workflow_id: str, operator_name: str) -> None:
-        """Ensure a workflow-scoped assertion cannot mutate another workflow."""
+    def _require_owner(owner_id: str, method_id: str, operator_name: str) -> None:
+        """Ensure a method-scoped assertion cannot mutate another method."""
 
-        if owner_id != workflow_id:
-            raise WorkflowGraphCompilationError(
-                f"{operator_name} owner {owner_id!r} does not match workflow {workflow_id!r}"
-            )
+        if owner_id != method_id:
+            raise MethodGraphCompilationError(f"{operator_name} owner {owner_id!r} does not match method {method_id!r}")
 
     @classmethod
     def _positive_integer(cls, value: object, operator_name: str) -> int:
@@ -836,15 +834,15 @@ class WorkflowGraphCompiler(CoreIRCompiler):
         symbol = cls._symbol(value, f"{operator_name} RHS")
         # ``str.isdecimal`` accepts non-ASCII digits; the DSL contract does not.
         if not symbol.isascii() or not symbol.isdecimal():
-            raise WorkflowGraphCompilationError(f"{operator_name} RHS must be a positive integer constant")
+            raise MethodGraphCompilationError(f"{operator_name} RHS must be a positive integer constant")
         try:
             # Python may reject extremely long decimal strings under its
             # integer-conversion safety limit; normalize that to our API error.
             number = int(symbol)
         except ValueError as error:
-            raise WorkflowGraphCompilationError(f"{operator_name} RHS must be a positive integer constant") from error
+            raise MethodGraphCompilationError(f"{operator_name} RHS must be a positive integer constant") from error
         if number < 1:
-            raise WorkflowGraphCompilationError(f"{operator_name} RHS must be a positive integer constant")
+            raise MethodGraphCompilationError(f"{operator_name} RHS must be a positive integer constant")
         return number
 
     @classmethod
@@ -859,12 +857,12 @@ class WorkflowGraphCompiler(CoreIRCompiler):
             return
         matches = {concept.name for concept in executor.belong_concepts} & cls._EXECUTOR_CONCEPTS
         if len(matches) != 1:
-            raise WorkflowGraphCompilationError("step_executor must belong to exactly one of Human, Agent, or Program")
+            raise MethodGraphCompilationError("step_executor must belong to exactly one of Human, Agent, or Program")
 
     @staticmethod
     def _add_unique[T](values: set[T], value: T, operator_name: str) -> None:
         """Insert one set-backed fact while treating repetition as invalid IR."""
 
         if value in values:
-            raise WorkflowGraphCompilationError(f"duplicate {operator_name}: {value!r}")
+            raise MethodGraphCompilationError(f"duplicate {operator_name}: {value!r}")
         values.add(value)

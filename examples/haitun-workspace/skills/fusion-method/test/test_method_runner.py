@@ -6,11 +6,11 @@ from typing import Any, cast
 
 import pytest
 
-run_workflow = cast(Any, importlib.import_module("fusion_flow.workflow_runner"))
+run_method = cast(Any, importlib.import_module("fusion_method.method_runner"))
 
 
 def test_runner_catalog_includes_typed_depends_on() -> None:
-    context = run_workflow._default_parse_context()
+    context = run_method._default_parse_context()
 
     depends_on = context.operators["depends_on"]
     assert tuple(concept.name for concept in depends_on.input_concepts) == (
@@ -23,7 +23,7 @@ def test_runner_catalog_includes_typed_depends_on() -> None:
     assert program_path.output_concept == context.concepts["Path"]
 
 
-def _dispatch_workflow(
+def _dispatch_method(
     executor_kind: str | None,
     instruction: str,
     *,
@@ -31,16 +31,16 @@ def _dispatch_workflow(
 ) -> str:
     executor_declaration = "" if executor_kind is None else f"const worker: {executor_kind};"
     return f"""
-const dispatch: Workflow;
+const dispatch: Method;
 const dispatch_step: Step;
 const dispatch_name: StepName;
 {executor_declaration}
 const request: Artifact;
 const result: Artifact;
 
-workflow dispatch {{
-    input_workflow(dispatch) == [request];
-    output_workflow(dispatch) == [result];
+method dispatch {{
+    input_method(dispatch) == [request];
+    output_method(dispatch) == [result];
     {executor_configuration}
     step_name(dispatch_step) == dispatch_name;
     step_instruction(dispatch_step) == "{instruction}";
@@ -51,9 +51,9 @@ workflow dispatch {{
 """
 
 
-def _select_workflow(condition: str) -> str:
+def _select_method(condition: str) -> str:
     return f"""
-const select_demo: Workflow;
+const select_demo: Method;
 const primary_step: Step;
 const fallback_step: Step;
 const final_step: Step;
@@ -67,9 +67,9 @@ const fallback_result: Artifact;
 const selected_result: Artifact;
 const final_result: Artifact;
 
-workflow select_demo {{
-    input_workflow(select_demo) == [request];
-    output_workflow(select_demo) == [selected_result, final_result];
+method select_demo {{
+    input_method(select_demo) == [request];
+    output_method(select_demo) == [selected_result, final_result];
 
     step_name(primary_step) == primary_name;
     step_instruction(primary_step) == "produce_primary";
@@ -101,9 +101,9 @@ workflow select_demo {{
         '"./bin/worker" == program_path(worker);',
     ],
 )
-def test_compile_workflow_extracts_program_path(configuration: str) -> None:
-    compiled = run_workflow.compile_workflow(
-        _dispatch_workflow(
+def test_compile_method_extracts_program_path(configuration: str) -> None:
+    compiled = run_method.compile_method(
+        _dispatch_method(
             "Program",
             "do_work",
             executor_configuration=configuration,
@@ -113,15 +113,15 @@ def test_compile_workflow_extracts_program_path(configuration: str) -> None:
     assert compiled.program_paths == {"worker": "./bin/worker"}
 
 
-def test_compile_workflow_requires_program_path() -> None:
+def test_compile_method_requires_program_path() -> None:
     with pytest.raises(ValueError, match="has no program_path"):
-        run_workflow.compile_workflow(_dispatch_workflow("Program", "do_work"))
+        run_method.compile_method(_dispatch_method("Program", "do_work"))
 
 
-def test_compile_workflow_rejects_duplicate_program_path() -> None:
+def test_compile_method_rejects_duplicate_program_path() -> None:
     with pytest.raises(ValueError, match="duplicate program_path"):
-        run_workflow.compile_workflow(
-            _dispatch_workflow(
+        run_method.compile_method(
+            _dispatch_method(
                 "Program",
                 "do_work",
                 executor_configuration="""
@@ -133,7 +133,7 @@ def test_compile_workflow_rejects_duplicate_program_path() -> None:
 
 
 @pytest.mark.anyio
-async def test_in_memory_workflow_compiles_and_executes() -> None:
+async def test_in_memory_method_compiles_and_executes() -> None:
     prompts: list[str] = []
     instruction = "Explain the request, identify the key trade-offs, and return a concise recommendation."
 
@@ -141,8 +141,8 @@ async def test_in_memory_workflow_compiles_and_executes() -> None:
         prompts.append(prompt)
         return "completed"
 
-    result = await run_workflow.execute_workflow(
-        _dispatch_workflow("Agent", instruction),
+    result = await run_method.execute_method(
+        _dispatch_method("Agent", instruction),
         request="Explain structured concurrency.",
         complete=complete,
     )
@@ -152,7 +152,7 @@ async def test_in_memory_workflow_compiles_and_executes() -> None:
 
 
 def test_runner_compiles_ordered_select_condition() -> None:
-    compiled = run_workflow.compile_workflow(_select_workflow("request >= 10"))
+    compiled = run_method.compile_method(_select_method("request >= 10"))
 
     assert compiled.graph.to_dict()["selectors"][0] == {
         "output_artifact_id": "selected_result",
@@ -182,8 +182,8 @@ async def test_named_select_executes_both_candidates_and_feeds_final_step() -> N
         assert 'Inputs: {"selected_result": "PRIMARY"}' in prompt
         return "FINAL"
 
-    result = await run_workflow.execute_workflow(
-        _select_workflow('request = "primary"'),
+    result = await run_method.execute_method(
+        _select_method('request = "primary"'),
         request="primary",
         complete=complete,
     )
@@ -207,8 +207,8 @@ async def test_instruction_path_requires_a_resolver_before_dispatch() -> None:
         pytest.fail(f"completion called with {prompt!r}")
 
     with pytest.raises(ValueError, match="instruction path but no instruction resolver"):
-        await run_workflow.execute_workflow(
-            _dispatch_workflow("Agent", instruction),
+        await run_method.execute_method(
+            _dispatch_method("Agent", instruction),
             request="Do the work.",
             complete=complete,
         )
@@ -232,8 +232,8 @@ async def test_agent_executor_receives_resolved_instruction_text() -> None:
         prompts.append(prompt)
         return "completed"
 
-    result = await run_workflow.execute_workflow(
-        _dispatch_workflow("Agent", reference),
+    result = await run_method.execute_method(
+        _dispatch_method("Agent", reference),
         request="Survey semantic parsing.",
         complete=complete,
         resolve_instruction=resolve_instruction,
@@ -255,8 +255,8 @@ async def test_instruction_resolver_must_return_non_empty_text() -> None:
         pytest.fail(f"completion called with {prompt!r}")
 
     with pytest.raises(ValueError, match="instruction resolved to no text"):
-        await run_workflow.execute_workflow(
-            _dispatch_workflow("Agent", "./instructions/empty.md"),
+        await run_method.execute_method(
+            _dispatch_method("Agent", "./instructions/empty.md"),
             request="Do the work.",
             complete=complete,
             resolve_instruction=resolve_instruction,
@@ -265,7 +265,7 @@ async def test_instruction_resolver_must_return_non_empty_text() -> None:
 
 @pytest.mark.anyio
 async def test_instruction_files_are_materialized_once_before_dispatch() -> None:
-    source = _select_workflow('request = "primary"')
+    source = _select_method('request = "primary"')
     for instruction in ("produce_primary", "produce_fallback", "consume_selected"):
         source = source.replace(f'"{instruction}"', '"./instructions/shared.md"')
     resolutions: list[str] = []
@@ -285,7 +285,7 @@ async def test_instruction_files_are_materialized_once_before_dispatch() -> None
         }
         return values[context.step_id]
 
-    result = await run_workflow.execute_workflow(
+    result = await run_method.execute_method(
         source,
         request="primary",
         contextual_complete=complete,
@@ -323,7 +323,7 @@ async def test_program_path_is_executed_with_instruction_and_inputs(
         )
         return "completed"
 
-    source = _dispatch_workflow(
+    source = _dispatch_method(
         "Program",
         "Run the configured worker on the supplied request and return its result.",
         executor_configuration="program_path(worker) == worker_path;",
@@ -332,7 +332,7 @@ async def test_program_path_is_executed_with_instruction_and_inputs(
         "const worker_path: Path;\nconst result: Artifact;",
     )
 
-    result = await run_workflow.execute_workflow(
+    result = await run_method.execute_method(
         source,
         inputs={"request": {"topic": "structured concurrency"}},
         resolve_path=resolve_path,
@@ -364,7 +364,7 @@ async def test_program_multiple_outputs_are_read_from_json_stdout(
         return '{"result": "first", "extra": {"rank": 2}}'
 
     source = (
-        _dispatch_workflow(
+        _dispatch_method(
             "Program",
             "produce_two",
             executor_configuration='program_path(worker) == "./bin/worker";',
@@ -374,8 +374,8 @@ async def test_program_multiple_outputs_are_read_from_json_stdout(
             "const result: Artifact;\nconst extra: Artifact;",
         )
         .replace(
-            "output_workflow(dispatch) == [result];",
-            "output_workflow(dispatch) == [result, extra];",
+            "output_method(dispatch) == [result];",
+            "output_method(dispatch) == [result, extra];",
         )
         .replace(
             "produces(dispatch_step) == [result];",
@@ -383,7 +383,7 @@ async def test_program_multiple_outputs_are_read_from_json_stdout(
         )
     )
 
-    result = await run_workflow.execute_workflow(
+    result = await run_method.execute_method(
         source,
         request="Do the work.",
         work_dir=tmp_path,
@@ -417,7 +417,7 @@ async def test_program_multiple_outputs_reject_non_finite_json(
         return f'{{"result": {invalid_value}, "extra": 1}}'
 
     source = (
-        _dispatch_workflow(
+        _dispatch_method(
             "Program",
             "produce_two",
             executor_configuration='program_path(worker) == "./bin/worker";',
@@ -427,8 +427,8 @@ async def test_program_multiple_outputs_reject_non_finite_json(
             "const result: Artifact;\nconst extra: Artifact;",
         )
         .replace(
-            "output_workflow(dispatch) == [result];",
-            "output_workflow(dispatch) == [result, extra];",
+            "output_method(dispatch) == [result];",
+            "output_method(dispatch) == [result, extra];",
         )
         .replace(
             "produces(dispatch_step) == [result];",
@@ -437,7 +437,7 @@ async def test_program_multiple_outputs_reject_non_finite_json(
     )
 
     with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="strict JSON object")):
-        await run_workflow.execute_workflow(
+        await run_method.execute_method(
             source,
             request="Do the work.",
             work_dir=tmp_path,
@@ -451,8 +451,8 @@ async def test_relative_program_path_requires_work_dir() -> None:
         ValueError,
         match="relative program_path requires an explicit work_dir",
     ):
-        await run_workflow.execute_workflow(
-            _dispatch_workflow(
+        await run_method.execute_method(
+            _dispatch_method(
                 "Program",
                 "do_work",
                 executor_configuration='program_path(worker) == "./bin/worker";',
@@ -462,15 +462,15 @@ async def test_relative_program_path_requires_work_dir() -> None:
 
 
 def test_untyped_executor_defaults_to_agent_for_compatibility() -> None:
-    compiled = run_workflow.compile_workflow(_dispatch_workflow(None, "./instructions/untyped-agent.txt"))
+    compiled = run_method.compile_method(_dispatch_method(None, "./instructions/untyped-agent.txt"))
 
     assert compiled.executor_kinds == {"worker": "Agent"}
 
 
 def test_strict_runner_rejects_untyped_executor() -> None:
     with pytest.raises(ValueError, match="must be declared as exactly one"):
-        run_workflow.compile_workflow(
-            _dispatch_workflow(None, "./instructions/untyped-agent.txt"),
+        run_method.compile_method(
+            _dispatch_method(None, "./instructions/untyped-agent.txt"),
             strict_executors=True,
         )
 
@@ -491,8 +491,8 @@ async def test_human_instruction_is_prepared_by_agent_before_request() -> None:
         human_prompts.append(prompt)
         return {"decision": "approve"}
 
-    result = await run_workflow.execute_workflow(
-        _dispatch_workflow("Human", "Ask the reviewer to approve the proposal or request concrete edits."),
+    result = await run_method.execute_method(
+        _dispatch_method("Human", "Ask the reviewer to approve the proposal or request concrete edits."),
         request="proposal-v2",
         complete=complete,
         prepare_human_instruction=prepare_human_instruction,
@@ -526,8 +526,8 @@ async def test_contextual_human_callbacks_receive_step_contract() -> None:
         contexts.append(context)
         return "Tighten the conclusion."
 
-    result = await run_workflow.execute_workflow(
-        _dispatch_workflow("Human", "review_reference"),
+    result = await run_method.execute_method(
+        _dispatch_method("Human", "review_reference"),
         request="proposal-v2",
         contextual_prepare_human_instruction=prepare_human_instruction,
         contextual_request_human=request_human,
@@ -556,8 +556,8 @@ async def test_human_preparation_failure_does_not_request_human() -> None:
         pytest.fail(f"human called with {prompt!r}")
 
     with pytest.RaisesGroup(pytest.RaisesExc(PermissionError, match="not approved")):
-        await run_workflow.execute_workflow(
-            _dispatch_workflow("Human", "Prepare a review question from the supplied request."),
+        await run_method.execute_method(
+            _dispatch_method("Human", "Prepare a review question from the supplied request."),
             request="review",
             complete=complete,
             prepare_human_instruction=prepare_human_instruction,
@@ -578,8 +578,8 @@ async def test_human_preparation_must_return_text() -> None:
         pytest.fail(f"human called with {prompt!r}")
 
     with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="preparation returned no text")):
-        await run_workflow.execute_workflow(
-            _dispatch_workflow("Human", "review_reference"),
+        await run_method.execute_method(
+            _dispatch_method("Human", "review_reference"),
             request="review",
             complete=complete,
             prepare_human_instruction=prepare_human_instruction,
@@ -593,20 +593,20 @@ async def test_human_step_requires_preparer_and_requester() -> None:
         pytest.fail(f"ordinary completion called with {prompt!r}")
 
     with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="requires prepare_human_instruction and request_human")):
-        await run_workflow.execute_workflow(
-            _dispatch_workflow("Human", "review_reference"),
+        await run_method.execute_method(
+            _dispatch_method("Human", "review_reference"),
             request="review",
             complete=complete,
         )
 
 
 def test_unconsumed_assertions_report_operator_counts() -> None:
-    context = run_workflow._default_parse_context()
-    context.operators["custom_policy"] = run_workflow.Operator(
+    context = run_method._default_parse_context()
+    context.operators["custom_policy"] = run_method.Operator(
         name="custom_policy",
         output_concept=context.concepts["Bool"],
     )
-    source = _dispatch_workflow("Agent", "do_work").replace(
+    source = _dispatch_method("Agent", "do_work").replace(
         "\n}",
         "\n    custom_policy(dispatch_step) == True;\n}",
     )
@@ -615,13 +615,13 @@ def test_unconsumed_assertions_report_operator_counts() -> None:
         ValueError,
         match=r"unconsumed assertions: custom_policy=1",
     ):
-        run_workflow.compile_workflow(source, context=context)
+        run_method.compile_method(source, context=context)
 
 
 @pytest.mark.anyio
 async def test_contextual_completion_receives_resource_lease() -> None:
     source = (
-        _dispatch_workflow("Agent", "use_gpu")
+        _dispatch_method("Agent", "use_gpu")
         .replace(
             "const result: Artifact;",
             "const result: Artifact;\nconst gpu: Resource;",
@@ -641,7 +641,7 @@ async def test_contextual_completion_receives_resource_lease() -> None:
         leases.append(context.dispatch.resource_lease.instances("gpu"))
         return {"result": "completed"}
 
-    result = await run_workflow.execute_workflow(
+    result = await run_method.execute_method(
         source,
         request="Do the work.",
         contextual_complete=contextual_complete,
@@ -655,7 +655,7 @@ async def test_contextual_completion_receives_resource_lease() -> None:
 @pytest.mark.anyio
 async def test_depends_on_orders_steps_without_an_artifact_dependency() -> None:
     source = """
-const explicit_order: Workflow;
+const explicit_order: Method;
 const after_step: Step;
 const before_step: Step;
 const after_name: StepName;
@@ -665,9 +665,9 @@ const request: Artifact;
 const after_result: Artifact;
 const before_result: Artifact;
 
-workflow explicit_order {
-    input_workflow(explicit_order) == [request];
-    output_workflow(explicit_order) == [after_result, before_result];
+method explicit_order {
+    input_method(explicit_order) == [request];
+    output_method(explicit_order) == [after_result, before_result];
 
     step_name(after_step) == after_name;
     step_instruction(after_step) == "after";
@@ -696,7 +696,7 @@ workflow explicit_order {
         assert before_finished
         return "AFTER"
 
-    result = await run_workflow.execute_workflow(
+    result = await run_method.execute_method(
         source,
         request="run",
         complete=complete,
@@ -711,14 +711,14 @@ workflow explicit_order {
 @pytest.mark.anyio
 async def test_legacy_completion_can_return_multiple_named_outputs() -> None:
     source = (
-        _dispatch_workflow("Agent", "produce_two")
+        _dispatch_method("Agent", "produce_two")
         .replace(
             "const result: Artifact;",
             "const result: Artifact;\nconst extra: Artifact;",
         )
         .replace(
-            "output_workflow(dispatch) == [result];",
-            "output_workflow(dispatch) == [result, extra];",
+            "output_method(dispatch) == [result];",
+            "output_method(dispatch) == [result, extra];",
         )
         .replace(
             "produces(dispatch_step) == [result];",
@@ -730,7 +730,7 @@ async def test_legacy_completion_can_return_multiple_named_outputs() -> None:
         del prompt
         return {"result": "first", "extra": "second"}
 
-    result = await run_workflow.execute_workflow(
+    result = await run_method.execute_method(
         source,
         request="Do the work.",
         complete=complete,
@@ -745,8 +745,8 @@ async def test_legacy_single_output_preserves_same_named_mapping_artifact() -> N
         del prompt
         return {"result": "mapping artifact"}
 
-    result = await run_workflow.execute_workflow(
-        _dispatch_workflow("Agent", "return_mapping"),
+    result = await run_method.execute_method(
+        _dispatch_method("Agent", "return_mapping"),
         request="Do the work.",
         complete=complete,
     )

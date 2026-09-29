@@ -1,8 +1,8 @@
-# Workflow 图的执行计划：DAG、状态图与循环
+# Method 图的执行计划：DAG、状态图与循环
 
 > 日期：2026-07-25
-> 适用背景：`WorkflowGraph -> ExecutionPlan -> ExecutionTrace`
-> 相关设计：`2026-07-23-workflow-graph-design.zh.md`
+> 适用背景：`MethodGraph -> ExecutionPlan -> ExecutionTrace`
+> 相关设计：`2026-07-23-method-graph-design.zh.md`
 
 ## 1. 核心结论
 
@@ -11,7 +11,7 @@
 应区分三个对象：
 
 ```text
-WorkflowGraph
+MethodGraph
     静态定义：Step、Artifact、Consumes、Produces、Foreach
 
 ExecutionPlan
@@ -68,7 +68,7 @@ LangGraph 状态图执行
 | Strongly Connected Component（SCC） | 强连通分量 | 找出图中的循环区域 |
 | Tarjan's SCC Algorithm | Tarjan 强连通分量算法 | 一次深度优先搜索求 SCC，复杂度为 `O(V + E)` |
 | Condensation Graph | 缩点图 | 把每个 SCC 缩成一个节点后得到 DAG，用来排列循环区域之间的先后关系 |
-| Control-Flow Graph（CFG） | 控制流图 | 用分支和回边有限地表示循环程序 |
+| Control-Mtd Graph（CFG） | 控制流图 | 用分支和回边有限地表示循环程序 |
 | Basic Block | 基本块 | 没有内部跳转的一段顺序指令 |
 | Back-edge | 回边 | 从循环体跳回循环头 |
 | Static Single Assignment（SSA）/ `phi` | 静态单赋值 / φ 节点 | 合并首次进入循环的值与上一轮回边传来的值 |
@@ -89,7 +89,7 @@ A produces X
 B consumes X
 ```
 
-含义是 A 成功提交 Artifact X 后，B 才能执行。节点通常在一次 workflow run 中执行一次。
+含义是 A 成功提交 Artifact X 后，B 才能执行。节点通常在一次 method run 中执行一次。
 
 这适合 DAG ready-queue 调度。
 
@@ -295,7 +295,7 @@ while True:
         break
 ```
 
-所以 FusionFlow 风格的 `await` 仍可作为底层执行机制，但 planner/runtime 必须明确谁先开始、何时反馈以及何时结束。
+所以 FusionMethod 风格的 `await` 仍可作为底层执行机制，但 planner/runtime 必须明确谁先开始、何时反馈以及何时结束。
 
 ## 7. “逻辑计划”与“物理执行计划”
 
@@ -309,7 +309,7 @@ PlanAction(
 ```
 
 这里的 `PlanAction` 仍是解释逻辑图的伪代码，不是运行时类型。实际作者入口是
-`StepNode.depends_on`（FusionFlow assertion 为
+`StepNode.depends_on`（FusionMethod assertion 为
 `depends_on(step, predecessor) == True`）；`generate_plan()` 会把它与 Artifact
 producer 前驱合并，降低成物理计划里的 `Await`。
 
@@ -349,9 +349,8 @@ producer 前驱合并，降低成物理计划里的 `Await`。
 - 根据 Artifact producer 建立 Step 依赖；
 - 使用异步 ready-queue，完成一个节点就立即解锁其 consumers；
 - 调度原子 Step 时可由注入的 dispatcher 调用
-  `fusion_flow.execution` 的 `flow.session`、`flow.call` 或 `flow.exec`；
   核心 planner/runtime 不直接依赖该示例 Skill 子包；
-- 使用 `WorkflowPolicy.max_concurrency` 限流；
+- 使用 `MethodPolicy.max_concurrency` 限流；
 - 遇到 cycle、尚未闭合的 Foreach 或不明确输入版本时 fail closed；
 - trace 记录实际开始、完成、失败和取消，不把 trace 混进静态 graph。
 
@@ -386,5 +385,5 @@ producer 前驱合并，降低成物理计划里的 `Await`。
 - [LangGraph Graph Recursion Limit](https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT)
 - [Temporal Python SDK](https://github.com/temporalio/sdk-python)
 - [Temporal Architecture and Event Sourcing](https://github.com/temporalio/temporal/blob/main/docs/architecture/README.md)
-- [LLVM Control Flow Tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/LangImpl05.html)
+- [LLVM Control Mtd Tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/LangImpl05.html)
 - [Python Bytecode `dis`](https://docs.python.org/3/library/dis.html)

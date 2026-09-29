@@ -52,7 +52,7 @@ _SKILL_REVIEW_PROMPT = (
     "Frustration signals like 'stop doing X', 'this is too verbose', "
     "'don't format like this', or 'just give me the answer' are FIRST-CLASS "
     "skill signals. Update the relevant skill(s) to embed the preference.\n"
-    "  - User corrected your workflow, approach, or sequence of steps.\n"
+    "  - User corrected your method, approach, or sequence of steps.\n"
     "  - Non-trivial technique, fix, workaround, debugging path, or "
     "tool-usage pattern emerged that a future session would benefit from.\n"
     "  - A skill consulted this session turned out to be wrong, missing a "

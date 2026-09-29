@@ -93,7 +93,7 @@ export function summarizeToolCall(name: string, argsRaw: string): string {
   if (key === 'clarify') return '等待确认'
   if (key === 'skill_manage') return '管理技能'
   if (key === 'schedule_manage') return '安排定时任务'
-  if (key === 'flow_manage') return '编排流程'
+  if (key === 'mtd_manage') return '编排流程'
 
   const prefix = key.split('_')[0] ?? key
   if (prefix === 'browser') return '浏览页面'

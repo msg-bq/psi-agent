@@ -1,19 +1,19 @@
-# FusionFlow Python 运行时注释覆盖设计
+# FusionMethod Python 运行时注释覆盖设计
 
 ## 目标
 
 在不改变运行逻辑、公开接口和测试行为的前提下，为 PR #15 的 Python
-FusionFlow 运行时补齐中文 docstring 和关键步骤注释，使读者能够从源码理解每个
+FusionMethod 运行时补齐中文 docstring 和关键步骤注释，使读者能够从源码理解每个
 函数的职责、状态变化与异常边界。
 
 ## 范围
 
 覆盖以下生产文件：
 
-- `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/__init__.py`
-- `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/model.py`
-- `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/runtime.py`
-- `examples/haitun-workspace/skills/fusion-flow/fusion_flow/execution/flow.py`
+- `examples/haitun-workspace/skills/fusion-method/fusion_method/execution/__init__.py`
+- `examples/haitun-workspace/skills/fusion-method/fusion_method/execution/model.py`
+- `examples/haitun-workspace/skills/fusion-method/fusion_method/execution/runtime.py`
+- `examples/haitun-workspace/skills/fusion-method/fusion_method/execution/mtd.py`
 
 每个模块、数据类型、公开函数和私有 helper 都应有与复杂度匹配的说明：
 
@@ -41,7 +41,7 @@ runner 的依赖。
 按运行生命周期解释目录建立、路径约束、原子落盘、输入与 binding 单赋值、
 resume 元数据加载、trace 持久化、取消安全清理和 run GC。
 
-### `flow.py`
+### `mtd.py`
 
 保留现有六组公开原语说明，并补齐内部 evaluator 解析、并发汇合、stream 排空与
 其他 helper。只在缓存探测、binding 预留/提交、异常释放、超时和子进程清理等关键
@@ -60,5 +60,5 @@ resume 元数据加载、trace 持久化、取消安全清理和 run GC。
 2. 运行 `uv run ruff format --check .`。
 3. 运行 `uv run ruff check .`。
 4. 运行 `uv run ty check`。
-5. 进入 `examples/haitun-workspace/skills/fusion-flow`，运行
+5. 进入 `examples/haitun-workspace/skills/fusion-method`，运行
    `uv run python -m pytest -q test/execution`。

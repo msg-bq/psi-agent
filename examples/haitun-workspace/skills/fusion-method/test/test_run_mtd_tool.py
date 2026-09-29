@@ -20,7 +20,7 @@ from psi_agent.session.runtime_context import path_scope
 from psi_agent.session.tool_registry import FileEntry, ToolFunction, ToolRegistry
 
 _WORKSPACE_DIR = Path(__file__).resolve().parents[3]
-_RUNNER_PATH = _WORKSPACE_DIR / "tools" / "run_flow.py"
+_RUNNER_PATH = _WORKSPACE_DIR / "tools" / "run_mtd.py"
 _CLARIFY_PATH = _WORKSPACE_DIR / "tools" / "clarify.py"
 
 
@@ -34,8 +34,8 @@ def _load_module(name: str, path: Path) -> Any:
     return cast(Any, module)
 
 
-run_flow_tool = _load_module("fusion_flow_run_flow_tool", _RUNNER_PATH)
-clarify_tool = _load_module("fusion_flow_clarify_tool", _CLARIFY_PATH)
+run_mtd_tool = _load_module("fusion_method_run_mtd_tool", _RUNNER_PATH)
+clarify_tool = _load_module("fusion_method_clarify_tool", _CLARIFY_PATH)
 
 
 class _FakeSendStream:
@@ -108,8 +108,8 @@ def _test_checkpoint(
     completed_step_ids: tuple[str, ...] = (),
     completed_selection_ids: tuple[str, ...] = (),
 ) -> Any:
-    return run_flow_tool.ExecutionCheckpoint(
-        workflow_id="test-workflow",
+    return run_mtd_tool.ExecutionCheckpoint(
+        method_id="test-method",
         plan_digest="0" * 64,
         values=values,
         completed_step_ids=completed_step_ids,
@@ -117,8 +117,8 @@ def _test_checkpoint(
     )
 
 
-_ORDERED_RESOURCE_WORKFLOW = """
-const ordered: Workflow;
+_ORDERED_RESOURCE_METHOD = """
+const ordered: Method;
 const after_step: Step;
 const before_step: Step;
 const after_name: StepName;
@@ -130,9 +130,9 @@ const after_result: Artifact;
 const before_result: Artifact;
 const selected_result: Artifact;
 
-workflow ordered {
-    input_workflow(ordered) == [request];
-    output_workflow(ordered) == [after_result, before_result, selected_result];
+method ordered {
+    input_method(ordered) == [request];
+    output_method(ordered) == [after_result, before_result, selected_result];
     max_concurrency(ordered) == 2;
 
     step_name(after_step) == after_name;
@@ -153,8 +153,8 @@ workflow ordered {
 }
 """
 
-_PROGRAM_WORKFLOW = (
-    _ORDERED_RESOURCE_WORKFLOW.replace(
+_PROGRAM_METHOD = (
+    _ORDERED_RESOURCE_METHOD.replace(
         "const worker: Agent;",
         "const worker: Program;",
     )
@@ -168,8 +168,8 @@ _PROGRAM_WORKFLOW = (
     )
 )
 
-_HUMAN_WORKFLOW = """
-const review_flow: Workflow;
+_HUMAN_METHOD = """
+const review_mtd: Method;
 const draft_step: Step;
 const review_step: Step;
 const publish_step: Step;
@@ -183,9 +183,9 @@ const draft: Artifact;
 const decision: Artifact;
 const result: Artifact;
 
-workflow review_flow {
-    input_workflow(review_flow) == [request];
-    output_workflow(review_flow) == [result];
+method review_mtd {
+    input_method(review_mtd) == [request];
+    output_method(review_mtd) == [result];
 
     step_name(draft_step) == draft_name;
     step_instruction(draft_step) == "draft_proposal";
@@ -207,17 +207,17 @@ workflow review_flow {
 }
 """
 
-_STATUS_ARTIFACT_WORKFLOW = """
-const status_flow: Workflow;
+_STATUS_ARTIFACT_METHOD = """
+const status_mtd: Method;
 const status_step: Step;
 const status_name: StepName;
 const worker: Agent;
 const request: Artifact;
 const status: Artifact;
 
-workflow status_flow {
-    input_workflow(status_flow) == [request];
-    output_workflow(status_flow) == [status];
+method status_mtd {
+    input_method(status_mtd) == [request];
+    output_method(status_mtd) == [status];
 
     step_name(status_step) == status_name;
     step_instruction(status_step) == "report_status";
@@ -228,23 +228,23 @@ workflow status_flow {
 """
 
 
-def test_run_flow_exposes_start_and_human_resume_tools() -> None:
+def test_run_mtd_exposes_start_and_human_resume_tools() -> None:
     public_async = {
         name
-        for name, value in vars(run_flow_tool).items()
+        for name, value in vars(run_mtd_tool).items()
         if not name.startswith("_") and inspect.iscoroutinefunction(value)
     }
-    assert public_async == {"run_flow", "run_flow_resume"}
+    assert public_async == {"run_mtd", "run_mtd_resume"}
 
-    tool = ToolFunction.from_callable(run_flow_tool.run_flow)
+    tool = ToolFunction.from_callable(run_mtd_tool.run_mtd)
     assert set(tool.parameters["properties"]) == {
-        "flow_path",
+        "mtd_path",
         "inputs_json",
         "resource_capacities_json",
     }
-    assert tool.parameters["required"] == ["flow_path"]
+    assert tool.parameters["required"] == ["mtd_path"]
 
-    resume_tool = ToolFunction.from_callable(run_flow_tool.run_flow_resume)
+    resume_tool = ToolFunction.from_callable(run_mtd_tool.run_mtd_resume)
     assert set(resume_tool.parameters["properties"]) == {
         "run_id",
         "request_id",
@@ -295,7 +295,7 @@ async def test_program_runner_executes_exact_argv_and_json_stdin(
                 "pass_fds": pass_fds,
             }
         )
-        assert command[:4] == (sys.executable, "-I", "-c", run_flow_tool._POSIX_EXEC_BOOTSTRAP)
+        assert command[:4] == (sys.executable, "-I", "-c", run_mtd_tool._POSIX_EXEC_BOOTSTRAP)
         assert command[4:7] == (
             str(pass_fds[0]),
             str(pass_fds[1]),
@@ -306,10 +306,10 @@ async def test_program_runner_executes_exact_argv_and_json_stdin(
         assert os.fstat(pass_fds[1]).st_ino == workspace_inode
         return process
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_find_posix_fd_root", lambda: "/proc/self/fd")
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_find_posix_fd_root", lambda: "/proc/self/fd")
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./bin/worker", "--mode", "strict"),
         stdin='{"instruction":"work","inputs":{"request":"go"}}\n',
@@ -318,7 +318,7 @@ async def test_program_runner_executes_exact_argv_and_json_stdin(
         dispatch=cast(Any, None),
     )
 
-    stdout = await run_flow_tool._run_program(invocation)
+    stdout = await run_mtd_tool._run_program(invocation)
 
     assert stdout == "completed"
     assert len(calls) == 1
@@ -349,9 +349,9 @@ async def test_program_runner_executes_native_binary_without_procfs(
     await worker.parent.mkdir()
     await worker.write_bytes(await native_source.read_bytes())
     await worker.chmod(0o700)
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_find_posix_fd_root", lambda: None)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_find_posix_fd_root", lambda: None)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./bin/worker",),
         stdin='{"instruction":"native","inputs":{}}\n',
@@ -360,7 +360,7 @@ async def test_program_runner_executes_native_binary_without_procfs(
         dispatch=cast(Any, None),
     )
 
-    assert await run_flow_tool._run_program(invocation) == '{"instruction":"native","inputs":{}}'
+    assert await run_mtd_tool._run_program(invocation) == '{"instruction":"native","inputs":{}}'
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires the POSIX Program runner")
@@ -380,10 +380,10 @@ async def test_program_runner_rejects_shebang_before_spawn_without_fd_filesystem
         spawned = True
         return _FakeProcess()
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_find_posix_fd_root", lambda: None)
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_find_posix_fd_root", lambda: None)
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker",),
         stdin="{}\n",
@@ -393,7 +393,7 @@ async def test_program_runner_rejects_shebang_before_spawn_without_fd_filesystem
     )
 
     with pytest.raises(RuntimeError, match="shebang Program execution requires"):
-        await run_flow_tool._run_program(invocation)
+        await run_mtd_tool._run_program(invocation)
 
     assert not spawned
 
@@ -435,9 +435,9 @@ async def test_program_runner_pins_working_directory_before_path_swap(
         assert os.fstat(pass_fds[1]).st_ino == pinned.stat().st_ino
         return process
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", workspace)
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", workspace)
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker",),
         stdin="{}\n",
@@ -446,7 +446,7 @@ async def test_program_runner_pins_working_directory_before_path_swap(
         dispatch=cast(Any, None),
     )
 
-    assert await run_flow_tool._run_program(invocation) == "pinned"
+    assert await run_mtd_tool._run_program(invocation) == "pinned"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires the POSIX Program runner")
@@ -483,10 +483,10 @@ async def test_program_runner_executes_opened_inode_when_path_is_replaced(
         assert command[6] == f"/proc/self/fd/{pass_fds[0]}"
         return process
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_find_posix_fd_root", lambda: "/proc/self/fd")
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_find_posix_fd_root", lambda: "/proc/self/fd")
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker",),
         stdin="{}\n",
@@ -495,7 +495,7 @@ async def test_program_runner_executes_opened_inode_when_path_is_replaced(
         dispatch=cast(Any, None),
     )
 
-    assert await run_flow_tool._run_program(invocation) == "safe"
+    assert await run_mtd_tool._run_program(invocation) == "safe"
 
 
 @pytest.mark.anyio
@@ -513,10 +513,10 @@ async def test_program_runner_preserves_windows_argv_after_pinning_executable(
         assert candidate == worker
         return candidate, 123
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_PROGRAM_PLATFORM", "win32")
-    monkeypatch.setattr(run_flow_tool, "_open_windows_executable", open_windows_executable)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_PROGRAM_PLATFORM", "win32")
+    monkeypatch.setattr(run_mtd_tool, "_open_windows_executable", open_windows_executable)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker.exe", "--mode", "strict"),
         stdin="{}\n",
@@ -525,7 +525,7 @@ async def test_program_runner_preserves_windows_argv_after_pinning_executable(
         dispatch=cast(Any, None),
     )
 
-    prepared = await run_flow_tool._prepare_program(invocation)
+    prepared = await run_mtd_tool._prepare_program(invocation)
 
     assert prepared.command == (str(worker), "--mode", "strict")
     assert prepared.cwd == tmp_path
@@ -547,10 +547,10 @@ async def test_program_runner_uses_isolated_python_for_windows_script(
         assert candidate == worker
         return candidate, 123
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_PROGRAM_PLATFORM", "win32")
-    monkeypatch.setattr(run_flow_tool, "_open_windows_executable", open_windows_executable)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_PROGRAM_PLATFORM", "win32")
+    monkeypatch.setattr(run_mtd_tool, "_open_windows_executable", open_windows_executable)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker.py",),
         stdin="{}\n",
@@ -559,7 +559,7 @@ async def test_program_runner_uses_isolated_python_for_windows_script(
         dispatch=cast(Any, None),
     )
 
-    prepared = await run_flow_tool._prepare_program(invocation)
+    prepared = await run_mtd_tool._prepare_program(invocation)
 
     assert prepared.command == (sys.executable, "-I", str(worker))
     assert prepared.cwd == tmp_path
@@ -571,7 +571,7 @@ async def test_program_runner_keeps_windows_script_pinned_until_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    prepared = run_flow_tool._PreparedProgram(
+    prepared = run_mtd_tool._PreparedProgram(
         command=(sys.executable, "-I", str(tmp_path / "worker.py")),
         cwd=tmp_path,
         retained_handle=123,
@@ -595,12 +595,12 @@ async def test_program_runner_keeps_windows_script_pinned_until_exit(
     def close_prepared_program(value: Any) -> None:
         closed_handles.append(value.retained_handle)
 
-    monkeypatch.setattr(run_flow_tool, "_prepare_program", prepare_program)
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    monkeypatch.setattr(run_flow_tool, "_communicate_program", communicate_program)
-    monkeypatch.setattr(run_flow_tool, "_attach_windows_job", lambda process: None)
-    monkeypatch.setattr(run_flow_tool, "_close_prepared_program", close_prepared_program)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_prepare_program", prepare_program)
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    monkeypatch.setattr(run_mtd_tool, "_communicate_program", communicate_program)
+    monkeypatch.setattr(run_mtd_tool, "_attach_windows_job", lambda process: None)
+    monkeypatch.setattr(run_mtd_tool, "_close_prepared_program", close_prepared_program)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker.py",),
         stdin="{}\n",
@@ -609,7 +609,7 @@ async def test_program_runner_keeps_windows_script_pinned_until_exit(
         dispatch=cast(Any, None),
     )
 
-    assert await run_flow_tool._run_program(invocation) == "completed"
+    assert await run_mtd_tool._run_program(invocation) == "completed"
     assert closed_handles == [123]
 
 
@@ -622,8 +622,8 @@ async def test_program_runner_rejects_executables_outside_workspace(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", workspace)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", workspace)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=(program_path,),
         stdin="{}\n",
@@ -633,7 +633,7 @@ async def test_program_runner_rejects_executables_outside_workspace(
     )
 
     with pytest.raises(ValueError, match="inside the workspace"):
-        await run_flow_tool._run_program(invocation)
+        await run_mtd_tool._run_program(invocation)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX symbolic links")
@@ -647,8 +647,8 @@ async def test_program_runner_rejects_symlink_escape(
     outside = tmp_path / "outside"
     outside.write_text("#!/bin/sh\n", encoding="utf-8")
     (workspace / "worker").symlink_to(outside)
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", workspace)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", workspace)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker",),
         stdin="{}\n",
@@ -658,7 +658,7 @@ async def test_program_runner_rejects_symlink_escape(
     )
 
     with pytest.raises(ValueError, match="inside the workspace"):
-        await run_flow_tool._run_program(invocation)
+        await run_mtd_tool._run_program(invocation)
 
 
 @pytest.mark.anyio
@@ -676,10 +676,10 @@ async def test_program_runner_rejects_invalid_output_limit_environment(
         spawned = True
         return _FakeProcess()
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setenv("PSI_FUSION_FLOW_PROGRAM_STDOUT_LIMIT_BYTES", configured)
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setenv("PSI_FUSION_METHOD_PROGRAM_STDOUT_LIMIT_BYTES", configured)
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker",),
         stdin="{}\n",
@@ -688,8 +688,8 @@ async def test_program_runner_rejects_invalid_output_limit_environment(
         dispatch=cast(Any, None),
     )
 
-    with pytest.raises(ValueError, match="PSI_FUSION_FLOW_PROGRAM_STDOUT_LIMIT_BYTES must be a positive integer"):
-        await run_flow_tool._run_program(invocation)
+    with pytest.raises(ValueError, match="PSI_FUSION_METHOD_PROGRAM_STDOUT_LIMIT_BYTES must be a positive integer"):
+        await run_mtd_tool._run_program(invocation)
 
     assert not spawned
 
@@ -698,8 +698,8 @@ async def test_program_runner_rejects_invalid_output_limit_environment(
 @pytest.mark.parametrize(
     ("stream_name", "limit_environment_variable"),
     [
-        ("stdout", "PSI_FUSION_FLOW_PROGRAM_STDOUT_LIMIT_BYTES"),
-        ("stderr", "PSI_FUSION_FLOW_PROGRAM_STDERR_LIMIT_BYTES"),
+        ("stdout", "PSI_FUSION_METHOD_PROGRAM_STDOUT_LIMIT_BYTES"),
+        ("stderr", "PSI_FUSION_METHOD_PROGRAM_STDERR_LIMIT_BYTES"),
     ],
 )
 async def test_program_runner_terminates_tree_when_output_exceeds_limit(
@@ -732,12 +732,12 @@ async def test_program_runner_terminates_tree_when_output_exceeds_limit(
         tree_terminations += 1
         target.kill()
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
     monkeypatch.setenv(limit_environment_variable, "4")
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    monkeypatch.setattr(run_flow_tool, "_attach_windows_job", lambda process: None)
-    monkeypatch.setattr(run_flow_tool, "_terminate_process_tree", terminate_process_tree)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    monkeypatch.setattr(run_mtd_tool, "_attach_windows_job", lambda process: None)
+    monkeypatch.setattr(run_mtd_tool, "_terminate_process_tree", terminate_process_tree)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker",),
         stdin="{}\n",
@@ -747,7 +747,7 @@ async def test_program_runner_terminates_tree_when_output_exceeds_limit(
     )
 
     with pytest.raises(RuntimeError, match=rf"{stream_name} exceeded the 4-byte limit"):
-        await run_flow_tool._run_program(invocation)
+        await run_mtd_tool._run_program(invocation)
 
     assert tree_terminations >= 1
     assert process.killed
@@ -779,10 +779,10 @@ async def test_program_runner_obeys_external_cancellation_and_cleans_up(
         await spawn_started.wait()
         cancel_scope.cancel()
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    monkeypatch.setattr(run_flow_tool, "_attach_windows_job", lambda process: None)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    monkeypatch.setattr(run_mtd_tool, "_attach_windows_job", lambda process: None)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker",),
         stdin="{}\n",
@@ -794,7 +794,7 @@ async def test_program_runner_obeys_external_cancellation_and_cleans_up(
     with anyio.CancelScope() as cancel_scope:
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(cancel_during_spawn, cancel_scope)
-            await run_flow_tool._run_program(invocation)
+            await run_mtd_tool._run_program(invocation)
 
     assert cancel_scope.cancel_called
     assert spawn_returned
@@ -838,11 +838,11 @@ async def test_program_runner_cleans_up_when_windows_job_attachment_fails(
         target.kill()
         await target.wait()
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool.anyio, "open_process", open_process)
-    monkeypatch.setattr(run_flow_tool, "_attach_windows_job", attach_windows_job)
-    monkeypatch.setattr(run_flow_tool, "_terminate_process_tree", terminate_process_tree)
-    invocation = run_flow_tool.ProgramInvocation(
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool.anyio, "open_process", open_process)
+    monkeypatch.setattr(run_mtd_tool, "_attach_windows_job", attach_windows_job)
+    monkeypatch.setattr(run_mtd_tool, "_terminate_process_tree", terminate_process_tree)
+    invocation = run_mtd_tool.ProgramInvocation(
         name="worker",
         argv=("./worker",),
         stdin="{}\n",
@@ -852,7 +852,7 @@ async def test_program_runner_cleans_up_when_windows_job_attachment_fails(
     )
 
     with pytest.raises(RuntimeError, match="job attachment failed"):
-        await run_flow_tool._run_program(invocation)
+        await run_mtd_tool._run_program(invocation)
 
     assert tree_terminations == 1
     assert process.killed
@@ -880,15 +880,15 @@ async def test_program_tree_cleanup_kills_descendants_that_inherit_pipes(
     )
     process = await anyio.open_process(
         (sys.executable, "-c", parent, str(marker)),
-        stdout=run_flow_tool.subprocess.PIPE,
-        stderr=run_flow_tool.subprocess.PIPE,
+        stdout=run_mtd_tool.subprocess.PIPE,
+        stderr=run_mtd_tool.subprocess.PIPE,
         start_new_session=True,
     )
     assert process.stdout is not None
     assert b"ready" in await process.stdout.receive()
-    monkeypatch.setattr(run_flow_tool, "_PROGRAM_TERMINATION_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(run_mtd_tool, "_PROGRAM_TERMINATION_GRACE_SECONDS", 0.05)
 
-    await run_flow_tool._terminate_process_tree(process, None)
+    await run_mtd_tool._terminate_process_tree(process, None)
     await process.aclose()
     await anyio.sleep(0.4)
 
@@ -916,10 +916,10 @@ async def test_windows_job_termination_failure_closes_kill_on_close_job(
             return 5
 
     process = _BlockingFakeProcess()
-    job = run_flow_tool._WindowsJob(123)
-    monkeypatch.setattr(run_flow_tool.sys, "platform", "win32")
+    job = run_mtd_tool._WindowsJob(123)
+    monkeypatch.setattr(run_mtd_tool.sys, "platform", "win32")
     monkeypatch.setattr(
-        run_flow_tool,
+        run_mtd_tool,
         "_kernel32",
         SimpleNamespace(
             TerminateJobObject=terminate_job_object,
@@ -927,10 +927,10 @@ async def test_windows_job_termination_failure_closes_kill_on_close_job(
         ),
         raising=False,
     )
-    monkeypatch.setattr(run_flow_tool, "ctypes", FakeCtypes(), raising=False)
+    monkeypatch.setattr(run_mtd_tool, "ctypes", FakeCtypes(), raising=False)
 
     with pytest.raises(OSError, match="cannot terminate Windows Program Job Object"):
-        await run_flow_tool._terminate_process_tree(process, job)
+        await run_mtd_tool._terminate_process_tree(process, job)
 
     assert calls == [("terminate", 123), ("close", 123)]
     assert job.handle is None
@@ -938,13 +938,13 @@ async def test_windows_job_termination_failure_closes_kill_on_close_job(
 
 
 @pytest.mark.anyio
-async def test_run_flow_executes_once_with_dependencies_and_resources(
+async def test_run_mtd_executes_once_with_dependencies_and_resources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    flows = anyio.Path(tmp_path / "flows")
-    await flows.mkdir()
-    await (flows / "ordered.workflow").write_text(_ORDERED_RESOURCE_WORKFLOW, encoding="utf-8")
+    mtds = anyio.Path(tmp_path / "mtds")
+    await mtds.mkdir()
+    await (mtds / "ordered.method").write_text(_ORDERED_RESOURCE_METHOD, encoding="utf-8")
     prompts: list[str] = []
 
     class FakeConversation:
@@ -991,19 +991,19 @@ async def test_run_flow_executes_once_with_dependencies_and_resources(
         tool_registry: ToolRegistry,
     ) -> tuple[FakeAgent, FakeConversation]:
         assert ai_socket == "http://ai.example"
-        assert "run_flow" not in tool_registry.tools
+        assert "run_mtd" not in tool_registry.tools
         conversation = FakeConversation()
         agent = FakeAgent(conversation)
         agents.append(agent)
         return agent, conversation
 
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
 
     with path_scope(workspace=str(tmp_path), agent=str(_WORKSPACE_DIR)):
-        result = await run_flow_tool.run_flow(
-            "flows/ordered.workflow",
+        result = await run_mtd_tool.run_mtd(
+            "mtds/ordered.method",
             '{"request": "go"}',
             '{"gpu": ["cuda:0"]}',
         )
@@ -1018,7 +1018,7 @@ async def test_run_flow_executes_once_with_dependencies_and_resources(
     assert "Reserved resources: {}" in prompts[1]
     assert all(f"Workspace root: {tmp_path}\n" in prompt for prompt in prompts)
     assert len(agents) == 2
-    run_dirs = [entry async for entry in (flows / "runs").iterdir()]
+    run_dirs = [entry async for entry in (mtds / "runs").iterdir()]
     assert len(run_dirs) == 1
     artifacts = run_dirs[0] / "artifacts"
     assert await (artifacts / "request.md").read_text(encoding="utf-8") == "go"
@@ -1028,13 +1028,13 @@ async def test_run_flow_executes_once_with_dependencies_and_resources(
 
 
 @pytest.mark.anyio
-async def test_run_flow_keeps_materialized_artifacts_when_a_later_step_fails(
+async def test_run_mtd_keeps_materialized_artifacts_when_a_later_step_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    flows = anyio.Path(tmp_path / "flows")
-    await flows.mkdir()
-    await (flows / "ordered.workflow").write_text(_ORDERED_RESOURCE_WORKFLOW, encoding="utf-8")
+    mtds = anyio.Path(tmp_path / "mtds")
+    await mtds.mkdir()
+    await (mtds / "ordered.method").write_text(_ORDERED_RESOURCE_METHOD, encoding="utf-8")
 
     async def load_step_tools() -> ToolRegistry:
         return ToolRegistry()
@@ -1052,15 +1052,15 @@ async def test_run_flow_keeps_materialized_artifacts_when_a_later_step_fails(
             return {"before_result": "completed-before-failure"}
         raise RuntimeError("later Agent step failed")
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
-    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
-    monkeypatch.setattr(run_flow_tool, "_complete_agent_step", complete_agent_step)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_mtd_tool, "_complete_agent_step", complete_agent_step)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
 
     with pytest.raises(ExceptionGroup) as error:
-        await run_flow_tool.run_flow(
-            "flows/ordered.workflow",
+        await run_mtd_tool.run_mtd(
+            "mtds/ordered.method",
             '{"request": "go"}',
             '{"gpu": 1}',
         )
@@ -1069,7 +1069,7 @@ async def test_run_flow_keeps_materialized_artifacts_when_a_later_step_fails(
     assert isinstance(error.value.exceptions[0], RuntimeError)
     assert str(error.value.exceptions[0]) == "later Agent step failed"
 
-    run_dirs = [entry async for entry in (flows / "runs").iterdir()]
+    run_dirs = [entry async for entry in (mtds / "runs").iterdir()]
     assert len(run_dirs) == 1
     artifacts = run_dirs[0] / "artifacts"
     assert await (artifacts / "request.md").read_text(encoding="utf-8") == "go"
@@ -1080,19 +1080,19 @@ async def test_run_flow_keeps_materialized_artifacts_when_a_later_step_fails(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("failure_mode", ["missing", "invalid-utf8"])
-async def test_run_flow_delegates_unreadable_agent_instruction_file(
+async def test_run_mtd_delegates_unreadable_agent_instruction_file(
     failure_mode: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bundle = anyio.Path(tmp_path / "flows" / "research")
+    bundle = anyio.Path(tmp_path / "mtds" / "research")
     await bundle.mkdir(parents=True)
     reference = "./instructions/missing.md"
-    source = _ORDERED_RESOURCE_WORKFLOW.replace('"after"', f'"{reference}"').replace(
+    source = _ORDERED_RESOURCE_METHOD.replace('"after"', f'"{reference}"').replace(
         '"before"',
         f'"{reference}"',
     )
-    await (bundle / "flow.workflow").write_text(source, encoding="utf-8")
+    await (bundle / "mtd.method").write_text(source, encoding="utf-8")
     if failure_mode == "invalid-utf8":
         instructions = bundle / "instructions"
         await instructions.mkdir()
@@ -1119,14 +1119,14 @@ async def test_run_flow_delegates_unreadable_agent_instruction_file(
             return {"after_result": "AFTER"}
         raise AssertionError(f"unexpected Agent step: {context.step_id}")
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
-    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
-    monkeypatch.setattr(run_flow_tool, "_complete_agent_step", complete_agent_step)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_mtd_tool, "_complete_agent_step", complete_agent_step)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
 
-    result = await run_flow_tool.run_flow(
-        "flows/research/flow.workflow",
+    result = await run_mtd_tool.run_mtd(
+        "mtds/research/mtd.method",
         '{"request": "go"}',
         '{"gpu": 1}',
     )
@@ -1137,7 +1137,7 @@ async def test_run_flow_delegates_unreadable_agent_instruction_file(
         "selected_result": "BEFORE",
     }
     expected = (
-        'Instruction:\nThe instruction for this step is the workspace file "flows/research/instructions/missing.md".'
+        'Instruction:\nThe instruction for this step is the workspace file "mtds/research/instructions/missing.md".'
     )
     assert len(prompts) == 2
     assert all(expected in prompt for prompt in prompts)
@@ -1146,22 +1146,22 @@ async def test_run_flow_delegates_unreadable_agent_instruction_file(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("source", "flow_name"),
+    ("source", "mtd_name"),
     [
-        (_PROGRAM_WORKFLOW.replace('"after"', '"./instructions/missing.md"'), "program"),
-        (_HUMAN_WORKFLOW, "human"),
+        (_PROGRAM_METHOD.replace('"after"', '"./instructions/missing.md"'), "program"),
+        (_HUMAN_METHOD, "human"),
     ],
     ids=["program", "human"],
 )
-async def test_run_flow_does_not_delegate_unreadable_non_agent_instruction_file(
+async def test_run_mtd_does_not_delegate_unreadable_non_agent_instruction_file(
     source: str,
-    flow_name: str,
+    mtd_name: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    flow_path = anyio.Path(tmp_path / "flows" / f"{flow_name}.workflow")
-    await flow_path.parent.mkdir()
-    await flow_path.write_text(source, encoding="utf-8")
+    mtd_path = anyio.Path(tmp_path / "mtds" / f"{mtd_name}.method")
+    await mtd_path.parent.mkdir()
+    await mtd_path.write_text(source, encoding="utf-8")
     dispatched = False
 
     async def execute_program(invocation: Any) -> str:
@@ -1170,13 +1170,13 @@ async def test_run_flow_does_not_delegate_unreadable_non_agent_instruction_file(
         dispatched = True
         return ""
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
-    monkeypatch.setattr(run_flow_tool, "_run_program", execute_program)
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_run_program", execute_program)
 
     with pytest.raises(ValueError, match="instruction path does not name a file"):
-        await run_flow_tool.run_flow(
-            f"flows/{flow_name}.workflow",
+        await run_mtd_tool.run_mtd(
+            f"mtds/{mtd_name}.method",
             '{"request": "go"}',
         )
 
@@ -1184,22 +1184,22 @@ async def test_run_flow_does_not_delegate_unreadable_non_agent_instruction_file(
 
 
 @pytest.mark.anyio
-async def test_run_flow_executes_program_without_creating_agent_session(
+async def test_run_mtd_executes_program_without_creating_agent_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    flow_path = anyio.Path(tmp_path / "flows" / "program.workflow")
-    await flow_path.parent.mkdir()
+    mtd_path = anyio.Path(tmp_path / "mtds" / "program.method")
+    await mtd_path.parent.mkdir()
     instruction = "Run the assigned program step with its consumed request and return the requested result."
-    source = _PROGRAM_WORKFLOW.replace(
+    source = _PROGRAM_METHOD.replace(
         '"after"',
         '"./instructions/program.md"',
     ).replace(
         '"before"',
         '"./instructions/program.md"',
     )
-    await flow_path.write_text(source, encoding="utf-8")
-    instruction_path = flow_path.parent / "instructions" / "program.md"
+    await mtd_path.write_text(source, encoding="utf-8")
+    instruction_path = mtd_path.parent / "instructions" / "program.md"
     await instruction_path.parent.mkdir()
     await instruction_path.write_text(instruction, encoding="utf-8")
     created = False
@@ -1228,15 +1228,15 @@ async def test_run_flow_executes_program_without_creating_agent_session(
         )
         return "BEFORE" if invocation.binding_name == "before_step" else "AFTER"
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
-    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
-    monkeypatch.setattr(run_flow_tool, "_run_program", execute_program)
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_run_program", execute_program)
 
-    result = await run_flow_tool.run_flow(
-        "flows/program.workflow",
+    result = await run_mtd_tool.run_mtd(
+        "mtds/program.method",
         '{"request": "go"}',
     )
 
@@ -1264,9 +1264,9 @@ async def test_status_artifact_cannot_collide_with_human_control_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    flow_path = anyio.Path(tmp_path / "flows" / "status.workflow")
-    await flow_path.parent.mkdir()
-    await flow_path.write_text(_STATUS_ARTIFACT_WORKFLOW, encoding="utf-8")
+    mtd_path = anyio.Path(tmp_path / "mtds" / "status.method")
+    await mtd_path.parent.mkdir()
+    await mtd_path.write_text(_STATUS_ARTIFACT_METHOD, encoding="utf-8")
 
     async def load_step_tools() -> ToolRegistry:
         return ToolRegistry()
@@ -1283,20 +1283,20 @@ async def test_status_artifact_cannot_collide_with_human_control_envelope(
         assert ai_socket == "http://ai.example"
         return {"status": "waiting_for_human"}
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
-    monkeypatch.setattr(run_flow_tool, "_complete_agent_step", complete_agent_step)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_mtd_tool, "_complete_agent_step", complete_agent_step)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
 
     result = json.loads(
-        await run_flow_tool.run_flow(
-            "flows/status.workflow",
+        await run_mtd_tool.run_mtd(
+            "mtds/status.method",
             '{"request": "report"}',
         )
     )
 
     assert result == {"status": "waiting_for_human"}
-    assert run_flow_tool._HUMAN_CONTROL_KEY not in result
+    assert run_mtd_tool._HUMAN_CONTROL_KEY not in result
 
 
 @pytest.mark.anyio
@@ -1313,10 +1313,10 @@ async def test_human_step_waits_via_clarify_and_resumes_from_checkpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    flow_path = anyio.Path(tmp_path / "flows" / "review.workflow")
-    await flow_path.parent.mkdir(parents=True)
-    await flow_path.write_text(_HUMAN_WORKFLOW, encoding="utf-8")
-    instructions_dir = flow_path.parent / "instructions"
+    mtd_path = anyio.Path(tmp_path / "mtds" / "review.method")
+    await mtd_path.parent.mkdir(parents=True)
+    await mtd_path.write_text(_HUMAN_METHOD, encoding="utf-8")
+    instructions_dir = mtd_path.parent / "instructions"
     await instructions_dir.mkdir()
     await (instructions_dir / "review.md").write_text(
         "Review the draft proposal. Ask the human to approve it or provide concrete requested changes.",
@@ -1366,21 +1366,21 @@ async def test_human_step_waits_via_clarify_and_resumes_from_checkpoint(
             }
         )
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
-    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
-    monkeypatch.setattr(run_flow_tool, "_complete_agent_step", complete_agent_step)
-    monkeypatch.setattr(run_flow_tool, "_prepare_human_step", prepare_human_step)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_mtd_tool, "_complete_agent_step", complete_agent_step)
+    monkeypatch.setattr(run_mtd_tool, "_prepare_human_step", prepare_human_step)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
 
     waiting = json.loads(
-        await run_flow_tool.run_flow(
-            "flows/review.workflow",
+        await run_mtd_tool.run_mtd(
+            "mtds/review.method",
             '{"request": "write a launch plan"}',
         )
     )
-    assert set(waiting) == {run_flow_tool._HUMAN_CONTROL_KEY}
-    control = waiting[run_flow_tool._HUMAN_CONTROL_KEY]
+    assert set(waiting) == {run_mtd_tool._HUMAN_CONTROL_KEY}
+    control = waiting[run_mtd_tool._HUMAN_CONTROL_KEY]
 
     assert control["status"] == "waiting_for_human"
     assert set(control["request"]) == {
@@ -1411,7 +1411,7 @@ async def test_human_step_waits_via_clarify_and_resumes_from_checkpoint(
     assert "Approve (recommended)" in formatted
     assert "Other — type your own answer" in formatted
 
-    store = run_flow_tool._job_store()
+    store = run_mtd_tool._job_store()
     persisted = await store.load(control["run_id"])
     assert persisted.status == "waiting_for_human"
     assert persisted.checkpoint is not None
@@ -1423,12 +1423,12 @@ async def test_human_step_waits_via_clarify_and_resumes_from_checkpoint(
 
     request_id = control["request"]["request_id"]
     with pytest.raises(ValueError, match="does not match the active Human request"):
-        await run_flow_tool.run_flow_resume(
+        await run_mtd_tool.run_mtd_resume(
             control["run_id"],
             "0" * 32,
             json.dumps(human_response),
         )
-    result = await run_flow_tool.run_flow_resume(
+    result = await run_mtd_tool.run_mtd_resume(
         control["run_id"],
         request_id,
         json.dumps(human_response),
@@ -1453,7 +1453,7 @@ async def test_human_step_waits_via_clarify_and_resumes_from_checkpoint(
     )
     artifacts = anyio.Path(
         tmp_path,
-        "flows",
+        "mtds",
         "runs",
         control["run_id"],
         "artifacts",
@@ -1466,7 +1466,7 @@ async def test_human_step_waits_via_clarify_and_resumes_from_checkpoint(
     )
 
     assert (
-        await run_flow_tool.run_flow_resume(
+        await run_mtd_tool.run_mtd_resume(
             control["run_id"],
             request_id,
             json.dumps(human_response),
@@ -1474,7 +1474,7 @@ async def test_human_step_waits_via_clarify_and_resumes_from_checkpoint(
         == result
     )
     with pytest.raises(ValueError, match="different response"):
-        await run_flow_tool.run_flow_resume(
+        await run_mtd_tool.run_mtd_resume(
             control["run_id"],
             request_id,
             '"different"',
@@ -1486,10 +1486,10 @@ async def test_human_resume_rejects_changed_instruction_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    flow_path = anyio.Path(tmp_path / "flows" / "review.workflow")
-    await flow_path.parent.mkdir(parents=True)
-    await flow_path.write_text(_HUMAN_WORKFLOW, encoding="utf-8")
-    instructions = flow_path.parent / "instructions"
+    mtd_path = anyio.Path(tmp_path / "mtds" / "review.method")
+    await mtd_path.parent.mkdir(parents=True)
+    await mtd_path.write_text(_HUMAN_METHOD, encoding="utf-8")
+    instructions = mtd_path.parent / "instructions"
     await instructions.mkdir()
     instruction_path = instructions / "review.md"
     await instruction_path.write_text("Review the original draft.", encoding="utf-8")
@@ -1525,31 +1525,31 @@ async def test_human_resume_rejects_changed_instruction_file(
     async def load_step_tools() -> ToolRegistry:
         return ToolRegistry()
 
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
-    monkeypatch.setattr(run_flow_tool, "_load_step_tools", load_step_tools)
-    monkeypatch.setattr(run_flow_tool, "_complete_agent_step", complete_agent_step)
-    monkeypatch.setattr(run_flow_tool, "_prepare_human_step", prepare_human_step)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "_load_step_tools", load_step_tools)
+    monkeypatch.setattr(run_mtd_tool, "_complete_agent_step", complete_agent_step)
+    monkeypatch.setattr(run_mtd_tool, "_prepare_human_step", prepare_human_step)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
 
     waiting = json.loads(
-        await run_flow_tool.run_flow(
-            "flows/review.workflow",
+        await run_mtd_tool.run_mtd(
+            "mtds/review.method",
             '{"request": "write a launch plan"}',
         )
-    )[run_flow_tool._HUMAN_CONTROL_KEY]
+    )[run_mtd_tool._HUMAN_CONTROL_KEY]
     await instruction_path.write_text("Review a changed draft.", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="workflow definition changed"):
-        await run_flow_tool.run_flow_resume(
+    with pytest.raises(ValueError, match="method definition changed"):
+        await run_mtd_tool.run_mtd_resume(
             waiting["run_id"],
             waiting["request"]["request_id"],
             '"Approve"',
         )
 
-    failed = await run_flow_tool._job_store().load(waiting["run_id"])
+    failed = await run_mtd_tool._job_store().load(waiting["run_id"])
     assert failed.status == "failed"
-    assert failed.error == "workflow definition changed after the Human request was prepared"
+    assert failed.error == "method definition changed after the Human request was prepared"
 
 
 @pytest.mark.anyio
@@ -1557,16 +1557,16 @@ async def test_human_resume_preserves_legacy_source_digest_instruction_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    legacy_source = _HUMAN_WORKFLOW.replace(
+    legacy_source = _HUMAN_METHOD.replace(
         "./instructions/review.md",
         "./instructions/review.txt",
     )
-    flow_path = anyio.Path(tmp_path / "flows" / "review.workflow")
-    await flow_path.parent.mkdir(parents=True)
-    await flow_path.write_text(legacy_source, encoding="utf-8")
-    compiled = run_flow_tool.compile_workflow(legacy_source, strict_executors=True)
-    checkpoint = run_flow_tool.create_execution_checkpoint(
-        run_flow_tool.generate_plan(compiled.graph),
+    mtd_path = anyio.Path(tmp_path / "mtds" / "review.method")
+    await mtd_path.parent.mkdir(parents=True)
+    await mtd_path.write_text(legacy_source, encoding="utf-8")
+    compiled = run_mtd_tool.compile_method(legacy_source, strict_executors=True)
+    checkpoint = run_mtd_tool.create_execution_checkpoint(
+        run_mtd_tool.generate_plan(compiled.graph),
         compiled.graph,
         values={
             "request": "write a launch plan",
@@ -1574,15 +1574,15 @@ async def test_human_resume_preserves_legacy_source_digest_instruction_identity(
         },
         completed_step_ids=("draft_step",),
     )
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    store = run_flow_tool._job_store()
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    store = run_mtd_tool._job_store()
     run = await store.create(
-        flow_path="flows/review.workflow",
-        flow_source=legacy_source,
+        mtd_path="mtds/review.method",
+        mtd_source=legacy_source,
         inputs={"request": "write a launch plan"},
         checkpoint=checkpoint,
     )
-    request = run_flow_tool.HumanRequestSpec.create(
+    request = run_mtd_tool.HumanRequestSpec.create(
         step_id="review_step",
         question="Approve?",
         output_artifact_ids=("decision",),
@@ -1597,16 +1597,16 @@ async def test_human_resume_preserves_legacy_source_digest_instruction_identity(
 
     captured: list[str] = []
 
-    async def execute_workflow(source: str, **kwargs: Any) -> dict[str, object]:
+    async def execute_method(source: str, **kwargs: Any) -> dict[str, object]:
         assert source == legacy_source
         resolver = kwargs["resolve_instruction"]
         captured.append(await resolver("./instructions/review.txt"))
         return {"result": "resumed"}
 
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
-    monkeypatch.setattr(run_flow_tool, "_execute_workflow", execute_workflow)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    monkeypatch.setattr(run_mtd_tool, "_execute_method", execute_method)
 
-    result = await run_flow_tool.run_flow_resume(
+    result = await run_mtd_tool.run_mtd_resume(
         run.run_id,
         request.request_id,
         '"Approve"',
@@ -1618,22 +1618,22 @@ async def test_human_resume_preserves_legacy_source_digest_instruction_identity(
 
 def test_human_response_checkpoint_supports_zero_and_multiple_outputs() -> None:
     checkpoint = _test_checkpoint({"request": "review"})
-    gate = run_flow_tool.HumanRequestSpec.create(
+    gate = run_mtd_tool.HumanRequestSpec.create(
         step_id="gate_step",
         question="Continue?",
         output_artifact_ids=(),
     )
-    gated = run_flow_tool._checkpoint_human_response(checkpoint, gate, "Approve")
+    gated = run_mtd_tool._checkpoint_human_response(checkpoint, gate, "Approve")
 
     assert gated.values == {"request": "review"}
     assert gated.completed_step_ids == ("gate_step",)
 
-    review = run_flow_tool.HumanRequestSpec.create(
+    review = run_mtd_tool.HumanRequestSpec.create(
         step_id="review_step",
         question="Decide and comment.",
         output_artifact_ids=("decision", "comment"),
     )
-    reviewed = run_flow_tool._checkpoint_human_response(
+    reviewed = run_mtd_tool._checkpoint_human_response(
         checkpoint,
         review,
         {"decision": "Approve", "comment": "Ship it."},
@@ -1653,19 +1653,19 @@ async def test_invalid_multi_output_human_response_remains_correctable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = "human response contract"
-    flow_path = anyio.Path(tmp_path / "flows" / "review.workflow")
-    await flow_path.parent.mkdir()
-    await flow_path.write_text(source, encoding="utf-8")
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
-    store = run_flow_tool._job_store()
+    mtd_path = anyio.Path(tmp_path / "mtds" / "review.method")
+    await mtd_path.parent.mkdir()
+    await mtd_path.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    store = run_mtd_tool._job_store()
     run = await store.create(
-        flow_path="flows/review.workflow",
-        flow_source=source,
+        mtd_path="mtds/review.method",
+        mtd_source=source,
         inputs={"request": "review"},
         checkpoint=_test_checkpoint({"request": "review"}),
     )
-    request = run_flow_tool.HumanRequestSpec.create(
+    request = run_mtd_tool.HumanRequestSpec.create(
         step_id="review_step",
         question="Decide and comment.",
         output_artifact_ids=("decision", "comment"),
@@ -1681,7 +1681,7 @@ async def test_invalid_multi_output_human_response_remains_correctable(
     resumed_runs: list[Any] = []
 
     async def execute_persisted_run(
-        flow_source: str,
+        mtd_source: str,
         resumed: Any,
         lease: Any,
         *,
@@ -1689,15 +1689,15 @@ async def test_invalid_multi_output_human_response_remains_correctable(
         instruction_files: dict[str, str] | None = None,
     ) -> str:
         del lease, instruction_files
-        assert flow_source == source
+        assert mtd_source == source
         assert ai_socket == "http://ai.example"
         resumed_runs.append(resumed)
         return '{"accepted": true}'
 
-    monkeypatch.setattr(run_flow_tool, "_execute_persisted_run", execute_persisted_run)
+    monkeypatch.setattr(run_mtd_tool, "_execute_persisted_run", execute_persisted_run)
 
     with pytest.raises(ValueError, match="must receive a JSON object"):
-        await run_flow_tool.run_flow_resume(
+        await run_mtd_tool.run_mtd_resume(
             run.run_id,
             request.request_id,
             '"Approve"',
@@ -1706,7 +1706,7 @@ async def test_invalid_multi_output_human_response_remains_correctable(
     still_waiting = await store.load(run.run_id)
     assert still_waiting == waiting
 
-    result = await run_flow_tool.run_flow_resume(
+    result = await run_mtd_tool.run_mtd_resume(
         run.run_id,
         request.request_id,
         '{"decision": "Approve", "comment": "Ship it."}',
@@ -1737,27 +1737,27 @@ async def test_retrying_previous_human_response_replays_current_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = "two human requests"
-    flow_path = anyio.Path(tmp_path / "flows" / "review.workflow")
-    await flow_path.parent.mkdir()
-    await flow_path.write_text(source, encoding="utf-8")
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
-    store = run_flow_tool._job_store()
+    mtd_path = anyio.Path(tmp_path / "mtds" / "review.method")
+    await mtd_path.parent.mkdir()
+    await mtd_path.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    store = run_mtd_tool._job_store()
     run = await store.create(
-        flow_path="flows/review.workflow",
-        flow_source=source,
+        mtd_path="mtds/review.method",
+        mtd_source=source,
         inputs={"request": "review"},
         checkpoint=_test_checkpoint(
             {"request": "review", "first_decision": True},
             completed_step_ids=("first_review",),
         ),
     )
-    previous = run_flow_tool.HumanRequestSpec.create(
+    previous = run_mtd_tool.HumanRequestSpec.create(
         step_id="first_review",
         question="First approval?",
         output_artifact_ids=("first_decision",),
     )
-    current = run_flow_tool.HumanRequestSpec.create(
+    current = run_mtd_tool.HumanRequestSpec.create(
         step_id="second_review",
         question="Second approval?",
         output_artifact_ids=("second_decision",),
@@ -1772,21 +1772,21 @@ async def test_retrying_previous_human_response_replays_current_request(
         await lease.save(waiting)
 
     replayed = json.loads(
-        await run_flow_tool.run_flow_resume(
+        await run_mtd_tool.run_mtd_resume(
             run.run_id,
             previous.request_id,
             "true",
         )
     )
-    assert set(replayed) == {run_flow_tool._HUMAN_CONTROL_KEY}
-    replayed_control = replayed[run_flow_tool._HUMAN_CONTROL_KEY]
+    assert set(replayed) == {run_mtd_tool._HUMAN_CONTROL_KEY}
+    replayed_control = replayed[run_mtd_tool._HUMAN_CONTROL_KEY]
 
     assert replayed_control["status"] == "waiting_for_human"
     assert replayed_control["request"]["request_id"] == current.request_id
     assert await store.load(run.run_id) == waiting
 
     with pytest.raises(ValueError, match="different response"):
-        await run_flow_tool.run_flow_resume(
+        await run_mtd_tool.run_mtd_resume(
             run.run_id,
             previous.request_id,
             "1",
@@ -1799,21 +1799,21 @@ async def test_cancelled_resume_keeps_checkpoint_recoverable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = "cancelled resume"
-    flow_path = anyio.Path(tmp_path / "flows" / "review.workflow")
-    await flow_path.parent.mkdir()
-    await flow_path.write_text(source, encoding="utf-8")
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    store = run_flow_tool._job_store()
+    mtd_path = anyio.Path(tmp_path / "mtds" / "review.method")
+    await mtd_path.parent.mkdir()
+    await mtd_path.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    store = run_mtd_tool._job_store()
     run = await store.create(
-        flow_path="flows/review.workflow",
-        flow_source=source,
+        mtd_path="mtds/review.method",
+        mtd_source=source,
         inputs={"request": "review"},
         checkpoint=_test_checkpoint(
             {"request": "review", "decision": "Approve"},
             completed_step_ids=("review_step",),
         ),
     )
-    request = run_flow_tool.HumanRequestSpec.create(
+    request = run_mtd_tool.HumanRequestSpec.create(
         step_id="review_step",
         question="Approve?",
         output_artifact_ids=("decision",),
@@ -1827,19 +1827,19 @@ async def test_cancelled_resume_keeps_checkpoint_recoverable(
 
     started = anyio.Event()
 
-    async def execute_workflow(flow_source: str, **kwargs: Any) -> dict[str, object]:
+    async def execute_method(mtd_source: str, **kwargs: Any) -> dict[str, object]:
         del kwargs
-        assert flow_source == source
+        assert mtd_source == source
         started.set()
         await anyio.sleep_forever()
         raise AssertionError("sleep_forever returned unexpectedly")
 
-    monkeypatch.setattr(run_flow_tool, "_execute_workflow", execute_workflow)
+    monkeypatch.setattr(run_mtd_tool, "_execute_method", execute_method)
 
     async with store.acquire(run.run_id) as lease:
 
         async def execute_persisted() -> None:
-            await run_flow_tool._execute_persisted_run(
+            await run_mtd_tool._execute_persisted_run(
                 source,
                 await lease.load(),
                 lease,
@@ -1859,24 +1859,24 @@ async def test_cancelled_resume_keeps_checkpoint_recoverable(
 
 
 @pytest.mark.anyio
-async def test_human_resume_rejects_changed_workflow_source(
+async def test_human_resume_rejects_changed_method_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    flow_path = anyio.Path(tmp_path / "flows" / "changed.workflow")
-    await flow_path.parent.mkdir()
+    mtd_path = anyio.Path(tmp_path / "mtds" / "changed.method")
+    await mtd_path.parent.mkdir()
     original_source = "original source"
-    await flow_path.write_text(original_source, encoding="utf-8")
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: "http://ai.example")
-    store = run_flow_tool._job_store()
+    await mtd_path.write_text(original_source, encoding="utf-8")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: "http://ai.example")
+    store = run_mtd_tool._job_store()
     run = await store.create(
-        flow_path="flows/changed.workflow",
-        flow_source=original_source,
+        mtd_path="mtds/changed.method",
+        mtd_source=original_source,
         inputs={"request": "review"},
         checkpoint=_test_checkpoint({"request": "review"}),
     )
-    request = run_flow_tool.HumanRequestSpec.create(
+    request = run_mtd_tool.HumanRequestSpec.create(
         step_id="review_step",
         question="Approve?",
         output_artifact_ids=("decision",),
@@ -1889,10 +1889,10 @@ async def test_human_resume_rejects_changed_workflow_source(
     )
     async with store.acquire(run.run_id) as lease:
         await lease.save(waiting)
-    await flow_path.write_text("changed source", encoding="utf-8")
+    await mtd_path.write_text("changed source", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="workflow definition changed"):
-        await run_flow_tool.run_flow_resume(
+    with pytest.raises(ValueError, match="method definition changed"):
+        await run_mtd_tool.run_mtd_resume(
             run.run_id,
             request.request_id,
             '"Approve"',
@@ -1900,7 +1900,7 @@ async def test_human_resume_rejects_changed_workflow_source(
 
     failed = await store.load(run.run_id)
     assert failed.status == "failed"
-    assert failed.error == "workflow definition changed after the Human request was prepared"
+    assert failed.error == "method definition changed after the Human request was prepared"
 
 
 @pytest.mark.anyio
@@ -1908,7 +1908,7 @@ async def test_step_agent_uses_in_memory_history_and_explicit_system_prompt(
     tmp_path: Path,
 ) -> None:
     with path_scope(workspace=str(tmp_path), agent=str(_WORKSPACE_DIR)):
-        agent, conversation = await run_flow_tool._create_step_agent(
+        agent, conversation = await run_mtd_tool._create_step_agent(
             "http://ai.example",
             ToolRegistry(),
         )
@@ -1918,7 +1918,7 @@ async def test_step_agent_uses_in_memory_history_and_explicit_system_prompt(
     assert agent._workspace_path == tmp_path
     assert agent._agent_path == _WORKSPACE_DIR
     assert conversation.messages == [
-        {"role": "system", "content": run_flow_tool._STEP_SYSTEM_PROMPT},
+        {"role": "system", "content": run_mtd_tool._STEP_SYSTEM_PROMPT},
     ]
     assert conversation._path is None
 
@@ -1939,7 +1939,7 @@ def _capture_agent_fallback_warnings(
 ) -> list[tuple[dict[str, object], str]]:
     warnings: list[tuple[dict[str, object], str]] = []
     monkeypatch.setattr(
-        run_flow_tool,
+        run_mtd_tool,
         "logger",
         SimpleNamespace(
             bind=lambda **fields: SimpleNamespace(
@@ -1974,26 +1974,26 @@ def _install_scripted_step_agent(
         tool_registry: ToolRegistry,
     ) -> tuple[Any, Any]:
         assert ai_socket == "http://ai.example"
-        conversation = run_flow_tool.Conversation(
-            messages=[{"role": "system", "content": run_flow_tool._STEP_SYSTEM_PROMPT}],
+        conversation = run_mtd_tool.Conversation(
+            messages=[{"role": "system", "content": run_mtd_tool._STEP_SYSTEM_PROMPT}],
         )
         return (
-            run_flow_tool.SessionAgent(
+            run_mtd_tool.SessionAgent(
                 ai_client=ScriptedAiClient(),
                 conversation=conversation,
-                schedule_registry=run_flow_tool._StepScheduleRegistry(),
+                schedule_registry=run_mtd_tool._StepScheduleRegistry(),
                 tool_registry=tool_registry,
             ),
             conversation,
         )
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
 
 def test_parse_agent_step_result_accepts_backticks_inside_fenced_json() -> None:
     response = 'Result:\n```json\n{"result": "Use ```bash```", "sources": ["source"]}\n```\n'
 
-    assert run_flow_tool._parse_agent_step_result(
+    assert run_mtd_tool._parse_agent_step_result(
         response,
         step_id="draft",
         output_ids=("result", "sources"),
@@ -2035,9 +2035,9 @@ async def test_agent_step_stops_on_submitted_result(
         captured_registry = tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
-    result = await run_flow_tool._complete_agent_step(
+    result = await run_mtd_tool._complete_agent_step(
         "Write the answer.",
         _agent_completion_context("result"),
         ai_socket="http://ai.example",
@@ -2110,7 +2110,7 @@ async def test_agent_step_repairs_duplicate_submissions(
         requests,
     )
 
-    result = await run_flow_tool._complete_agent_step(
+    result = await run_mtd_tool._complete_agent_step(
         "Write the answer.",
         _agent_completion_context("result"),
         ai_socket="http://ai.example",
@@ -2165,7 +2165,7 @@ async def test_agent_step_keeps_invalid_submission_repair_inside_agent_turn(
         requests,
     )
 
-    result = await run_flow_tool._complete_agent_step(
+    result = await run_mtd_tool._complete_agent_step(
         "Write the answer.",
         _agent_completion_context("result"),
         ai_socket="http://ai.example",
@@ -2219,10 +2219,10 @@ async def test_agent_step_rejects_abnormal_final_response(
         del ai_socket, tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
     with pytest.raises(RuntimeError, match=finish_reason):
-        await run_flow_tool._complete_agent_step(
+        await run_mtd_tool._complete_agent_step(
             "Write the answer.",
             _agent_completion_context("result"),
             ai_socket="http://ai.example",
@@ -2294,9 +2294,9 @@ async def test_agent_step_repairs_invalid_result(
         del ai_socket, tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
-    result = await run_flow_tool._complete_agent_step(
+    result = await run_mtd_tool._complete_agent_step(
         "Write the answer.",
         _agent_completion_context("result", "sources"),
         ai_socket="http://ai.example",
@@ -2369,8 +2369,8 @@ async def test_agent_step_preserves_raw_single_output(
         del ai_socket, tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
-    result = await run_flow_tool._complete_agent_step(
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
+    result = await run_mtd_tool._complete_agent_step(
         "Write the answer.",
         _agent_completion_context("result"),
         ai_socket="http://ai.example",
@@ -2390,14 +2390,14 @@ async def test_agent_step_preserves_raw_single_output(
         "validation_failure",
         "repair_attempts",
     }
-    assert fields["event"] == "fusion_flow.agent_result_fallback"
+    assert fields["event"] == "fusion_method.agent_result_fallback"
     assert fields["step_id"] == "draft"
     assert fields["executor_id"] == "writer"
     assert fields["output_artifact_ids"] == ["result"]
     assert fields["fallback_mode"] == "single_raw"
     assert fields["validation_failure"] == "unparseable_result"
     assert fields["repair_attempts"] == 0
-    assert message == "FusionFlow Agent Step committed a raw-response fallback"
+    assert message == "FusionMethod Agent Step committed a raw-response fallback"
     assert response not in message
     assert response not in json.dumps(fields, ensure_ascii=False)
 
@@ -2436,9 +2436,9 @@ async def test_agent_step_repairs_whitespace_for_zero_outputs(
         del ai_socket, tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
-    result = await run_flow_tool._complete_agent_step(
+    result = await run_mtd_tool._complete_agent_step(
         "Do the side effect.",
         _agent_completion_context(),
         ai_socket="http://ai.example",
@@ -2489,9 +2489,9 @@ async def test_agent_step_repairs_wrong_keys_for_single_output(
         del ai_socket, tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
-    result = await run_flow_tool._complete_agent_step(
+    result = await run_mtd_tool._complete_agent_step(
         "Write the answer.",
         _agent_completion_context("result"),
         ai_socket="http://ai.example",
@@ -2552,9 +2552,9 @@ async def test_agent_step_broadcasts_first_invalid_result_after_two_repairs(
         del ai_socket, tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
-    result = await run_flow_tool._complete_agent_step(
+    result = await run_mtd_tool._complete_agent_step(
         "Write the answer.",
         _agent_completion_context("result", "sources"),
         ai_socket="http://ai.example",
@@ -2568,14 +2568,14 @@ async def test_agent_step_broadcasts_first_invalid_result_after_two_repairs(
     assert len(prompts) == 3
     assert len(warnings) == 1
     fields, message = warnings[0]
-    assert fields["event"] == "fusion_flow.agent_result_fallback"
+    assert fields["event"] == "fusion_method.agent_result_fallback"
     assert fields["step_id"] == "draft"
     assert fields["executor_id"] == "writer"
     assert fields["output_artifact_ids"] == ["result", "sources"]
     assert fields["fallback_mode"] == "broadcast_raw"
     assert fields["validation_failure"] == validation_failure
     assert fields["repair_attempts"] == 2
-    assert message == "FusionFlow Agent Step committed a raw-response fallback"
+    assert message == "FusionMethod Agent Step committed a raw-response fallback"
     logged_fields = json.dumps(fields, ensure_ascii=False)
     for raw_response in response_values:
         assert raw_response not in message
@@ -2623,9 +2623,9 @@ async def test_agent_step_accepts_final_repair_without_broadcast(
         del ai_socket, tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
-    result = await run_flow_tool._complete_agent_step(
+    result = await run_mtd_tool._complete_agent_step(
         "Write the answer.",
         _agent_completion_context("result", "sources"),
         ai_socket="http://ai.example",
@@ -2673,10 +2673,10 @@ async def test_agent_step_with_no_outputs_fails_after_two_repairs(
         del ai_socket, tool_registry
         return FakeAgent(), conversation
 
-    monkeypatch.setattr(run_flow_tool, "_create_step_agent", create_step_agent)
+    monkeypatch.setattr(run_mtd_tool, "_create_step_agent", create_step_agent)
 
     with pytest.raises(ValueError, match="remained invalid after 3 attempts"):
-        await run_flow_tool._complete_agent_step(
+        await run_mtd_tool._complete_agent_step(
             "Write the answer.",
             _agent_completion_context(),
             ai_socket="http://ai.example",
@@ -2688,24 +2688,21 @@ async def test_agent_step_with_no_outputs_fails_after_two_repairs(
 
 
 @pytest.mark.anyio
-async def test_step_tool_snapshot_filters_run_flow(
+async def test_step_tool_snapshot_filters_run_mtd(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def echo(message: str) -> str:
         return message
 
-    async def nested_run_flow(flow_path: str) -> str:
-        return flow_path
+    async def nested_run_mtd(mtd_path: str) -> str:
+        return mtd_path
 
-    async def nested_run_flow_resume(
+    async def nested_run_mtd_resume(
         run_id: str,
         request_id: str,
         human_response_json: str,
     ) -> str:
         return f"{run_id}:{request_id}:{human_response_json}"
-
-    async def legacy_flow_run(flow_path: str) -> str:
-        return flow_path
 
     async def clarify(question: str) -> str:
         return question
@@ -2736,33 +2733,30 @@ async def test_step_tool_snapshot_filters_run_flow(
                 file_hash="",
                 tools={
                     "echo": ToolFunction.from_callable(echo),
-                    "flow_run": ToolFunction.from_callable(legacy_flow_run),
-                    "run_flow": ToolFunction.from_callable(nested_run_flow),
-                    "run_flow_resume": ToolFunction.from_callable(nested_run_flow_resume),
+                    "run_mtd": ToolFunction.from_callable(nested_run_mtd),
+                    "run_mtd_resume": ToolFunction.from_callable(nested_run_mtd_resume),
                     "clarify": ToolFunction.from_callable(clarify),
                 },
                 funcs={
                     "echo": echo,
-                    "flow_run": legacy_flow_run,
-                    "run_flow": nested_run_flow,
-                    "run_flow_resume": nested_run_flow_resume,
+                    "run_mtd": nested_run_mtd,
+                    "run_mtd_resume": nested_run_mtd_resume,
                     "clarify": clarify,
                 },
             )
         }
     )
 
-    monkeypatch.setattr(run_flow_tool, "ToolRegistry", FakeToolRegistry)
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
 
-    snapshot = await run_flow_tool._load_step_tools()
-    refreshed_snapshot = await run_flow_tool._load_step_tools()
+    snapshot = await run_mtd_tool._load_step_tools()
+    refreshed_snapshot = await run_mtd_tool._load_step_tools()
 
     assert set(snapshot.tools) == {"echo"}
     assert snapshot.get("echo") is echo
-    assert snapshot.get("flow_run") is None
-    assert snapshot.get("run_flow") is None
-    assert snapshot.get("run_flow_resume") is None
+    assert snapshot.get("run_mtd") is None
+    assert snapshot.get("run_mtd_resume") is None
     assert snapshot.get("clarify") is None
     assert set(refreshed_snapshot.tools) == {"echo"}
     assert loads == 1
@@ -2828,11 +2822,11 @@ async def test_step_file_tools_bind_relative_paths_to_workspace(
     await anyio.Path(sidecar.parent).mkdir()
     await anyio.Path(sidecar).write_text("workspace sidecar", encoding="utf-8")
     monkeypatch.chdir(launcher)
-    monkeypatch.setattr(run_flow_tool, "ToolRegistry", FakeToolRegistry)
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
 
     with path_scope(workspace=str(workspace), agent=str(_WORKSPACE_DIR)):
-        snapshot = await run_flow_tool._load_step_tools()
+        snapshot = await run_mtd_tool._load_step_tools()
     edit_tool = snapshot.get("edit")
     read_tool = snapshot.get("read")
     write_tool = snapshot.get("write")
@@ -2842,24 +2836,24 @@ async def test_step_file_tools_bind_relative_paths_to_workspace(
 
     assert await read_tool(file_path="instructions/review.md") == "workspace sidecar"
     await write_tool(
-        file_path="flows/workflows/child/child.workflow",
-        content="workflow child {}\n",
+        file_path="mtds/methods/child/child.method",
+        content="method child {}\n",
     )
     await edit_tool(
-        file_path="flows/workflows/child/child.workflow",
+        file_path="mtds/methods/child/child.method",
         old_string="child",
         new_string="saved_child",
     )
 
-    child = workspace / "flows" / "workflows" / "child" / "child.workflow"
-    assert await anyio.Path(child).read_text(encoding="utf-8") == "workflow saved_child {}\n"
+    child = workspace / "mtds" / "methods" / "child" / "child.method"
+    assert await anyio.Path(child).read_text(encoding="utf-8") == "method saved_child {}\n"
     assert received == {
         "edit": str(child),
         "read": str(sidecar),
         "write": str(child),
     }
     assert loaded_from == [_WORKSPACE_DIR / "tools"]
-    assert not await anyio.Path(launcher / "flows").exists()
+    assert not await anyio.Path(launcher / "mtds").exists()
 
 
 @pytest.mark.anyio
@@ -2901,12 +2895,12 @@ async def test_human_preparer_reads_through_workspace_bound_step_tools(
             del cls, tools_dir, session_id
             return source
 
-    monkeypatch.setattr(run_flow_tool, "ToolRegistry", FakeToolRegistry)
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", workspace)
-    monkeypatch.setattr(run_flow_tool, "_STEP_TOOLS_SOURCE", None)
+    monkeypatch.setattr(run_mtd_tool, "ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", workspace)
+    monkeypatch.setattr(run_mtd_tool, "_STEP_TOOLS_SOURCE", None)
 
-    step_tools = await run_flow_tool._load_step_tools()
-    human_tools = run_flow_tool._build_human_preparer_tools(step_tools)
+    step_tools = await run_mtd_tool._load_step_tools()
+    human_tools = run_mtd_tool._build_human_preparer_tools(step_tools)
     human_read = human_tools.get("read")
 
     assert human_read is not None
@@ -2960,9 +2954,9 @@ async def test_human_preparer_tools_are_read_only_and_workspace_confined(
             )
         }
     )
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", workspace)
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", workspace)
 
-    snapshot = run_flow_tool._build_human_preparer_tools(source)
+    snapshot = run_mtd_tool._build_human_preparer_tools(source)
     human_read = snapshot.get("read")
 
     assert set(snapshot.tools) == {"read"}
@@ -2978,54 +2972,54 @@ async def test_human_preparer_tools_are_read_only_and_workspace_confined(
 
 
 @pytest.mark.anyio
-async def test_split_root_reusable_flow_and_run_store_use_runtime_workspace(
+async def test_split_root_reusable_mtd_and_run_store_use_runtime_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "user-workspace"
-    workflow = workspace / "flows" / "workflows" / "daily-brief" / "daily-brief.workflow"
-    await anyio.Path(workflow.parent).mkdir(parents=True)
-    await anyio.Path(workflow).write_text("workflow source", encoding="utf-8")
+    method = workspace / "mtds" / "methods" / "daily-brief" / "daily-brief.method"
+    await anyio.Path(method.parent).mkdir(parents=True)
+    await anyio.Path(method).write_text("method source", encoding="utf-8")
     monkeypatch.setenv("WORKSPACE_DIR", str(_WORKSPACE_DIR))
 
     with path_scope(workspace=str(workspace), agent=str(_WORKSPACE_DIR)):
-        source = await run_flow_tool._read_flow_source("flows/workflows/daily-brief/daily-brief.workflow")
-        store = run_flow_tool._job_store()
+        source = await run_mtd_tool._read_mtd_source("mtds/methods/daily-brief/daily-brief.method")
+        store = run_mtd_tool._job_store()
 
-    assert source == "workflow source"
-    assert Path(str(store.root)) == workspace / ".psi" / "fusion-flow" / "runs"
+    assert source == "method source"
+    assert Path(str(store.root)) == workspace / ".psi" / "fusion-method" / "runs"
 
 
 @pytest.mark.anyio
-async def test_run_flow_rejects_paths_outside_flows_directory(
+async def test_run_mtd_rejects_paths_outside_mtds_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
 
-    with pytest.raises(ValueError, match="workspace flows directory"):
-        await run_flow_tool._read_flow_source("../outside.workflow")
-    with pytest.raises(ValueError, match="workspace flows directory"):
-        await run_flow_tool._read_flow_source("other/example.workflow")
+    with pytest.raises(ValueError, match="workspace mtds directory"):
+        await run_mtd_tool._read_mtd_source("../outside.method")
+    with pytest.raises(ValueError, match="workspace mtds directory"):
+        await run_mtd_tool._read_mtd_source("other/example.method")
     with pytest.raises(ValueError, match="relative to the workspace"):
-        await run_flow_tool._read_flow_source(str(tmp_path / "flows" / "example.workflow"))
+        await run_mtd_tool._read_mtd_source(str(tmp_path / "mtds" / "example.method"))
 
 
 @pytest.mark.anyio
-async def test_instruction_resolver_loads_text_relative_to_workflow(
+async def test_instruction_resolver_loads_text_relative_to_method(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bundle = tmp_path / "flows" / "research"
+    bundle = tmp_path / "mtds" / "research"
     instructions = bundle / "instructions"
     instructions.mkdir(parents=True)
-    (bundle / "flow.workflow").write_text("workflow source", encoding="utf-8")
+    (bundle / "mtd.method").write_text("method source", encoding="utf-8")
     (instructions / "semantic.md").write_text(
         "Research semantic parsing and return evidence-backed findings.",
         encoding="utf-8",
     )
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    resolve = run_flow_tool._instruction_resolver("flows/research/flow.workflow")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    resolve = run_mtd_tool._instruction_resolver("mtds/research/mtd.method")
 
     assert await resolve("Write a concise synthesis.") == "Write a concise synthesis."
     assert await resolve("./instructions/semantic.md") == (
@@ -3038,14 +3032,14 @@ async def test_instruction_resolver_rejects_bundle_escape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bundle = tmp_path / "flows" / "research"
+    bundle = tmp_path / "mtds" / "research"
     bundle.mkdir(parents=True)
-    (bundle / "flow.workflow").write_text("workflow source", encoding="utf-8")
+    (bundle / "mtd.method").write_text("method source", encoding="utf-8")
     (bundle.parent / "outside.md").write_text("outside", encoding="utf-8")
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    resolve = run_flow_tool._instruction_resolver("flows/research/flow.workflow")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    resolve = run_mtd_tool._instruction_resolver("mtds/research/mtd.method")
 
-    with pytest.raises(ValueError, match="inside the workflow directory"):
+    with pytest.raises(ValueError, match="inside the method directory"):
         await resolve("./../outside.md")
 
 
@@ -3054,10 +3048,10 @@ async def test_instruction_resolver_rejects_non_markdown_and_symlink_escape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bundle = tmp_path / "flows" / "research"
+    bundle = tmp_path / "mtds" / "research"
     instructions = bundle / "instructions"
     instructions.mkdir(parents=True)
-    (bundle / "flow.workflow").write_text("workflow source", encoding="utf-8")
+    (bundle / "mtd.method").write_text("method source", encoding="utf-8")
     (instructions / "plain.txt").write_text("plain", encoding="utf-8")
     outside = tmp_path / "outside.md"
     outside.write_text("outside", encoding="utf-8")
@@ -3065,33 +3059,33 @@ async def test_instruction_resolver_rejects_non_markdown_and_symlink_escape(
         (instructions / "escape.md").symlink_to(outside)
     except OSError as error:
         pytest.skip(f"symbolic links are unavailable: {error}")
-    monkeypatch.setattr(run_flow_tool, "_WORKSPACE_DIR", tmp_path)
-    resolve = run_flow_tool._instruction_resolver("flows/research/flow.workflow")
+    monkeypatch.setattr(run_mtd_tool, "_WORKSPACE_DIR", tmp_path)
+    resolve = run_mtd_tool._instruction_resolver("mtds/research/mtd.method")
 
     with pytest.raises(ValueError, match=r"must name a \.md file"):
         await resolve("./instructions/plain.txt")
-    with pytest.raises(ValueError, match="inside the workflow directory"):
+    with pytest.raises(ValueError, match="inside the method directory"):
         await resolve("./instructions/escape.md")
 
 
-def test_workflow_definition_digest_covers_instruction_files() -> None:
-    source = "workflow source"
-    original = run_flow_tool._workflow_definition_digest(
+def test_method_definition_digest_covers_instruction_files() -> None:
+    source = "method source"
+    original = run_mtd_tool._method_definition_digest(
         source,
         {"./instructions/review.md": "Review version one."},
     )
-    changed = run_flow_tool._workflow_definition_digest(
+    changed = run_mtd_tool._method_definition_digest(
         source,
         {"./instructions/review.md": "Review version two."},
     )
 
     assert original != changed
-    assert run_flow_tool._workflow_definition_digest(source, {}) == hashlib.sha256(source.encode()).hexdigest()
+    assert run_mtd_tool._method_definition_digest(source, {}) == hashlib.sha256(source.encode()).hexdigest()
 
 
 @pytest.mark.anyio
-async def test_run_flow_requires_invoking_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(run_flow_tool, "current_tool_ai_socket", lambda: None)
+async def test_run_mtd_requires_invoking_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(run_mtd_tool, "current_tool_ai_socket", lambda: None)
 
     with pytest.raises(RuntimeError, match="called by a psi-agent Session"):
-        await run_flow_tool.run_flow("flows/example.workflow", "{}")
+        await run_mtd_tool.run_mtd("mtds/example.method", "{}")

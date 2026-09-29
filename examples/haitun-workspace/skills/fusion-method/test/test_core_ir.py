@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from fusion_flow.core_ir import (
+from fusion_method.core_ir import (
     Assertion,
     CompoundTerm,
     Concept,
@@ -9,25 +9,25 @@ from fusion_flow.core_ir import (
     Constant,
     IfTerm,
     ListTerm,
+    Method,
+    MethodFile,
     Operator,
-    Workflow,
-    WorkflowFile,
 )
 
 
-def test_workflow_core_ir_contract() -> None:
+def test_method_core_ir_contract() -> None:
     step = Concept("Step")
     item = Constant("item", (step,))
     operator = Operator("identity", (step,), step)
     assertion = Assertion(CompoundTerm(operator, (item,)), ListTerm((item,)))
     condition = ConnectiveFormula(assertion, "NOT")
     conditional = IfTerm(condition, item, item)
-    workflow = Workflow("example", (Assertion(conditional, item),))
-    workflow_file = WorkflowFile((item,), (workflow,))
+    method = Method("example", (Assertion(conditional, item),))
+    method_file = MethodFile((item,), (method,))
 
     assert operator.arity == 1
     assert not hasattr(assertion, "relation_symbol")
-    assert workflow_file.workflows[0].assertions[0].lhs is conditional
+    assert method_file.methods[0].assertions[0].lhs is conditional
 
 
 def test_connective_formula_rejects_invalid_arity() -> None:

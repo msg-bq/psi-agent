@@ -81,8 +81,8 @@ def test_skill_only_references_real_tools() -> None:
     assert not unknown, f"skill references tool names that don't exist: {sorted(unknown)}"
 
 
-def test_skill_names_the_tools_the_flow_needs() -> None:
-    """The docx→sheet flow is impossible without these five; a rename must fail loudly."""
+def test_skill_names_the_tools_the_mtd_needs() -> None:
+    """The docx→sheet mtd is impossible without these five; a rename must fail loudly."""
     text = _skill_text()
     for tool in (
         "feishu_wiki_get_node",  # wiki node_token → obj_token

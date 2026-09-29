@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Workflow 执行计划：从图到异步调度</title>
+  <title>Method 执行计划：从图到异步调度</title>
   <style>
     :root {
       color-scheme: light;
@@ -305,7 +305,7 @@
       padding: 8px 12px 18px;
     }
 
-    #workflow-graph {
+    #method-graph {
       display: block;
       width: 100%;
       min-width: 720px;
@@ -742,7 +742,7 @@
     </header>
 
     <div class="pipeline" aria-label="从图到执行的流程">
-      <code>WorkflowGraph</code><span class="arrow">→</span>
+      <code>MethodGraph</code><span class="arrow">→</span>
       <code>generate_plan()</code><span class="arrow">→</span>
       <code>ExecutionPlan</code><span class="arrow">→</span>
       <code>execute_plan()</code><span class="arrow">→</span>
@@ -779,7 +779,7 @@
           <li><span class="swatch done"></span>完成 / 可用</li>
         </ul>
         <div class="graph-scroll" tabindex="0" aria-label="工作流图，可横向滚动">
-          <svg id="workflow-graph" viewBox="0 0 940 430" role="img" aria-labelledby="svg-title svg-desc">
+          <svg id="method-graph" viewBox="0 0 940 430" role="img" aria-labelledby="svg-title svg-desc">
             <title id="svg-title">文章工作流 Step 与 Artifact 图</title>
             <desc id="svg-desc">topic 经 research 生成 notes，draft 与 review 并行，publish 等待二者后生成 article。</desc>
             <defs>

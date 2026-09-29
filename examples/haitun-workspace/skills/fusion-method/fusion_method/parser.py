@@ -1,4 +1,4 @@
-"""Parse FusionFlow source into target-neutral Workflow Core IR."""
+"""Parse FusionMethod source into target-neutral Method Core IR."""
 
 from __future__ import annotations
 
@@ -18,18 +18,18 @@ from .core_ir import (
     Formula,
     IfTerm,
     ListTerm,
+    Method,
+    MethodFile,
     Operator,
     Term,
-    Workflow,
-    WorkflowFile,
 )
-from .generated.FusionFlowLexer import FusionFlowLexer
-from .generated.FusionFlowParser import FusionFlowParser
+from .generated.FusionMethodLexer import FusionMethodLexer
+from .generated.FusionMethodParser import FusionMethodParser
 
 
 @dataclass(slots=True)
 class ParseContext:
-    """Concept and operator symbols shared by related FusionFlow parses."""
+    """Concept and operator symbols shared by related FusionMethod parses."""
 
     concepts: dict[str, Concept]
     operators: dict[str, Operator]
@@ -91,11 +91,11 @@ class _CoreIRVisitor:
         self._boolean_constants: dict[bool, Constant] = {}
         self._inferred_concepts: dict[str, Concept] = {}
 
-    def visit_workflow_file(self, context: Any) -> WorkflowFile:
+    def visit_method_file(self, context: Any) -> MethodFile:
         for declaration in context.constDecl():
             self.visit_const_decl(declaration)
-        workflow_contexts = tuple(context.workflowDecl())
-        workflows = tuple(self.visit_workflow_decl(workflow) for workflow in workflow_contexts)
+        method_contexts = tuple(context.methodDecl())
+        methods = tuple(self.visit_method_decl(method) for method in method_contexts)
         if self._inferred_concepts:
             self._constants = {
                 symbol: (
@@ -105,8 +105,8 @@ class _CoreIRVisitor:
                 )
                 for symbol, constant in self._constants.items()
             }
-            workflows = tuple(self.visit_workflow_decl(workflow) for workflow in workflow_contexts)
-        return WorkflowFile(constants=tuple(self._constants.values()), workflows=workflows)
+            methods = tuple(self.visit_method_decl(method) for method in method_contexts)
+        return MethodFile(constants=tuple(self._constants.values()), methods=methods)
 
     def visit_const_decl(self, context: Any) -> Constant:
         symbol = self._strip_quotes(context.constantName().getText())
@@ -120,17 +120,17 @@ class _CoreIRVisitor:
             if set(existing.belong_concepts) == set(concepts):
                 return existing
             raise ValueError(
-                f"Conflicting FusionFlow constant declaration for {symbol!r}: "
+                f"Conflicting FusionMethod constant declaration for {symbol!r}: "
                 f"{existing.belong_concepts!r} versus {concepts!r}."
             )
         constant = Constant(symbol=symbol, belong_concepts=concepts)
         self._constants[symbol] = constant
         return constant
 
-    def visit_workflow_decl(self, context: Any) -> Workflow:
-        return Workflow(
-            name=str(context.workflowName().getText()),
-            assertions=tuple(self.visit_assertion(item.assertion()) for item in context.workflowItem()),
+    def visit_method_decl(self, context: Any) -> Method:
+        return Method(
+            name=str(context.methodName().getText()),
+            assertions=tuple(self.visit_assertion(item.assertion()) for item in context.methodItem()),
         )
 
     def visit_assertion(self, context: Any) -> Assertion:
@@ -174,7 +174,7 @@ class _CoreIRVisitor:
             equality = Assertion(lhs=self.visit_term(terms[0]), rhs=self.visit_term(terms[1]))
             if symbol == "=":
                 return equality
-            # HACK: FusionFlow intentionally keeps != as NOT equality; gk uses comparison_ne_op.
+            # HACK: FusionMethod intentionally keeps != as NOT equality; gk uses comparison_ne_op.
             return ConnectiveFormula(formula_left=equality, connective="NOT")
 
         operator = self._resolve_operator(self._COMPARISON_OPERATORS[symbol])
@@ -271,7 +271,7 @@ class _CoreIRVisitor:
         string_literal = context.STRING_LITERAL()
         if string_literal is not None:
             if expected_concept is None or expected_concept.name != "Instruction":
-                raise ValueError("FusionFlow free-form quoted text is only valid where Instruction is required.")
+                raise ValueError("FusionMethod free-form quoted text is only valid where Instruction is required.")
             return self._resolve_constant(string_literal.getText(), expected_concept)
         return self._resolve_constant(context.constantName().getText(), expected_concept)
 
@@ -292,7 +292,7 @@ class _CoreIRVisitor:
                 if expected_concept not in concepts:
                     concept_names = tuple(concept.name for concept in concepts)
                     raise ValueError(
-                        f"FusionFlow constant {symbol!r} has concepts {concept_names!r}; "
+                        f"FusionMethod constant {symbol!r} has concepts {concept_names!r}; "
                         f"operator position requires concept {expected_concept.name!r}."
                     )
             return existing
@@ -314,13 +314,13 @@ class _CoreIRVisitor:
         try:
             return self._context.concepts[name]
         except KeyError:
-            raise ValueError(f"Unknown FusionFlow concept {name!r}.") from None
+            raise ValueError(f"Unknown FusionMethod concept {name!r}.") from None
 
     def _resolve_operator(self, name: str) -> Operator:
         try:
             return self._context.operators[name]
         except KeyError:
-            raise ValueError(f"Unknown FusionFlow operator {name!r}.") from None
+            raise ValueError(f"Unknown FusionMethod operator {name!r}.") from None
 
     def _term_output_concept(self, context: Any) -> Concept | None:
         """Return a direct operator output concept through transparent parentheses."""
@@ -337,32 +337,32 @@ class _CoreIRVisitor:
         if symbol.startswith('"') and symbol.endswith('"'):
             value = json.loads(symbol)
             if not isinstance(value, str):
-                raise ValueError(f"FusionFlow quoted constant must decode to text: {symbol!r}")
+                raise ValueError(f"FusionMethod quoted constant must decode to text: {symbol!r}")
             return value
         return symbol
 
 
-def parse_workflow(source: str, *, context: ParseContext) -> ParseResult:
-    """Parse syntax and lower it without performing static workflow checks.
+def parse_method(source: str, *, context: ParseContext) -> ParseResult:
+    """Parse syntax and lower it without performing static method checks.
 
     Syntax failures are returned as parser diagnostics. A standalone
     Bool-returning call lowers to an assertion against True. Formula equality
     lowers to an assertion, inequality to NOT over an assertion, and ordered
     comparisons to KEDispatcher comparison operators asserted true. Compilation
-    and workflow execution are outside this boundary.
+    and method execution are outside this boundary.
     """
 
     listener = _DiagnosticListener()
-    lexer = FusionFlowLexer(InputStream(source))
+    lexer = FusionMethodLexer(InputStream(source))
     lexer.removeErrorListeners()
     lexer.addErrorListener(listener)
 
-    parser = FusionFlowParser(CommonTokenStream(lexer))
+    parser = FusionMethodParser(CommonTokenStream(lexer))
     parser.removeErrorListeners()
     parser.addErrorListener(listener)
-    tree = parser.workflowFile()
+    tree = parser.methodFile()
 
     diagnostics = tuple(listener.diagnostics)
     if diagnostics:
         return ParseResult(core_ir=None, diagnostics=diagnostics)
-    return ParseResult(core_ir=_CoreIRVisitor(context).visit_workflow_file(tree), diagnostics=diagnostics)
+    return ParseResult(core_ir=_CoreIRVisitor(context).visit_method_file(tree), diagnostics=diagnostics)

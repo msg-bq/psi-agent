@@ -27,81 +27,79 @@ def _load_module(name: str, path: Path) -> Any:
     return cast(Any, module)
 
 
-flow_manage_tool = _load_module(
-    "fusion_flow_workspace_flow_manage",
-    _WORKSPACE_DIR / "tools" / "flow_manage.py",
+mtd_manage_tool = _load_module(
+    "fusion_method_workspace_mtd_manage",
+    _WORKSPACE_DIR / "tools" / "mtd_manage.py",
 )
 system_module = _load_module(
-    "fusion_flow_workspace_system",
+    "fusion_method_workspace_system",
     _WORKSPACE_DIR / "systems" / "system.py",
 )
 
 
-def test_workspace_exposes_one_python_fusion_flow_runtime() -> None:
-    skill_dir = _WORKSPACE_DIR / "skills" / "fusion-flow"
+def test_workspace_exposes_one_python_fusion_method_runtime() -> None:
+    skill_dir = _WORKSPACE_DIR / "skills" / "fusion-method"
 
     assert (skill_dir / "SKILL.md").is_file()
-    assert (skill_dir / "grammar" / "FusionFlow.g4").is_file()
-    assert (skill_dir / "fusion_flow" / "workflow_runner.py").is_file()
-    assert not (skill_dir / "fusion_flow_next" / "__init__.py").exists()
-    assert not (skill_dir / "fusion_flow_next" / "workflow_runner.py").exists()
-    assert (_WORKSPACE_DIR / "tools" / "run_flow.py").is_file()
-    assert not (_WORKSPACE_DIR / "tools" / "flow_run.py").exists()
+    assert (skill_dir / "grammar" / "FusionMethod.g4").is_file()
+    assert (skill_dir / "fusion_method" / "method_runner.py").is_file()
+    assert not (skill_dir / "fusion_method_next" / "__init__.py").exists()
+    assert not (skill_dir / "fusion_method_next" / "method_runner.py").exists()
+    assert (_WORKSPACE_DIR / "tools" / "run_mtd.py").is_file()
 
 
 @pytest.mark.anyio
 async def test_prompt_keeps_natural_language_ux_and_uses_python_runner(tmp_path: Path) -> None:
     workspace = anyio.Path(tmp_path)
-    skill_dir = workspace / "skills" / "fusion-flow"
+    skill_dir = workspace / "skills" / "fusion-method"
     await skill_dir.mkdir(parents=True)
-    await (skill_dir / "SKILL.md").write_text("---\nname: flow\n---\n", encoding="utf-8")
+    await (skill_dir / "SKILL.md").write_text("---\nname: fusion-method\n---\n", encoding="utf-8")
 
     section = await system_module.System(workspace)._build_fusion_section()
 
     assert "natural language" in section
-    assert "skills/fusion-flow/SKILL.md" in section
-    assert "run_flow" in section
-    assert ".workflow" in section
+    assert "skills/fusion-method/SKILL.md" in section
+    assert "run_mtd" in section
+    assert ".method" in section
     assert "npx tsx" not in section
     assert "session_shim" not in section
-    assert "flow_run(action=" not in section
 
 
 @pytest.mark.anyio
-async def test_flow_manage_creates_and_promotes_workflow_source(
+async def test_mtd_manage_creates_and_promotes_method_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path))
-    source = "const demo: Workflow;\nworkflow demo {}\n"
+    source = "const demo: Method;\nmethod demo {}\n"
 
-    created = await flow_manage_tool.flow_manage(
+    created = await mtd_manage_tool.mtd_manage(
         action="create",
         target="adhoc",
-        flow_name="demo",
-        flow_source=source,
+        mtd_name="demo",
+        mtd_source=source,
     )
-    promoted = await flow_manage_tool.flow_manage(
+    promoted = await mtd_manage_tool.mtd_manage(
         action="promote",
-        flow_name="demo",
-        description="Demo flow",
+        mtd_name="demo",
+        description="Demo mtd",
     )
 
-    assert created == "Adhoc flow created: 'demo'"
-    assert promoted == "Flow promoted to curated: 'demo'"
-    adhoc = tmp_path / "flows" / "adhoc" / "demo" / "flow.workflow"
-    curated = tmp_path / "flows" / "curated" / "demo" / "FLOW.md"
+    assert created == "Adhoc mtd created: 'demo'"
+    assert promoted == "Mtd promoted to curated: 'demo'"
+    adhoc = tmp_path / "mtds" / "adhoc" / "demo" / "mtd.method"
+    curated = tmp_path / "mtds" / "curated" / "demo" / "MTD.md"
     assert adhoc.read_text(encoding="utf-8") == source
     curated_text = curated.read_text(encoding="utf-8")
-    assert "```fusionflow\n" + source.strip() + "\n```" in curated_text
-    assert "source: flows/adhoc/demo/flow.workflow" in curated_text
+    assert "```fusionmethod\n" + source.strip() + "\n```" in curated_text
+    assert "source: mtds/adhoc/demo/mtd.method" in curated_text
 
-    patched = await flow_manage_tool.flow_manage(
+    patched = await mtd_manage_tool.mtd_manage(
         action="patch",
-        flow_name="demo",
-        description="Updated demo flow",
-        flow_source=source.replace("demo {}", "demo { max_concurrency(demo) == 1; }"),
+        mtd_name="demo",
+        description="Updated demo mtd",
+        mtd_source=source.replace("demo {}", "demo { max_concurrency(demo) == 1; }"),
     )
 
-    assert patched == "Curated flow patched: 'demo'"
+    assert patched == "Curated mtd patched: 'demo'"
     assert "max_concurrency(demo) == 1" in curated.read_text(encoding="utf-8")

@@ -1,4 +1,4 @@
-const parallel_join: Workflow;
+const parallel_join: Method;
 const benefits_step: Step;
 const risks_step: Step;
 const combine_step: Step;
@@ -11,9 +11,9 @@ const benefits: Artifact;
 const risks: Artifact;
 const result: Artifact;
 
-workflow parallel_join {
-    input_workflow(parallel_join) == [request];
-    output_workflow(parallel_join) == [result];
+method parallel_join {
+    input_method(parallel_join) == [request];
+    output_method(parallel_join) == [result];
     max_concurrency(parallel_join) == 2;
 
     step_name(benefits_step) == benefits_name;

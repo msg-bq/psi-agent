@@ -1,4 +1,4 @@
-"""Shared compiler flow for backends that use the FusionFlow Core IR shape."""
+"""Shared compiler mtd for backends that use the FusionMethod Core IR shape."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from .core_ir import (
     Constant,
     IfTerm,
     ListTerm,
-    Workflow,
-    WorkflowFile,
+    Method,
+    MethodFile,
 )
 
 
@@ -33,8 +33,8 @@ class CoreIRCompiler:
     closed, so unsupported IR is never approximated or silently omitted.
     """
 
-    def compile(self, core_ir: WorkflowFile) -> object:
-        """Compile a workflow file without storing the input on the compiler."""
+    def compile(self, core_ir: MethodFile) -> object:
+        """Compile a method file without storing the input on the compiler."""
 
         constants = tuple(dict.fromkeys(core_ir.constants))
         declarations = _CompiledDeclarations(
@@ -42,15 +42,15 @@ class CoreIRCompiler:
         )
         return self._build_program(
             declarations,
-            workflows=tuple(self._compile_workflow(workflow) for workflow in core_ir.workflows),
+            methods=tuple(self._compile_method(method) for method in core_ir.methods),
         )
 
-    def _compile_workflow(self, workflow: Workflow) -> object:
-        """Compile workflow assertions before assembling the workflow."""
+    def _compile_method(self, method: Method) -> object:
+        """Compile method assertions before assembling the method."""
 
-        return self._build_workflow(
-            workflow,
-            assertions=tuple(self._compile_formula(assertion) for assertion in workflow.assertions),
+        return self._build_method(
+            method,
+            assertions=tuple(self._compile_formula(assertion) for assertion in method.assertions),
         )
 
     def _compile_formula(self, formula: object) -> object:
@@ -94,26 +94,26 @@ class CoreIRCompiler:
     def _compile_connective_formula(self, formula: ConnectiveFormula) -> object:
         return self._unsupported("connective formula", formula)
 
-    def _build_workflow(
+    def _build_method(
         self,
-        workflow: Workflow,
+        method: Method,
         *,
         assertions: tuple[object, ...],
     ) -> object:
-        """Assemble one workflow from its compiled assertions."""
+        """Assemble one method from its compiled assertions."""
 
-        del workflow, assertions
-        raise NotImplementedError(f"{type(self).__name__} must implement _build_workflow().")
+        del method, assertions
+        raise NotImplementedError(f"{type(self).__name__} must implement _build_method().")
 
     def _build_program(
         self,
         declarations: _CompiledDeclarations,
         *,
-        workflows: tuple[object, ...],
+        methods: tuple[object, ...],
     ) -> object:
-        """Assemble the backend program from declarations and workflows."""
+        """Assemble the backend program from declarations and methods."""
 
-        del declarations, workflows
+        del declarations, methods
         raise NotImplementedError(f"{type(self).__name__} must implement _build_program().")
 
     def _unsupported(self, label: str, node: object) -> NoReturn:

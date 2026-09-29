@@ -1,4 +1,4 @@
-"""Compile and execute checked FusionFlow workflows."""
+"""Compile and execute checked FusionMethod methods."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from os import PathLike
 from os.path import isabs
 from typing import Literal, cast
 
-from psi_agent.workflow_execution import (
+from psi_agent.method_execution import (
     CheckpointObserver,
     ContextualStepDispatcher,
     DispatchContext,
@@ -20,11 +20,11 @@ from psi_agent.workflow_execution import (
     execute_plan,
     generate_plan,
 )
-from psi_agent.workflow_graph import ProducesEdge, StepNode, WorkflowGraph
+from psi_agent.method_graph import MethodGraph, ProducesEdge, StepNode
 
 from .core_ir import Assertion, CompoundTerm, Concept, Constant, Operator
-from .graph_compiler import WorkflowGraphCompilation, WorkflowGraphCompiler
-from .parser import ParseContext, parse_workflow
+from .graph_compiler import MethodGraphCompilation, MethodGraphCompiler
+from .parser import ParseContext, parse_method
 
 type Completion = Callable[[str], Awaitable[object]]
 type PathResolver = Callable[[str], Awaitable[str]]
@@ -35,10 +35,10 @@ type ExecutorKind = Literal["Agent", "Human", "Program"]
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledWorkflow:
+class CompiledMethod:
     """One executable graph plus catalog-derived executor classifications."""
 
-    graph: WorkflowGraph
+    graph: MethodGraph
     executor_kinds: Mapping[str, ExecutorKind]
     program_paths: Mapping[str, str] = field(default_factory=dict)
 
@@ -101,7 +101,7 @@ _CONCEPT_NAMES = (
     "Resource",
     "Step",
     "StepName",
-    "Workflow",
+    "Method",
 )
 # This is an explicit catalog, not a source-code name discovery mechanism.
 # ``step_executor`` deliberately has no output concept because the minimal
@@ -119,12 +119,12 @@ _OPERATOR_SIGNATURES: Mapping[
     "depends_on": (("Step", "Step"), "Bool"),
     "foreach_item": (("Step", "List"), "Artifact"),
     "independent": (("Step",), "Bool"),
-    "input_workflow": (("Workflow",), "List"),
+    "input_method": (("Method",), "List"),
     "max_attempts": (("Step",), "Integer"),
-    "max_concurrency": (("Workflow",), "Integer"),
+    "max_concurrency": (("Method",), "Integer"),
     "max_output_tokens": (("Agent",), "Integer"),
     "max_turns": (("Agent",), "Integer"),
-    "output_workflow": (("Workflow",), "List"),
+    "output_method": (("Method",), "List"),
     "program_path": (("Program",), "Path"),
     "produces": (("Step",), "List"),
     "reasoning_effort": (("Agent",), "ReasoningEffort"),
@@ -134,7 +134,7 @@ _OPERATOR_SIGNATURES: Mapping[
     "step_name": (("Step",), "StepName"),
     "step_timeout": (("Step",), "Integer"),
     "temperature": (("Agent",), "ComplexNumber"),
-    "workflow_timeout": (("Workflow",), "Integer"),
+    "method_timeout": (("Method",), "Integer"),
 }
 
 
@@ -216,20 +216,20 @@ def _extract_program_paths(
     return program_paths, tuple(residual)
 
 
-def compile_workflow(
+def compile_method(
     source: str,
     *,
     context: ParseContext | None = None,
     strict_executors: bool = False,
-) -> CompiledWorkflow:
-    """Parse and compile one workflow through a closed catalog by default.
+) -> CompiledMethod:
+    """Parse and compile one method through a closed catalog by default.
 
-    Existing workflows that predate typed executor declarations keep their
+    Existing methods that predate typed executor declarations keep their
     historical Agent default.  New entry points can opt into strict executor
     typing so catalog mistakes fail before dispatch.
     """
 
-    parsed = parse_workflow(
+    parsed = parse_method(
         source,
         context=context if context is not None else _default_parse_context(),
     )
@@ -242,20 +242,20 @@ def compile_workflow(
             )
             for diagnostic in parsed.diagnostics
         )
-        raise ValueError(f"workflow parse failed: {details}")
+        raise ValueError(f"method parse failed: {details}")
 
-    compiled = WorkflowGraphCompiler().compile(parsed.core_ir)
+    compiled = MethodGraphCompiler().compile(parsed.core_ir)
     if not isinstance(compiled, tuple):
-        raise TypeError("workflow graph compiler returned an unexpected result")
-    compilations = cast(tuple[WorkflowGraphCompilation, ...], compiled)
+        raise TypeError("method graph compiler returned an unexpected result")
+    compilations = cast(tuple[MethodGraphCompilation, ...], compiled)
     if len(compilations) != 1:
-        raise ValueError("workflow runner expects exactly one workflow")
+        raise ValueError("method runner expects exactly one method")
     compilation = compilations[0]
     program_paths, residual_assertions = _extract_program_paths(compilation.residual_assertions)
     if residual_assertions:
         counts = _residual_operator_counts(residual_assertions)
         details = ", ".join(f"{operator_name}={count}" for operator_name, count in sorted(counts.items()))
-        raise ValueError(f"workflow contains unconsumed assertions: {details}")
+        raise ValueError(f"method contains unconsumed assertions: {details}")
 
     constants_by_symbol = {constant.symbol: constant for constant in parsed.core_ir.constants}
     executor_kinds: dict[str, ExecutorKind] = {}
@@ -278,7 +278,7 @@ def compile_workflow(
         if executor_kinds[step.executor_id] == "Program" and step.executor_id not in program_paths:
             raise ValueError(f"Program executor {step.executor_id!r} has no program_path")
 
-    return CompiledWorkflow(
+    return CompiledMethod(
         graph=compilation.graph,
         executor_kinds=executor_kinds,
         program_paths=program_paths,
@@ -324,7 +324,7 @@ def _output_contract(output_ids: tuple[str, ...]) -> str:
 
 
 async def _build_program_paths(
-    compiled: CompiledWorkflow,
+    compiled: CompiledMethod,
     resolve_path: PathResolver | None,
 ) -> dict[str, str]:
     """Resolve only catalog identities; explicit absolute and ``./`` paths pass through."""
@@ -348,7 +348,7 @@ async def _build_program_paths(
 
 
 async def _materialize_instructions(
-    compiled: CompiledWorkflow,
+    compiled: CompiledMethod,
     resolve_instruction: InstructionResolver | None,
 ) -> dict[str, str]:
     """Resolve every instruction path before the execution plan can dispatch."""
@@ -421,7 +421,7 @@ def _normalize_program_stdout(
 
 
 def _build_dispatch(
-    compiled: CompiledWorkflow,
+    compiled: CompiledMethod,
     *,
     instructions: Mapping[str, str],
     program_paths: Mapping[str, str],
@@ -467,7 +467,7 @@ def _build_dispatch(
                     f"step {step.step_id!r} requires prepare_human_instruction and request_human callbacks"
                 )
             preparation_prompt = (
-                "Prepare this workflow step for a human.\n"
+                "Prepare this method step for a human.\n"
                 f"Step: {step.step_id}\n"
                 f"Instruction:\n{instruction}\n\n"
                 f"Inputs: "
@@ -564,7 +564,7 @@ def _build_dispatch(
     return dispatch
 
 
-async def execute_workflow(
+async def execute_method(
     source: str,
     *,
     complete: Completion | None = None,
@@ -587,7 +587,7 @@ async def execute_workflow(
     checkpoint: ExecutionCheckpoint | None = None,
     checkpoint_observer: CheckpointObserver | None = None,
 ) -> dict[str, object]:
-    """Execute one checked workflow with explicit dispatcher/runtime injection."""
+    """Execute one checked method with explicit dispatcher/runtime injection."""
 
     if complete is not None and contextual_complete is not None:
         raise ValueError("provide exactly one of complete or contextual_complete")
@@ -602,13 +602,13 @@ async def execute_workflow(
     if inputs is None:
         if request is None:
             raise ValueError("either request or inputs must be provided")
-        workflow_inputs: Mapping[str, object] = {"request": request}
+        method_inputs: Mapping[str, object] = {"request": request}
     else:
         if request is not None:
             raise ValueError("request and inputs are mutually exclusive")
-        workflow_inputs = dict(inputs)
+        method_inputs = dict(inputs)
 
-    compiled = compile_workflow(
+    compiled = compile_method(
         source,
         context=parse_context,
         strict_executors=strict_executors,
@@ -625,7 +625,7 @@ async def execute_workflow(
         )
         if unsupported:
             details = ", ".join(f"{step_id}={kind}" for step_id, kind in unsupported)
-            raise ValueError(f"workflow contains unsupported executors: {details}")
+            raise ValueError(f"method contains unsupported executors: {details}")
 
     graph = compiled.graph
     if (
@@ -639,7 +639,7 @@ async def execute_workflow(
     if work_dir is None and any(not isabs(path) for path in program_paths.values()):
         raise ValueError("relative program_path requires an explicit work_dir")
     if program_paths and run_program is None:
-        raise ValueError("Program workflow requires an injected run_program callback")
+        raise ValueError("Program method requires an injected run_program callback")
     plan = generate_plan(graph)
     dispatch = _build_dispatch(
         compiled,
@@ -658,7 +658,7 @@ async def execute_workflow(
     return await execute_plan(
         plan,
         graph,
-        inputs=workflow_inputs,
+        inputs=method_inputs,
         contextual_dispatch=dispatch,
         resource_capacities=resource_capacities,
         allocator=allocator,

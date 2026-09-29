@@ -1,10 +1,10 @@
--- Reusable overall-water-splitting co-scientist workflow.
+-- Reusable overall-water-splitting co-scientist method.
 -- Step instructions are bundle-relative; Program executables are
 -- workspace-root-relative, as required by the public runner.
 
-const coscientist_ows:Workflow;
+const coscientist_ows:Method;
 
-const prepare_workflow_step:Step;
+const prepare_method_step:Step;
 const recommend_1_step:Step;
 const recommend_2_step:Step;
 const recommend_3_step:Step;
@@ -17,7 +17,7 @@ const synthesis_route_design_step:Step;
 const synthesis_route_feasibility_analysis_step:Step;
 const shutdown_step:Step;
 
-const prepare_workflow:StepName;
+const prepare_method:StepName;
 const recommend_1:StepName;
 const recommend_2:StepName;
 const recommend_3:StepName;
@@ -38,9 +38,9 @@ const historical_results:Artifact;
 const result_directory_name:Artifact;
 const candidate_knowledge_base_initial:Artifact;
 
-const workflow_run_context:Artifact;
+const method_run_context:Artifact;
 const scheduler_state:Artifact;
-const prepare_workflow_step_result:Artifact;
+const prepare_method_step_result:Artifact;
 const mattergen_stage_directory_initial:Artifact;
 const mattersim_stage_directory_initial:Artifact;
 const round_parallel_synthesis_stage_directory_initial:Artifact;
@@ -104,7 +104,7 @@ const completed_96_well_plate_synthesis_route:Artifact;
 const synthesis_safety_feasibility_judgment:Artifact;
 const synthesis_safety_feasibility_judgment_audit:Artifact;
 const candidate_knowledge_base:Artifact;
-const workflow_closed:Artifact;
+const method_closed:Artifact;
 
 const recommender_1_agent:Agent,Executor;
 const recommender_2_agent:Agent,Executor;
@@ -115,12 +115,12 @@ const performance_prover_agent:Agent,Executor;
 const synthesis_route_designer_agent:Agent,Executor;
 const synthesis_safety_feasibility_judge_agent:Agent,Executor;
 const main_coordinator_agent:Agent,Executor;
-const prepare_workflow_program:Program,Executor;
+const prepare_method_program:Program,Executor;
 const merge_recommendation_outputs_program:Program,Executor;
 
-workflow coscientist_ows {
+method coscientist_ows {
     -- DATA FLOW
-    input_workflow(coscientist_ows) == [
+    input_method(coscientist_ows) == [
         overall_water_splitting_knowledge_base,
         laboratory_rule_base,
         robot_chemist_skill_library,
@@ -130,12 +130,12 @@ workflow coscientist_ows {
         candidate_knowledge_base_initial
     ];
 
-    consumes(prepare_workflow_step) == [
+    consumes(prepare_method_step) == [
         result_directory_name,
         candidate_knowledge_base_initial
     ];
-    produces(prepare_workflow_step) == [
-        workflow_run_context,
+    produces(prepare_method_step) == [
+        method_run_context,
         scheduler_state,
         mattergen_stage_directory_initial,
         mattersim_stage_directory_initial,
@@ -152,7 +152,7 @@ workflow coscientist_ows {
         recommender_slot_2_directory,
         recommender_slot_3_directory,
         recommender_slot_4_directory,
-        prepare_workflow_step_result
+        prepare_method_step_result
     ];
 
     consumes(recommend_1_step) == [
@@ -161,7 +161,7 @@ workflow coscientist_ows {
         robot_chemist_skill_library,
         successful_route_library,
         historical_results,
-        workflow_run_context,
+        method_run_context,
         scheduler_state,
         candidate_knowledge_base,
         candidate_catalyst_pool_initial,
@@ -184,7 +184,7 @@ workflow coscientist_ows {
         robot_chemist_skill_library,
         successful_route_library,
         historical_results,
-        workflow_run_context,
+        method_run_context,
         scheduler_state,
         candidate_knowledge_base,
         candidate_catalyst_pool_initial,
@@ -207,7 +207,7 @@ workflow coscientist_ows {
         robot_chemist_skill_library,
         successful_route_library,
         historical_results,
-        workflow_run_context,
+        method_run_context,
         scheduler_state,
         candidate_knowledge_base,
         candidate_catalyst_pool_initial,
@@ -230,7 +230,7 @@ workflow coscientist_ows {
         robot_chemist_skill_library,
         successful_route_library,
         historical_results,
-        workflow_run_context,
+        method_run_context,
         scheduler_state,
         candidate_knowledge_base,
         candidate_catalyst_pool_initial,
@@ -345,19 +345,19 @@ workflow coscientist_ows {
         synthesis_safety_feasibility_judgment_audit,
         completed_96_well_plate_synthesis_route
     ];
-    produces(shutdown_step) == [workflow_closed];
+    produces(shutdown_step) == [method_closed];
 
-    output_workflow(coscientist_ows) == [
+    output_method(coscientist_ows) == [
         candidate_knowledge_base,
         historical_results,
         completed_96_well_plate_synthesis_route,
         synthesis_safety_feasibility_judgment,
         synthesis_safety_feasibility_judgment_audit,
-        workflow_closed
+        method_closed
     ];
 
     -- EXECUTOR ASSIGNMENT
-    step_executor(prepare_workflow_step) == prepare_workflow_program;
+    step_executor(prepare_method_step) == prepare_method_program;
     step_executor(recommend_1_step) == recommender_1_agent;
     step_executor(recommend_2_step) == recommender_2_agent;
     step_executor(recommend_3_step) == recommender_3_agent;
@@ -373,17 +373,17 @@ workflow coscientist_ows {
     step_executor(shutdown_step) == main_coordinator_agent;
 
     program_path(
-        prepare_workflow_program
+        prepare_method_program
     ) == "./skills/coscientist-ows-entry/scripts/program.py";
     program_path(
         merge_recommendation_outputs_program
     ) == "./skills/coscientist-ows-entry/scripts/program.py";
 
     -- STEP CONFIGURATION
-    step_name(prepare_workflow_step) == prepare_workflow;
+    step_name(prepare_method_step) == prepare_method;
     step_instruction(
-        prepare_workflow_step
-    ) == "./instructions/prepare-workflow.md";
+        prepare_method_step
+    ) == "./instructions/prepare-method.md";
 
     step_name(recommend_1_step) == recommend_1;
     step_instruction(
@@ -432,13 +432,13 @@ workflow coscientist_ows {
     step_name(shutdown_step) == shutdown;
     step_instruction(
         shutdown_step
-    ) == "./instructions/shutdown-workflow.md";
+    ) == "./instructions/shutdown-method.md";
 
     -- SCHEDULING CONFIGURATION
     independent(recommend_1_step);
     independent(recommend_2_step);
     independent(recommend_3_step);
     independent(recommend_4_step);
-    -- WORKFLOW CONFIGURATION
+    -- METHOD CONFIGURATION
     max_concurrency(coscientist_ows) == 4;
 }

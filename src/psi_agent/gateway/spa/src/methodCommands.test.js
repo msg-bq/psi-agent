@@ -1,66 +1,66 @@
 import { describe, expect, it } from 'vitest'
 import {
-  filterWorkflowOptions,
-  formatWorkflowCommand,
-  getWorkflowCommandQuery,
-  moveWorkflowSelection,
-  parseWorkflowCommand,
-} from './workflowCommands.js'
+  filterMethodOptions,
+  formatMethodCommand,
+  getMethodCommandQuery,
+  moveMethodSelection,
+  parseMethodCommand,
+} from './methodCommands.js'
 
-describe('parseWorkflowCommand', () => {
+describe('parseMethodCommand', () => {
   it('leaves ordinary messages untouched', () => {
-    expect(parseWorkflowCommand('hello')).toEqual({ kind: 'text' })
-    expect(parseWorkflowCommand('please use /workflow:daily-brief')).toEqual({ kind: 'text' })
-    expect(parseWorkflowCommand('/workflows:daily-brief')).toEqual({ kind: 'text' })
+    expect(parseMethodCommand('hello')).toEqual({ kind: 'text' })
+    expect(parseMethodCommand('please use /method:daily-brief')).toEqual({ kind: 'text' })
+    expect(parseMethodCommand('/methods:daily-brief')).toEqual({ kind: 'text' })
   })
 
-  it('parses the exact workflow command', () => {
-    expect(parseWorkflowCommand('/workflow:daily-brief')).toEqual({
-      kind: 'workflow',
+  it('parses the exact method command', () => {
+    expect(parseMethodCommand('/method:daily-brief')).toEqual({
+      kind: 'method',
       name: 'daily-brief',
     })
-    expect(parseWorkflowCommand('  /workflow:daily-brief  ')).toEqual({
-      kind: 'workflow',
+    expect(parseMethodCommand('  /method:daily-brief  ')).toEqual({
+      kind: 'method',
       name: 'daily-brief',
     })
   })
 
-  it('rejects missing and invalid workflow names', () => {
-    expect(parseWorkflowCommand('/workflow:').kind).toBe('invalid')
-    expect(parseWorkflowCommand('/workflow:Daily').kind).toBe('invalid')
-    expect(parseWorkflowCommand('/workflow:daily_brief').kind).toBe('invalid')
-    expect(parseWorkflowCommand('/workflow:1daily').kind).toBe('invalid')
-    expect(parseWorkflowCommand('/workflow:con').kind).toBe('invalid')
-    expect(parseWorkflowCommand('/workflow:com9').kind).toBe('invalid')
-    expect(parseWorkflowCommand('/workflow:lpt1').kind).toBe('invalid')
-    expect(parseWorkflowCommand(`/workflow:a${'b'.repeat(64)}`).kind).toBe('invalid')
-    expect(parseWorkflowCommand(`/workflow:a${'b'.repeat(63)}`).kind).toBe('workflow')
+  it('rejects missing and invalid method names', () => {
+    expect(parseMethodCommand('/method:').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:Daily').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:daily_brief').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:1daily').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:con').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:com9').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:lpt1').kind).toBe('invalid')
+    expect(parseMethodCommand(`/method:a${'b'.repeat(64)}`).kind).toBe('invalid')
+    expect(parseMethodCommand(`/method:a${'b'.repeat(63)}`).kind).toBe('method')
   })
 
   it('rejects every command suffix', () => {
-    expect(parseWorkflowCommand('/workflow:daily anything').kind).toBe('invalid')
-    expect(parseWorkflowCommand('/workflow:daily []').kind).toBe('invalid')
-    expect(parseWorkflowCommand('/workflow:daily {}').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:daily anything').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:daily []').kind).toBe('invalid')
+    expect(parseMethodCommand('/method:daily {}').kind).toBe('invalid')
   })
 })
 
-describe('getWorkflowCommandQuery', () => {
+describe('getMethodCommandQuery', () => {
   it('returns the active partial command query', () => {
-    expect(getWorkflowCommandQuery('/')).toBe('')
-    expect(getWorkflowCommandQuery('/work')).toBe('')
-    expect(getWorkflowCommandQuery('/workflow:')).toBe('')
-    expect(getWorkflowCommandQuery('/workflow:daily')).toBe('daily')
+    expect(getMethodCommandQuery('/')).toBe('')
+    expect(getMethodCommandQuery('/work')).toBe('')
+    expect(getMethodCommandQuery('/method:')).toBe('')
+    expect(getMethodCommandQuery('/method:daily')).toBe('daily')
   })
 
   it('closes autocomplete for ordinary text or any suffix', () => {
-    expect(getWorkflowCommandQuery('hello')).toBeNull()
-    expect(getWorkflowCommandQuery('/workflow:daily ')).toBeNull()
-    expect(getWorkflowCommandQuery('/workflow:daily anything')).toBeNull()
+    expect(getMethodCommandQuery('hello')).toBeNull()
+    expect(getMethodCommandQuery('/method:daily ')).toBeNull()
+    expect(getMethodCommandQuery('/method:daily anything')).toBeNull()
   })
 })
 
-describe('filterWorkflowOptions', () => {
-  const workflows = [
+describe('filterMethodOptions', () => {
+  const methods = [
     { name: 'weekly-review' },
     { name: 'daily-brief' },
     { name: 'research' },
@@ -68,8 +68,8 @@ describe('filterWorkflowOptions', () => {
     null,
   ]
 
-  it('filters malformed records and sorts all workflows by name', () => {
-    expect(filterWorkflowOptions(workflows, '').map(item => item.name)).toEqual([
+  it('filters malformed records and sorts all methods by name', () => {
+    expect(filterMethodOptions(methods, '').map(item => item.name)).toEqual([
       'daily-brief',
       'research',
       'weekly-review',
@@ -77,25 +77,25 @@ describe('filterWorkflowOptions', () => {
   })
 
   it('ranks exact and prefix name matches', () => {
-    expect(filterWorkflowOptions(workflows, 'research').map(item => item.name)).toEqual([
+    expect(filterMethodOptions(methods, 'research').map(item => item.name)).toEqual([
       'research',
     ])
   })
 })
 
-describe('formatWorkflowCommand', () => {
+describe('formatMethodCommand', () => {
   it('formats only the exact command', () => {
-    expect(formatWorkflowCommand({ name: 'daily-brief' })).toBe('/workflow:daily-brief')
-    expect(() => formatWorkflowCommand({ name: '../escape' })).toThrow()
+    expect(formatMethodCommand({ name: 'daily-brief' })).toBe('/method:daily-brief')
+    expect(() => formatMethodCommand({ name: '../escape' })).toThrow()
   })
 })
 
-describe('moveWorkflowSelection', () => {
+describe('moveMethodSelection', () => {
   it('wraps in both directions and handles an unset selection', () => {
-    expect(moveWorkflowSelection(-1, 3, 1)).toBe(0)
-    expect(moveWorkflowSelection(-1, 3, -1)).toBe(2)
-    expect(moveWorkflowSelection(2, 3, 1)).toBe(0)
-    expect(moveWorkflowSelection(0, 3, -1)).toBe(2)
-    expect(moveWorkflowSelection(0, 0, 1)).toBe(-1)
+    expect(moveMethodSelection(-1, 3, 1)).toBe(0)
+    expect(moveMethodSelection(-1, 3, -1)).toBe(2)
+    expect(moveMethodSelection(2, 3, 1)).toBe(0)
+    expect(moveMethodSelection(0, 3, -1)).toBe(2)
+    expect(moveMethodSelection(0, 0, 1)).toBe(-1)
   })
 })

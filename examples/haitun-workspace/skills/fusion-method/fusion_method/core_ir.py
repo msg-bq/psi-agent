@@ -1,4 +1,4 @@
-"""Target-neutral syntax objects shared by FusionFlow phases and backends."""
+"""Target-neutral syntax objects shared by FusionMethod phases and backends."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Literal
 
 @dataclass(frozen=True, slots=True)
 class Concept:
-    """Catalog-owned concept referenced by workflow constants and operators."""
+    """Catalog-owned concept referenced by method constants and operators."""
 
     name: str
 
@@ -59,7 +59,7 @@ class Assertion:
 
 @dataclass(frozen=True, slots=True)
 class ConnectiveFormula:
-    """Workflow condition built from assertions with NOT, AND, or OR."""
+    """Method condition built from assertions with NOT, AND, or OR."""
 
     formula_left: Formula
     connective: LogicalConnective
@@ -82,19 +82,19 @@ class IfTerm:
 
 
 @dataclass(frozen=True, slots=True)
-class Workflow:
-    """Named workflow block passed between the parser and checker."""
+class Method:
+    """Named method block passed between the parser and checker."""
 
     name: str
     assertions: tuple[Assertion, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowFile:
-    """Parsed file containing global constants and named workflows."""
+class MethodFile:
+    """Parsed file containing global constants and named methods."""
 
     constants: tuple[Constant, ...]
-    workflows: tuple[Workflow, ...]
+    methods: tuple[Method, ...]
 
 
 type LogicalConnective = Literal["NOT", "AND", "OR"]

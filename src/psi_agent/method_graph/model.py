@@ -1,8 +1,8 @@
 """Immutable Step-Artifact graph values with eager structural validation.
 
-The model is intentionally declarative: it describes workflow topology and
+The model is intentionally declarative: it describes method topology and
 policy, but it does not schedule steps or assign runtime state.  Validation is
-performed at construction so every ``WorkflowGraph`` instance is safe for
+performed at construction so every ``MethodGraph`` instance is safe for
 downstream serialization and execution planning.
 """
 
@@ -116,28 +116,28 @@ class ForeachEdgeDict(TypedDict):
     item_binding_id: str
 
 
-type WorkflowEdgeDict = ConsumesEdgeDict | ProducesEdgeDict | ForeachEdgeDict
+type MethodEdgeDict = ConsumesEdgeDict | ProducesEdgeDict | ForeachEdgeDict
 
 
-class WorkflowPolicyDict(TypedDict):
-    """JSON-ready workflow policy payload."""
+class MethodPolicyDict(TypedDict):
+    """JSON-ready method policy payload."""
 
     max_concurrency: int | None
     timeout_seconds: int | None
 
 
-class WorkflowGraphDict(TypedDict):
-    """Complete JSON-ready workflow graph payload."""
+class MethodGraphDict(TypedDict):
+    """Complete JSON-ready method graph payload."""
 
-    workflow_id: str
+    method_id: str
     steps: list[StepNodeDict]
     artifacts: list[ArtifactNodeDict]
-    edges: list[WorkflowEdgeDict]
-    policy: WorkflowPolicyDict
+    edges: list[MethodEdgeDict]
+    policy: MethodPolicyDict
     selectors: list[SelectNodeDict]
 
 
-class WorkflowGraphError(ValueError):
+class MethodGraphError(ValueError):
     """A graph value violates the static Step-Artifact model."""
 
 
@@ -169,17 +169,17 @@ class StepNode:
         # Frozen dataclasses are only deeply immutable when nested collections
         # are immutable too; accepting a list here would leak caller mutation.
         if not isinstance(self.resources, tuple):
-            raise WorkflowGraphError("resources must be a tuple")
+            raise MethodGraphError("resources must be a tuple")
         if not all(isinstance(requirement, ResourceRequirement) for requirement in self.resources):
-            raise WorkflowGraphError("resources must contain only ResourceRequirement")
+            raise MethodGraphError("resources must contain only ResourceRequirement")
         if not isinstance(self.depends_on, tuple):
-            raise WorkflowGraphError("depends_on must be a tuple")
+            raise MethodGraphError("depends_on must be a tuple")
         seen_dependencies: set[str] = set()
         for predecessor_id in self.depends_on:
             if not isinstance(predecessor_id, str) or not predecessor_id:
-                raise WorkflowGraphError("depends_on must contain only non-empty step IDs")
+                raise MethodGraphError("depends_on must contain only non-empty step IDs")
             if predecessor_id in seen_dependencies:
-                raise WorkflowGraphError(f"duplicate depends_on step: {predecessor_id}")
+                raise MethodGraphError(f"duplicate depends_on step: {predecessor_id}")
             seen_dependencies.add(predecessor_id)
 
 
@@ -210,9 +210,9 @@ class LiteralOperand:
         """Reject values outside the condition model's literal boundary."""
 
         if type(self.value) not in (str, int, float, bool):
-            raise WorkflowGraphError("literal value must be a string, number, or boolean")
+            raise MethodGraphError("literal value must be a string, number, or boolean")
         if type(self.value) is float and not isfinite(self.value):
-            raise WorkflowGraphError("literal float value must be finite")
+            raise MethodGraphError("literal float value must be finite")
 
 
 type ConditionOperand = ArtifactOperand | LiteralOperand
@@ -230,10 +230,10 @@ class ComparisonCondition:
         """Keep comparison values inside the closed immutable condition model."""
 
         if self.operator not in ("eq", "lt", "lte", "gt", "gte"):
-            raise WorkflowGraphError(f"unknown comparison operator: {self.operator}")
+            raise MethodGraphError(f"unknown comparison operator: {self.operator}")
         for operand in (self.left, self.right):
             if type(operand) not in (ArtifactOperand, LiteralOperand):
-                raise WorkflowGraphError("comparison operands must be condition operands")
+                raise MethodGraphError("comparison operands must be condition operands")
             if type(operand) is LiteralOperand:
                 operand.__post_init__()
 
@@ -249,14 +249,14 @@ class LogicalCondition:
         """Require an immutable condition tuple with the operator's exact arity."""
 
         if self.operator not in ("not", "and", "or"):
-            raise WorkflowGraphError(f"unknown logical operator: {self.operator}")
+            raise MethodGraphError(f"unknown logical operator: {self.operator}")
         if not isinstance(self.conditions, tuple):
-            raise WorkflowGraphError("conditions must be a tuple")
+            raise MethodGraphError("conditions must be a tuple")
         expected = 1 if self.operator == "not" else 2
         if len(self.conditions) != expected:
-            raise WorkflowGraphError(f"{self.operator} requires {expected} condition(s)")
+            raise MethodGraphError(f"{self.operator} requires {expected} condition(s)")
         if not all(type(condition) in (ComparisonCondition, LogicalCondition) for condition in self.conditions):
-            raise WorkflowGraphError("conditions must contain only select conditions")
+            raise MethodGraphError("conditions must contain only select conditions")
 
 
 type SelectCondition = ComparisonCondition | LogicalCondition
@@ -316,11 +316,11 @@ class SelectNode:
                     )
             return artifact_ids
         if type(condition) is not LogicalCondition:
-            raise WorkflowGraphError("condition must be a select condition")
+            raise MethodGraphError("condition must be a select condition")
         condition.__post_init__()
         condition_id = id(condition)
         if condition_id in active:
-            raise WorkflowGraphError("condition tree must not contain a cycle")
+            raise MethodGraphError("condition tree must not contain a cycle")
         active.add(condition_id)
         artifact_ids: set[str] = set()
         for child in condition.conditions:
@@ -333,7 +333,7 @@ class SelectNode:
         """Require a non-empty artifact identity before set operations."""
 
         if not isinstance(value, str) or not value:
-            raise WorkflowGraphError(f"{field_name} must be a non-empty string")
+            raise MethodGraphError(f"{field_name} must be a non-empty string")
         return value
 
     @staticmethod
@@ -403,19 +403,19 @@ class ForeachEdge:
     kind: Literal["foreach"] = field(default="foreach", init=False)
 
 
-type WorkflowEdge = ConsumesEdge | ProducesEdge | ForeachEdge
+type MethodEdge = ConsumesEdge | ProducesEdge | ForeachEdge
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowPolicy:
-    """Optional workflow-wide concurrency and timeout limits."""
+class MethodPolicy:
+    """Optional method-wide concurrency and timeout limits."""
 
     max_concurrency: int | None = None
     timeout_seconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class WorkflowGraph:
+class MethodGraph:
     """A validated, deterministic static graph of steps and artifacts.
 
     Cycles are allowed.  The constructor enforces identity, ownership,
@@ -423,11 +423,11 @@ class WorkflowGraph:
     future runtime/planner rather than this structural model.
     """
 
-    workflow_id: str
+    method_id: str
     steps: tuple[StepNode, ...]
     artifacts: tuple[ArtifactNode, ...]
-    edges: tuple[WorkflowEdge, ...] = ()
-    policy: WorkflowPolicy = WorkflowPolicy()
+    edges: tuple[MethodEdge, ...] = ()
+    policy: MethodPolicy = MethodPolicy()
     selectors: tuple[SelectNode, ...] = ()
 
     def __post_init__(self) -> None:
@@ -435,28 +435,28 @@ class WorkflowGraph:
 
         # Validate outer container types before dereferencing their contents.
         # This keeps frozen graph values deeply immutable and turns malformed
-        # caller input into WorkflowGraphError rather than incidental TypeError.
-        self._require_identity(self.workflow_id, "workflow_id")
+        # caller input into MethodGraphError rather than incidental TypeError.
+        self._require_identity(self.method_id, "method_id")
         if not isinstance(self.steps, tuple):
-            raise WorkflowGraphError("steps must be a tuple")
+            raise MethodGraphError("steps must be a tuple")
         if not isinstance(self.artifacts, tuple):
-            raise WorkflowGraphError("artifacts must be a tuple")
+            raise MethodGraphError("artifacts must be a tuple")
         if not isinstance(self.edges, tuple):
-            raise WorkflowGraphError("edges must be a tuple")
-        if not isinstance(self.policy, WorkflowPolicy):
-            raise WorkflowGraphError("policy must be a WorkflowPolicy")
+            raise MethodGraphError("edges must be a tuple")
+        if not isinstance(self.policy, MethodPolicy):
+            raise MethodGraphError("policy must be a MethodPolicy")
         if not isinstance(self.selectors, tuple):
-            raise WorkflowGraphError("selectors must be a tuple")
+            raise MethodGraphError("selectors must be a tuple")
         if not all(isinstance(step, StepNode) for step in self.steps):
-            raise WorkflowGraphError("steps must contain only StepNode")
+            raise MethodGraphError("steps must contain only StepNode")
         if not all(isinstance(artifact, ArtifactNode) for artifact in self.artifacts):
-            raise WorkflowGraphError("artifacts must contain only ArtifactNode")
-        # WorkflowEdge is a closed union: subclasses would break dataclass
+            raise MethodGraphError("artifacts must contain only ArtifactNode")
+        # MethodEdge is a closed union: subclasses would break dataclass
         # equality-based deduplication and could override the serialized kind.
         if not all(type(edge) in (ConsumesEdge, ProducesEdge, ForeachEdge) for edge in self.edges):
-            raise WorkflowGraphError("edges must contain only workflow edges")
+            raise MethodGraphError("edges must contain only method edges")
         if not all(type(selector) is SelectNode for selector in self.selectors):
-            raise WorkflowGraphError("selectors must contain only SelectNode")
+            raise MethodGraphError("selectors must contain only SelectNode")
 
         # Step pass: validate required identities, positive policies, unique
         # step IDs, and resource uniqueness within each owning step.
@@ -476,16 +476,16 @@ class WorkflowGraph:
             )
             self._require_positive(step.max_attempts, "max_attempts")
             if type(step.independent) is not bool:
-                raise WorkflowGraphError("independent must be a boolean")
+                raise MethodGraphError("independent must be a boolean")
             if step.step_id in step_ids:
-                raise WorkflowGraphError(f"duplicate step_id: {step.step_id}")
+                raise MethodGraphError(f"duplicate step_id: {step.step_id}")
             step_ids.add(step.step_id)
             for requirement in step.resources:
                 self._require_identity(requirement.resource_id, "resource_id")
                 self._require_positive(requirement.amount, "resource amount")
                 resource_key = (step.step_id, requirement.resource_id)
                 if resource_key in resource_keys:
-                    raise WorkflowGraphError(f"duplicate resource requirement: {resource_key}")
+                    raise MethodGraphError(f"duplicate resource requirement: {resource_key}")
                 resource_keys.add(resource_key)
 
         # Explicit ordering constraints reference steps rather than artifacts.
@@ -497,10 +497,10 @@ class WorkflowGraph:
             for predecessor_id in step.depends_on:
                 self._require_identity(predecessor_id, "depends_on step_id")
                 if predecessor_id in seen_dependencies:
-                    raise WorkflowGraphError(f"duplicate depends_on step: {predecessor_id}")
+                    raise MethodGraphError(f"duplicate depends_on step: {predecessor_id}")
                 seen_dependencies.add(predecessor_id)
                 if predecessor_id not in step_ids:
-                    raise WorkflowGraphError(f"unknown depends_on step: {predecessor_id}")
+                    raise MethodGraphError(f"unknown depends_on step: {predecessor_id}")
 
         # Artifact pass: validate identities/flags/owners and build the lookup
         # needed by later edge checks.
@@ -511,31 +511,31 @@ class WorkflowGraph:
             # ``bool`` is checked exactly so truthy integers such as 1 are not
             # accepted as an ambiguous external representation.
             if type(artifact.is_input) is not bool:
-                raise WorkflowGraphError("is_input must be a boolean")
+                raise MethodGraphError("is_input must be a boolean")
             if type(artifact.is_output) is not bool:
-                raise WorkflowGraphError("is_output must be a boolean")
+                raise MethodGraphError("is_output must be a boolean")
             if artifact.binding_step_id is not None:
                 self._require_identity(
                     artifact.binding_step_id,
                     "binding_step_id",
                 )
             if artifact.artifact_id in artifact_ids:
-                raise WorkflowGraphError(f"duplicate artifact_id: {artifact.artifact_id}")
+                raise MethodGraphError(f"duplicate artifact_id: {artifact.artifact_id}")
             artifact_ids.add(artifact.artifact_id)
             artifacts_by_id[artifact.artifact_id] = artifact
 
         # A shared identity would make edge endpoints ambiguous.
         shared_ids = step_ids & artifact_ids
         if shared_ids:
-            raise WorkflowGraphError(f"identity used by both a step and artifact: {sorted(shared_ids)}")
+            raise MethodGraphError(f"identity used by both a step and artifact: {sorted(shared_ids)}")
 
         # A local binding exists only inside its foreach owner.  It therefore
-        # cannot be exposed as a workflow boundary artifact.
+        # cannot be exposed as a method boundary artifact.
         for artifact in self.artifacts:
             if artifact.binding_step_id is not None and artifact.binding_step_id not in step_ids:
-                raise WorkflowGraphError(f"unknown binding owner step: {artifact.binding_step_id}")
+                raise MethodGraphError(f"unknown binding owner step: {artifact.binding_step_id}")
             if artifact.binding_step_id is not None and (artifact.is_input or artifact.is_output):
-                raise WorkflowGraphError(f"local binding cannot be a workflow input or output: {artifact.artifact_id}")
+                raise MethodGraphError(f"local binding cannot be a method input or output: {artifact.artifact_id}")
 
         # Edge pass state:
         # - seen_edges rejects exact duplicates;
@@ -543,7 +543,7 @@ class WorkflowGraph:
         # - required_global_artifacts tracks values that must be externally
         #   supplied or produced;
         # - foreach sets enforce one source/binding relation per step/binding.
-        seen_edges: set[WorkflowEdge] = set()
+        seen_edges: set[MethodEdge] = set()
         producers: dict[str, str] = {}
         required_global_artifacts: set[str] = {
             artifact.artifact_id
@@ -554,7 +554,7 @@ class WorkflowGraph:
         foreach_bindings: set[str] = set()
         for edge in self.edges:
             if edge in seen_edges:
-                raise WorkflowGraphError(f"duplicate edge: {edge}")
+                raise MethodGraphError(f"duplicate edge: {edge}")
             seen_edges.add(edge)
 
             if isinstance(edge, ConsumesEdge):
@@ -562,13 +562,13 @@ class WorkflowGraph:
                 self._require_identity(edge.artifact_id, "artifact_id")
                 self._require_identity(edge.step_id, "step_id")
                 if edge.artifact_id not in artifact_ids:
-                    raise WorkflowGraphError(f"unknown consumed artifact: {edge.artifact_id}")
+                    raise MethodGraphError(f"unknown consumed artifact: {edge.artifact_id}")
                 if edge.step_id not in step_ids:
-                    raise WorkflowGraphError(f"unknown consuming step: {edge.step_id}")
+                    raise MethodGraphError(f"unknown consuming step: {edge.step_id}")
                 artifact = artifacts_by_id[edge.artifact_id]
                 # A foreach binding is visible only to the step that owns it.
                 if artifact.binding_step_id is not None and artifact.binding_step_id != edge.step_id:
-                    raise WorkflowGraphError(f"local binding consumed by other step: {edge.artifact_id}")
+                    raise MethodGraphError(f"local binding consumed by other step: {edge.artifact_id}")
                 if artifact.binding_step_id is None:
                     # Global consumed values must later pass availability checks.
                     required_global_artifacts.add(edge.artifact_id)
@@ -579,16 +579,16 @@ class WorkflowGraph:
                 self._require_identity(edge.step_id, "step_id")
                 self._require_identity(edge.artifact_id, "artifact_id")
                 if edge.step_id not in step_ids:
-                    raise WorkflowGraphError(f"unknown producing step: {edge.step_id}")
+                    raise MethodGraphError(f"unknown producing step: {edge.step_id}")
                 if edge.artifact_id not in artifact_ids:
-                    raise WorkflowGraphError(f"unknown produced artifact: {edge.artifact_id}")
+                    raise MethodGraphError(f"unknown produced artifact: {edge.artifact_id}")
                 artifact = artifacts_by_id[edge.artifact_id]
                 # A foreach binding is created by iteration semantics, not by
                 # an ordinary producer edge.
                 if artifact.binding_step_id is not None:
-                    raise WorkflowGraphError(f"local binding cannot be produced: {edge.artifact_id}")
+                    raise MethodGraphError(f"local binding cannot be produced: {edge.artifact_id}")
                 if edge.artifact_id in producers:
-                    raise WorkflowGraphError(f"artifact has multiple producers: {edge.artifact_id}")
+                    raise MethodGraphError(f"artifact has multiple producers: {edge.artifact_id}")
                 producers[edge.artifact_id] = edge.step_id
                 continue
 
@@ -598,24 +598,24 @@ class WorkflowGraph:
             self._require_identity(edge.step_id, "step_id")
             self._require_identity(edge.item_binding_id, "item_binding_id")
             if edge.artifact_id not in artifact_ids:
-                raise WorkflowGraphError(f"unknown foreach source artifact: {edge.artifact_id}")
+                raise MethodGraphError(f"unknown foreach source artifact: {edge.artifact_id}")
             if edge.step_id not in step_ids:
-                raise WorkflowGraphError(f"unknown foreach step: {edge.step_id}")
+                raise MethodGraphError(f"unknown foreach step: {edge.step_id}")
             if edge.item_binding_id not in artifact_ids:
-                raise WorkflowGraphError(f"unknown foreach item binding: {edge.item_binding_id}")
+                raise MethodGraphError(f"unknown foreach item binding: {edge.item_binding_id}")
             source = artifacts_by_id[edge.artifact_id]
             # Iteration must read a global collection, never another step's
             # local item binding.
             if source.binding_step_id is not None:
-                raise WorkflowGraphError(f"local binding cannot be a foreach source: {edge.artifact_id}")
+                raise MethodGraphError(f"local binding cannot be a foreach source: {edge.artifact_id}")
             binding = artifacts_by_id[edge.item_binding_id]
             if binding.binding_step_id != edge.step_id:
-                raise WorkflowGraphError(f"foreach binding owner does not match step: {edge.item_binding_id}")
+                raise MethodGraphError(f"foreach binding owner does not match step: {edge.item_binding_id}")
             if edge.item_binding_id in foreach_bindings:
-                raise WorkflowGraphError(f"local binding referenced by multiple foreach edges: {edge.item_binding_id}")
+                raise MethodGraphError(f"local binding referenced by multiple foreach edges: {edge.item_binding_id}")
             foreach_bindings.add(edge.item_binding_id)
             if edge.step_id in foreach_steps:
-                raise WorkflowGraphError(f"step has multiple foreach sources: {edge.step_id}")
+                raise MethodGraphError(f"step has multiple foreach sources: {edge.step_id}")
             foreach_steps.add(edge.step_id)
             required_global_artifacts.add(edge.artifact_id)
 
@@ -623,7 +623,7 @@ class WorkflowGraph:
         # merely naming a binding owner is insufficient.
         for artifact in self.artifacts:
             if artifact.binding_step_id is not None and artifact.artifact_id not in foreach_bindings:
-                raise WorkflowGraphError(
+                raise MethodGraphError(
                     f"local binding must be referenced by exactly one foreach edge: {artifact.artifact_id}"
                 )
 
@@ -635,32 +635,32 @@ class WorkflowGraph:
                 "select output_artifact_id",
             )
             if selector.output_artifact_id not in artifact_ids:
-                raise WorkflowGraphError(f"unknown select output artifact: {selector.output_artifact_id}")
+                raise MethodGraphError(f"unknown select output artifact: {selector.output_artifact_id}")
             output = artifacts_by_id[selector.output_artifact_id]
             if output.binding_step_id is not None:
-                raise WorkflowGraphError(f"select artifact must be global: {selector.output_artifact_id}")
+                raise MethodGraphError(f"select artifact must be global: {selector.output_artifact_id}")
             for input_artifact_id in selector.input_artifact_ids():
                 self._require_identity(
                     input_artifact_id,
                     "select input artifact_id",
                 )
                 if input_artifact_id not in artifact_ids:
-                    raise WorkflowGraphError(f"unknown select input artifact: {input_artifact_id}")
+                    raise MethodGraphError(f"unknown select input artifact: {input_artifact_id}")
                 if artifacts_by_id[input_artifact_id].binding_step_id is not None:
-                    raise WorkflowGraphError(f"select artifact must be global: {input_artifact_id}")
+                    raise MethodGraphError(f"select artifact must be global: {input_artifact_id}")
                 required_global_artifacts.add(input_artifact_id)
             if selector.output_artifact_id in producers:
-                raise WorkflowGraphError(f"artifact has multiple producers: {selector.output_artifact_id}")
+                raise MethodGraphError(f"artifact has multiple producers: {selector.output_artifact_id}")
             producers[selector.output_artifact_id] = selector.output_artifact_id
 
-        # A global value needed by a consumer, foreach, or workflow output must
+        # A global value needed by a consumer, foreach, or method output must
         # enter through the boundary or have exactly one producer.
         for artifact_id in required_global_artifacts:
             artifact = artifacts_by_id[artifact_id]
             if not artifact.is_input and artifact_id not in producers:
-                raise WorkflowGraphError(f"global artifact must be an input or producer-backed: {artifact_id}")
+                raise MethodGraphError(f"global artifact must be an input or producer-backed: {artifact_id}")
 
-        # Workflow policies are optional, but supplied values must be positive.
+        # Method policies are optional, but supplied values must be positive.
         self._require_positive(
             self.policy.max_concurrency,
             "max_concurrency",
@@ -668,11 +668,11 @@ class WorkflowGraph:
         )
         self._require_positive(
             self.policy.timeout_seconds,
-            "workflow timeout_seconds",
+            "method timeout_seconds",
             allow_none=True,
         )
 
-    def to_dict(self) -> WorkflowGraphDict:
+    def to_dict(self) -> MethodGraphDict:
         """Return a JSON-ready payload with deterministic collection ordering."""
 
         # Sort steps and their resources independently so construction order
@@ -731,7 +731,7 @@ class WorkflowGraph:
                 (edge.item_binding_id if isinstance(edge, ForeachEdge) else ""),
             ),
         )
-        edge_payloads: list[WorkflowEdgeDict] = []
+        edge_payloads: list[MethodEdgeDict] = []
         for edge in sorted_edges:
             if isinstance(edge, ConsumesEdge):
                 # consumes payload keeps artifact before step.
@@ -775,12 +775,12 @@ class WorkflowGraph:
             )
         ]
 
-        payload = WorkflowGraphDict(
-            workflow_id=self.workflow_id,
+        payload = MethodGraphDict(
+            method_id=self.method_id,
             steps=step_payloads,
             artifacts=artifact_payloads,
             edges=edge_payloads,
-            policy=WorkflowPolicyDict(
+            policy=MethodPolicyDict(
                 max_concurrency=self.policy.max_concurrency,
                 timeout_seconds=self.policy.timeout_seconds,
             ),
@@ -793,7 +793,7 @@ class WorkflowGraph:
         """Require a non-empty string for every graph identity field."""
 
         if not isinstance(value, str) or not value:
-            raise WorkflowGraphError(f"{field_name} must be a non-empty string")
+            raise MethodGraphError(f"{field_name} must be a non-empty string")
 
     @staticmethod
     def _require_positive(
@@ -808,4 +808,4 @@ class WorkflowGraph:
             return
         # Exact type checking rejects booleans, which are int subclasses.
         if type(value) is not int or value < 1:
-            raise WorkflowGraphError(f"{field_name} must be a positive integer")
+            raise MethodGraphError(f"{field_name} must be a positive integer")

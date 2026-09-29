@@ -12,8 +12,8 @@ import anyio
 import platformdirs
 from loguru import logger
 
-_WORKFLOW_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
-_WINDOWS_RESERVED_WORKFLOW_NAMES = {
+_METHOD_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_WINDOWS_RESERVED_METHOD_NAMES = {
     "con",
     "prn",
     "aux",
@@ -21,10 +21,10 @@ _WINDOWS_RESERVED_WORKFLOW_NAMES = {
     *(f"com{number}" for number in range(1, 10)),
     *(f"lpt{number}" for number in range(1, 10)),
 }
-_MAX_WORKFLOW_SOURCE_BYTES = 8 * 1024 * 1024
+_MAX_METHOD_SOURCE_BYTES = 8 * 1024 * 1024
 
 
-class WorkflowSummary(TypedDict):
+class MethodSummary(TypedDict):
     name: str
     path: str
 
@@ -79,10 +79,10 @@ class WorkspaceManager:
         return _posix(Path.cwd())
 
     @staticmethod
-    def _is_valid_workflow_name(name: str) -> bool:
-        """Return whether name is a portable workflow registry segment."""
+    def _is_valid_method_name(name: str) -> bool:
+        """Return whether name is a portable method registry segment."""
 
-        return _WORKFLOW_NAME_RE.fullmatch(name) is not None and name not in _WINDOWS_RESERVED_WORKFLOW_NAMES
+        return _METHOD_NAME_RE.fullmatch(name) is not None and name not in _WINDOWS_RESERVED_METHOD_NAMES
 
     async def list_places(self) -> dict[str, Any]:
         logger.debug("Listing workspace places")
@@ -152,8 +152,8 @@ class WorkspaceManager:
             "entries": entries,
         }
 
-    async def list_workflows(self, workspace_path: str) -> list[WorkflowSummary]:
-        """List canonical reusable workflow declarations from one workspace."""
+    async def list_methods(self, workspace_path: str) -> list[MethodSummary]:
+        """List canonical reusable method declarations from one workspace."""
 
         raw_workspace = workspace_path.strip() or str(Path.cwd())
         workspace = anyio.Path(raw_workspace)
@@ -163,68 +163,68 @@ class WorkspaceManager:
             raise NotADirectoryError(f"Not a directory: {raw_workspace!r}")
 
         workspace = await workspace.resolve()
-        flows_root = workspace / "flows"
-        if not await flows_root.exists():
+        mtds_root = workspace / "mtds"
+        if not await mtds_root.exists():
             return []
-        if await flows_root.is_symlink() or not await flows_root.is_dir():
-            logger.warning(f"Skipping workflow registry because flows is not a regular directory: {flows_root!r}")
-            return []
-
-        workflow_root = flows_root / "workflows"
-        if not await workflow_root.exists():
-            return []
-        if await workflow_root.is_symlink() or not await workflow_root.is_dir():
-            logger.warning(f"Skipping workflow registry because it is not a regular directory: {workflow_root!r}")
+        if await mtds_root.is_symlink() or not await mtds_root.is_dir():
+            logger.warning(f"Skipping method registry because mtds is not a regular directory: {mtds_root!r}")
             return []
 
-        workflow_root = await workflow_root.resolve()
+        method_root = mtds_root / "methods"
+        if not await method_root.exists():
+            return []
+        if await method_root.is_symlink() or not await method_root.is_dir():
+            logger.warning(f"Skipping method registry because it is not a regular directory: {method_root!r}")
+            return []
+
+        method_root = await method_root.resolve()
         workspace_native = Path(str(workspace))
-        workflow_root_native = Path(str(workflow_root))
-        if not workflow_root_native.is_relative_to(workspace_native):
-            logger.warning(f"Skipping workflow registry outside workspace: {workflow_root!r}")
+        method_root_native = Path(str(method_root))
+        if not method_root_native.is_relative_to(workspace_native):
+            logger.warning(f"Skipping method registry outside workspace: {method_root!r}")
             return []
 
-        workflows: list[WorkflowSummary] = []
-        async for entry in workflow_root.iterdir():
+        methods: list[MethodSummary] = []
+        async for entry in method_root.iterdir():
             try:
                 if await entry.is_symlink() or not await entry.is_dir():
                     continue
 
                 name = entry.name
-                if not self._is_valid_workflow_name(name):
-                    logger.warning(f"Skipping workflow directory with invalid name: {name!r}")
+                if not self._is_valid_method_name(name):
+                    logger.warning(f"Skipping method directory with invalid name: {name!r}")
                     continue
 
                 resolved_entry = await entry.resolve()
                 entry_native = Path(str(resolved_entry))
-                if not entry_native.is_relative_to(workflow_root_native):
-                    logger.warning(f"Skipping workflow directory outside registry: {entry!r}")
+                if not entry_native.is_relative_to(method_root_native):
+                    logger.warning(f"Skipping method directory outside registry: {entry!r}")
                     continue
 
-                source = resolved_entry / f"{name}.workflow"
+                source = resolved_entry / f"{name}.method"
                 if not await source.exists() or not await source.is_file() or await source.is_symlink():
-                    logger.warning(f"Skipping incomplete workflow entry: {name!r}")
+                    logger.warning(f"Skipping incomplete method entry: {name!r}")
                     continue
 
                 resolved_source = await source.resolve()
                 if not Path(str(resolved_source)).is_relative_to(entry_native):
-                    logger.warning(f"Skipping workflow entry with escaped files: {name!r}")
+                    logger.warning(f"Skipping method entry with escaped files: {name!r}")
                     continue
-                if (await resolved_source.stat()).st_size > _MAX_WORKFLOW_SOURCE_BYTES:
-                    logger.warning(f"Skipping oversized workflow source: {name!r}")
+                if (await resolved_source.stat()).st_size > _MAX_METHOD_SOURCE_BYTES:
+                    logger.warning(f"Skipping oversized method source: {name!r}")
                     continue
 
-                workflows.append(
+                methods.append(
                     {
                         "name": name,
-                        "path": f"flows/workflows/{name}/{name}.workflow",
+                        "path": f"mtds/methods/{name}/{name}.method",
                     }
                 )
             except OSError as e:
-                logger.warning(f"Skipping invalid workflow entry {entry!r}: {e}")
+                logger.warning(f"Skipping invalid method entry {entry!r}: {e}")
 
-        workflows.sort(key=lambda workflow: workflow["name"])
-        return workflows
+        methods.sort(key=lambda method: method["name"])
+        return methods
 
     async def read_file(self, path: str, *, root: str = "") -> dict[str, str]:
         """Read a file as base64 for deliverable preview (spa-v2 history reopen).

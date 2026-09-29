@@ -1,4 +1,4 @@
-# Generated from grammar/FusionFlow.g4 by ANTLR 4.13.2
+# Generated from grammar/FusionMethod.g4 by ANTLR 4.13.2
 # encoding: utf-8
 from antlr4 import *
 from io import StringIO
@@ -88,9 +88,9 @@ def serializedATN():
         143,154,156,162,180,185,192,200,207
     ]
 
-class FusionFlowParser ( Parser ):
+class FusionMethodParser ( Parser ):
 
-    grammarFileName = "FusionFlow.g4"
+    grammarFileName = "FusionMethod.g4"
 
     atn = ATNDeserializer().deserialize(serializedATN())
 
@@ -98,26 +98,26 @@ class FusionFlowParser ( Parser ):
 
     sharedContextCache = PredictionContextCache()
 
-    literalNames = [ "<INVALID>", "'input_workflow'", "'output_workflow'", 
-                     "'max_concurrency'", "'workflow_timeout'", "'program_path'", 
-                     "'step_name'", "'step_instruction'", "'step_executor'", 
-                     "'step_timeout'", "'max_attempts'", "'consumes'", "'produces'", 
-                     "'foreach_item'", "'resource_requirement'", "'agent_config'", 
-                     "'allowed_tool'", "'max_output_tokens'", "'temperature'", 
-                     "'reasoning_effort'", "'max_turns'", "'agent_system_prompt'", 
-                     "'workflow'", "'if'", "'const'", "<INVALID>", "<INVALID>", 
-                     "'!'", "<INVALID>", "<INVALID>", "'=='", "'='", "'!='", 
-                     "'<='", "'>='", "'<'", "'>'", "'+'", "'-'", "'*'", 
-                     "'/'", "'%'", "'^'", "<INVALID>", "<INVALID>", "<INVALID>", 
-                     "<INVALID>", "<INVALID>", "<INVALID>", "':'", "','", 
-                     "';'", "'('", "')'", "'{'", "'}'", "'['", "']'" ]
+    literalNames = [ "<INVALID>", "'input_method'", "'output_method'", "'max_concurrency'", 
+                     "'method_timeout'", "'program_path'", "'step_name'", 
+                     "'step_instruction'", "'step_executor'", "'step_timeout'", 
+                     "'max_attempts'", "'consumes'", "'produces'", "'foreach_item'", 
+                     "'resource_requirement'", "'agent_config'", "'allowed_tool'", 
+                     "'max_output_tokens'", "'temperature'", "'reasoning_effort'", 
+                     "'max_turns'", "'agent_system_prompt'", "'method'", 
+                     "'if'", "'const'", "<INVALID>", "<INVALID>", "'!'", 
+                     "<INVALID>", "<INVALID>", "'=='", "'='", "'!='", "'<='", 
+                     "'>='", "'<'", "'>'", "'+'", "'-'", "'*'", "'/'", "'%'", 
+                     "'^'", "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
+                     "<INVALID>", "<INVALID>", "':'", "','", "';'", "'('", 
+                     "')'", "'{'", "'}'", "'['", "']'" ]
 
     symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
                       "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
                       "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
                       "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
                       "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "WORKFLOW", "IF", "CONST", 
+                      "<INVALID>", "<INVALID>", "METHOD", "IF", "CONST", 
                       "AND", "OR", "NOT", "TRUE", "FALSE", "ASSERT_EQ", 
                       "NUMERIC_EQ", "NOT_EQUALS", "LTE", "GTE", "LT", "GT", 
                       "PLUS", "MINUS", "STAR", "DIVIDE", "MODULO", "CARET", 
@@ -126,10 +126,10 @@ class FusionFlowParser ( Parser ):
                       "RPAREN", "LBRACE", "RBRACE", "LBRACK", "RBRACK", 
                       "WS", "LINE_COMMENT", "BLOCK_COMMENT" ]
 
-    RULE_workflowFile = 0
-    RULE_workflowDecl = 1
-    RULE_workflowName = 2
-    RULE_workflowItem = 3
+    RULE_methodFile = 0
+    RULE_methodDecl = 1
+    RULE_methodName = 2
+    RULE_methodItem = 3
     RULE_constDecl = 4
     RULE_conceptNameList = 5
     RULE_assertion = 6
@@ -145,8 +145,8 @@ class FusionFlowParser ( Parser ):
     RULE_identifier = 16
     RULE_conceptName = 17
     RULE_operatorName = 18
-    RULE_workflowBuiltinOperator = 19
-    RULE_workflowOwnerOperator = 20
+    RULE_methodBuiltinOperator = 19
+    RULE_methodOwnerOperator = 20
     RULE_programOwnerOperator = 21
     RULE_stepOwnerOperator = 22
     RULE_dataResourceOperator = 23
@@ -154,12 +154,12 @@ class FusionFlowParser ( Parser ):
     RULE_constantName = 25
     RULE_booleanLiteral = 26
 
-    ruleNames =  [ "workflowFile", "workflowDecl", "workflowName", "workflowItem", 
+    ruleNames =  [ "methodFile", "methodDecl", "methodName", "methodItem", 
                    "constDecl", "conceptNameList", "assertion", "formula", 
                    "comparison", "comparisonOp", "term", "operatorCall", 
                    "ifExpression", "termList", "listLiteral", "atomicTerm", 
-                   "identifier", "conceptName", "operatorName", "workflowBuiltinOperator", 
-                   "workflowOwnerOperator", "programOwnerOperator", "stepOwnerOperator", 
+                   "identifier", "conceptName", "operatorName", "methodBuiltinOperator", 
+                   "methodOwnerOperator", "programOwnerOperator", "stepOwnerOperator", 
                    "dataResourceOperator", "agentOwnerOperator", "constantName", 
                    "booleanLiteral" ]
 
@@ -185,7 +185,7 @@ class FusionFlowParser ( Parser ):
     T__18=19
     T__19=20
     T__20=21
-    WORKFLOW=22
+    METHOD=22
     IF=23
     CONST=24
     AND=25
@@ -234,7 +234,7 @@ class FusionFlowParser ( Parser ):
 
 
 
-    class WorkflowFileContext(ParserRuleContext):
+    class MethodFileContext(ParserRuleContext):
         __slots__ = 'parser'
 
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
@@ -242,38 +242,38 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def EOF(self):
-            return self.getToken(FusionFlowParser.EOF, 0)
+            return self.getToken(FusionMethodParser.EOF, 0)
 
         def constDecl(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.ConstDeclContext)
+                return self.getTypedRuleContexts(FusionMethodParser.ConstDeclContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.ConstDeclContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.ConstDeclContext,i)
 
 
         def SEMICOLON(self, i:int=None):
             if i is None:
-                return self.getTokens(FusionFlowParser.SEMICOLON)
+                return self.getTokens(FusionMethodParser.SEMICOLON)
             else:
-                return self.getToken(FusionFlowParser.SEMICOLON, i)
+                return self.getToken(FusionMethodParser.SEMICOLON, i)
 
-        def workflowDecl(self, i:int=None):
+        def methodDecl(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.WorkflowDeclContext)
+                return self.getTypedRuleContexts(FusionMethodParser.MethodDeclContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.WorkflowDeclContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.MethodDeclContext,i)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_workflowFile
+            return FusionMethodParser.RULE_methodFile
 
 
 
 
-    def workflowFile(self):
+    def methodFile(self):
 
-        localctx = FusionFlowParser.WorkflowFileContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 0, self.RULE_workflowFile)
+        localctx = FusionMethodParser.MethodFileContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 0, self.RULE_methodFile)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
@@ -284,7 +284,7 @@ class FusionFlowParser ( Parser ):
                 self.state = 54
                 self.constDecl()
                 self.state = 55
-                self.match(FusionFlowParser.SEMICOLON)
+                self.match(FusionMethodParser.SEMICOLON)
                 self.state = 61
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
@@ -294,7 +294,7 @@ class FusionFlowParser ( Parser ):
             _la = self._input.LA(1)
             while True:
                 self.state = 62
-                self.workflowDecl()
+                self.methodDecl()
                 self.state = 65 
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
@@ -302,7 +302,7 @@ class FusionFlowParser ( Parser ):
                     break
 
             self.state = 67
-            self.match(FusionFlowParser.EOF)
+            self.match(FusionMethodParser.EOF)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -312,64 +312,64 @@ class FusionFlowParser ( Parser ):
         return localctx
 
 
-    class WorkflowDeclContext(ParserRuleContext):
+    class MethodDeclContext(ParserRuleContext):
         __slots__ = 'parser'
 
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
             super().__init__(parent, invokingState)
             self.parser = parser
 
-        def WORKFLOW(self):
-            return self.getToken(FusionFlowParser.WORKFLOW, 0)
+        def METHOD(self):
+            return self.getToken(FusionMethodParser.METHOD, 0)
 
-        def workflowName(self):
-            return self.getTypedRuleContext(FusionFlowParser.WorkflowNameContext,0)
+        def methodName(self):
+            return self.getTypedRuleContext(FusionMethodParser.MethodNameContext,0)
 
 
         def LBRACE(self):
-            return self.getToken(FusionFlowParser.LBRACE, 0)
+            return self.getToken(FusionMethodParser.LBRACE, 0)
 
         def RBRACE(self):
-            return self.getToken(FusionFlowParser.RBRACE, 0)
+            return self.getToken(FusionMethodParser.RBRACE, 0)
 
-        def workflowItem(self, i:int=None):
+        def methodItem(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.WorkflowItemContext)
+                return self.getTypedRuleContexts(FusionMethodParser.MethodItemContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.WorkflowItemContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.MethodItemContext,i)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_workflowDecl
+            return FusionMethodParser.RULE_methodDecl
 
 
 
 
-    def workflowDecl(self):
+    def methodDecl(self):
 
-        localctx = FusionFlowParser.WorkflowDeclContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 2, self.RULE_workflowDecl)
+        localctx = FusionMethodParser.MethodDeclContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 2, self.RULE_methodDecl)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 69
-            self.match(FusionFlowParser.WORKFLOW)
+            self.match(FusionMethodParser.METHOD)
             self.state = 70
-            self.workflowName()
+            self.methodName()
             self.state = 71
-            self.match(FusionFlowParser.LBRACE)
+            self.match(FusionMethodParser.LBRACE)
             self.state = 75
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while (((_la) & ~0x3f) == 0 and ((1 << _la) & 77098168474402814) != 0):
                 self.state = 72
-                self.workflowItem()
+                self.methodItem()
                 self.state = 77
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
 
             self.state = 78
-            self.match(FusionFlowParser.RBRACE)
+            self.match(FusionMethodParser.RBRACE)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -379,7 +379,7 @@ class FusionFlowParser ( Parser ):
         return localctx
 
 
-    class WorkflowNameContext(ParserRuleContext):
+    class MethodNameContext(ParserRuleContext):
         __slots__ = 'parser'
 
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
@@ -387,19 +387,19 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def identifier(self):
-            return self.getTypedRuleContext(FusionFlowParser.IdentifierContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.IdentifierContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_workflowName
+            return FusionMethodParser.RULE_methodName
 
 
 
 
-    def workflowName(self):
+    def methodName(self):
 
-        localctx = FusionFlowParser.WorkflowNameContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 4, self.RULE_workflowName)
+        localctx = FusionMethodParser.MethodNameContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 4, self.RULE_methodName)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 80
@@ -413,7 +413,7 @@ class FusionFlowParser ( Parser ):
         return localctx
 
 
-    class WorkflowItemContext(ParserRuleContext):
+    class MethodItemContext(ParserRuleContext):
         __slots__ = 'parser'
 
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
@@ -421,28 +421,28 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def assertion(self):
-            return self.getTypedRuleContext(FusionFlowParser.AssertionContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.AssertionContext,0)
 
 
         def SEMICOLON(self):
-            return self.getToken(FusionFlowParser.SEMICOLON, 0)
+            return self.getToken(FusionMethodParser.SEMICOLON, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_workflowItem
+            return FusionMethodParser.RULE_methodItem
 
 
 
 
-    def workflowItem(self):
+    def methodItem(self):
 
-        localctx = FusionFlowParser.WorkflowItemContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 6, self.RULE_workflowItem)
+        localctx = FusionMethodParser.MethodItemContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 6, self.RULE_methodItem)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 82
             self.assertion()
             self.state = 83
-            self.match(FusionFlowParser.SEMICOLON)
+            self.match(FusionMethodParser.SEMICOLON)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -460,37 +460,37 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def CONST(self):
-            return self.getToken(FusionFlowParser.CONST, 0)
+            return self.getToken(FusionMethodParser.CONST, 0)
 
         def constantName(self):
-            return self.getTypedRuleContext(FusionFlowParser.ConstantNameContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.ConstantNameContext,0)
 
 
         def COLON(self):
-            return self.getToken(FusionFlowParser.COLON, 0)
+            return self.getToken(FusionMethodParser.COLON, 0)
 
         def conceptNameList(self):
-            return self.getTypedRuleContext(FusionFlowParser.ConceptNameListContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.ConceptNameListContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_constDecl
+            return FusionMethodParser.RULE_constDecl
 
 
 
 
     def constDecl(self):
 
-        localctx = FusionFlowParser.ConstDeclContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.ConstDeclContext(self, self._ctx, self.state)
         self.enterRule(localctx, 8, self.RULE_constDecl)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 85
-            self.match(FusionFlowParser.CONST)
+            self.match(FusionMethodParser.CONST)
             self.state = 86
             self.constantName()
             self.state = 87
-            self.match(FusionFlowParser.COLON)
+            self.match(FusionMethodParser.COLON)
             self.state = 88
             self.conceptNameList()
         except RecognitionException as re:
@@ -511,26 +511,26 @@ class FusionFlowParser ( Parser ):
 
         def conceptName(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.ConceptNameContext)
+                return self.getTypedRuleContexts(FusionMethodParser.ConceptNameContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.ConceptNameContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.ConceptNameContext,i)
 
 
         def COMMA(self, i:int=None):
             if i is None:
-                return self.getTokens(FusionFlowParser.COMMA)
+                return self.getTokens(FusionMethodParser.COMMA)
             else:
-                return self.getToken(FusionFlowParser.COMMA, i)
+                return self.getToken(FusionMethodParser.COMMA, i)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_conceptNameList
+            return FusionMethodParser.RULE_conceptNameList
 
 
 
 
     def conceptNameList(self):
 
-        localctx = FusionFlowParser.ConceptNameListContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.ConceptNameListContext(self, self._ctx, self.state)
         self.enterRule(localctx, 10, self.RULE_conceptNameList)
         self._la = 0 # Token type
         try:
@@ -542,7 +542,7 @@ class FusionFlowParser ( Parser ):
             _la = self._input.LA(1)
             while _la==50:
                 self.state = 91
-                self.match(FusionFlowParser.COMMA)
+                self.match(FusionMethodParser.COMMA)
                 self.state = 92
                 self.conceptName()
                 self.state = 97
@@ -567,27 +567,27 @@ class FusionFlowParser ( Parser ):
 
         def term(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.TermContext)
+                return self.getTypedRuleContexts(FusionMethodParser.TermContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.TermContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.TermContext,i)
 
 
         def ASSERT_EQ(self):
-            return self.getToken(FusionFlowParser.ASSERT_EQ, 0)
+            return self.getToken(FusionMethodParser.ASSERT_EQ, 0)
 
         def operatorCall(self):
-            return self.getTypedRuleContext(FusionFlowParser.OperatorCallContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.OperatorCallContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_assertion
+            return FusionMethodParser.RULE_assertion
 
 
 
 
     def assertion(self):
 
-        localctx = FusionFlowParser.AssertionContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.AssertionContext(self, self._ctx, self.state)
         self.enterRule(localctx, 12, self.RULE_assertion)
         try:
             self.state = 103
@@ -598,7 +598,7 @@ class FusionFlowParser ( Parser ):
                 self.state = 98
                 self.term(0)
                 self.state = 99
-                self.match(FusionFlowParser.ASSERT_EQ)
+                self.match(FusionMethodParser.ASSERT_EQ)
                 self.state = 100
                 self.term(0)
                 pass
@@ -629,40 +629,40 @@ class FusionFlowParser ( Parser ):
             self.right = None # FormulaContext
 
         def LPAREN(self):
-            return self.getToken(FusionFlowParser.LPAREN, 0)
+            return self.getToken(FusionMethodParser.LPAREN, 0)
 
         def formula(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.FormulaContext)
+                return self.getTypedRuleContexts(FusionMethodParser.FormulaContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.FormulaContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.FormulaContext,i)
 
 
         def RPAREN(self):
-            return self.getToken(FusionFlowParser.RPAREN, 0)
+            return self.getToken(FusionMethodParser.RPAREN, 0)
 
         def NOT(self):
-            return self.getToken(FusionFlowParser.NOT, 0)
+            return self.getToken(FusionMethodParser.NOT, 0)
 
         def comparison(self):
-            return self.getTypedRuleContext(FusionFlowParser.ComparisonContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.ComparisonContext,0)
 
 
         def AND(self):
-            return self.getToken(FusionFlowParser.AND, 0)
+            return self.getToken(FusionMethodParser.AND, 0)
 
         def OR(self):
-            return self.getToken(FusionFlowParser.OR, 0)
+            return self.getToken(FusionMethodParser.OR, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_formula
+            return FusionMethodParser.RULE_formula
 
 
 
     def formula(self, _p:int=0):
         _parentctx = self._ctx
         _parentState = self.state
-        localctx = FusionFlowParser.FormulaContext(self, self._ctx, _parentState)
+        localctx = FusionMethodParser.FormulaContext(self, self._ctx, _parentState)
         _prevctx = localctx
         _startState = 14
         self.enterRecursionRule(localctx, 14, self.RULE_formula, _p)
@@ -673,16 +673,16 @@ class FusionFlowParser ( Parser ):
             la_ = self._interp.adaptivePredict(self._input,5,self._ctx)
             if la_ == 1:
                 self.state = 106
-                self.match(FusionFlowParser.LPAREN)
+                self.match(FusionMethodParser.LPAREN)
                 self.state = 107
                 self.formula(0)
                 self.state = 108
-                self.match(FusionFlowParser.RPAREN)
+                self.match(FusionMethodParser.RPAREN)
                 pass
 
             elif la_ == 2:
                 self.state = 110
-                self.match(FusionFlowParser.NOT)
+                self.match(FusionMethodParser.NOT)
                 self.state = 111
                 self.formula(4)
                 pass
@@ -706,7 +706,7 @@ class FusionFlowParser ( Parser ):
                     self._errHandler.sync(self)
                     la_ = self._interp.adaptivePredict(self._input,6,self._ctx)
                     if la_ == 1:
-                        localctx = FusionFlowParser.FormulaContext(self, _parentctx, _parentState)
+                        localctx = FusionMethodParser.FormulaContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_formula)
                         self.state = 115
@@ -714,13 +714,13 @@ class FusionFlowParser ( Parser ):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 3)")
                         self.state = 116
-                        self.match(FusionFlowParser.AND)
+                        self.match(FusionMethodParser.AND)
                         self.state = 117
                         localctx.right = self.formula(4)
                         pass
 
                     elif la_ == 2:
-                        localctx = FusionFlowParser.FormulaContext(self, _parentctx, _parentState)
+                        localctx = FusionMethodParser.FormulaContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_formula)
                         self.state = 118
@@ -728,7 +728,7 @@ class FusionFlowParser ( Parser ):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 2)")
                         self.state = 119
-                        self.match(FusionFlowParser.OR)
+                        self.match(FusionMethodParser.OR)
                         self.state = 120
                         localctx.right = self.formula(3)
                         pass
@@ -756,24 +756,24 @@ class FusionFlowParser ( Parser ):
 
         def term(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.TermContext)
+                return self.getTypedRuleContexts(FusionMethodParser.TermContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.TermContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.TermContext,i)
 
 
         def comparisonOp(self):
-            return self.getTypedRuleContext(FusionFlowParser.ComparisonOpContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.ComparisonOpContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_comparison
+            return FusionMethodParser.RULE_comparison
 
 
 
 
     def comparison(self):
 
-        localctx = FusionFlowParser.ComparisonContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.ComparisonContext(self, self._ctx, self.state)
         self.enterRule(localctx, 16, self.RULE_comparison)
         try:
             self.enterOuterAlt(localctx, 1)
@@ -800,32 +800,32 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def NUMERIC_EQ(self):
-            return self.getToken(FusionFlowParser.NUMERIC_EQ, 0)
+            return self.getToken(FusionMethodParser.NUMERIC_EQ, 0)
 
         def NOT_EQUALS(self):
-            return self.getToken(FusionFlowParser.NOT_EQUALS, 0)
+            return self.getToken(FusionMethodParser.NOT_EQUALS, 0)
 
         def LT(self):
-            return self.getToken(FusionFlowParser.LT, 0)
+            return self.getToken(FusionMethodParser.LT, 0)
 
         def LTE(self):
-            return self.getToken(FusionFlowParser.LTE, 0)
+            return self.getToken(FusionMethodParser.LTE, 0)
 
         def GT(self):
-            return self.getToken(FusionFlowParser.GT, 0)
+            return self.getToken(FusionMethodParser.GT, 0)
 
         def GTE(self):
-            return self.getToken(FusionFlowParser.GTE, 0)
+            return self.getToken(FusionMethodParser.GTE, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_comparisonOp
+            return FusionMethodParser.RULE_comparisonOp
 
 
 
 
     def comparisonOp(self):
 
-        localctx = FusionFlowParser.ComparisonOpContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.ComparisonOpContext(self, self._ctx, self.state)
         self.enterRule(localctx, 18, self.RULE_comparisonOp)
         self._la = 0 # Token type
         try:
@@ -857,61 +857,61 @@ class FusionFlowParser ( Parser ):
             self.right = None # TermContext
 
         def LPAREN(self):
-            return self.getToken(FusionFlowParser.LPAREN, 0)
+            return self.getToken(FusionMethodParser.LPAREN, 0)
 
         def term(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.TermContext)
+                return self.getTypedRuleContexts(FusionMethodParser.TermContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.TermContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.TermContext,i)
 
 
         def RPAREN(self):
-            return self.getToken(FusionFlowParser.RPAREN, 0)
+            return self.getToken(FusionMethodParser.RPAREN, 0)
 
         def ifExpression(self):
-            return self.getTypedRuleContext(FusionFlowParser.IfExpressionContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.IfExpressionContext,0)
 
 
         def operatorCall(self):
-            return self.getTypedRuleContext(FusionFlowParser.OperatorCallContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.OperatorCallContext,0)
 
 
         def listLiteral(self):
-            return self.getTypedRuleContext(FusionFlowParser.ListLiteralContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.ListLiteralContext,0)
 
 
         def PLUS(self):
-            return self.getToken(FusionFlowParser.PLUS, 0)
+            return self.getToken(FusionMethodParser.PLUS, 0)
 
         def MINUS(self):
-            return self.getToken(FusionFlowParser.MINUS, 0)
+            return self.getToken(FusionMethodParser.MINUS, 0)
 
         def atomicTerm(self):
-            return self.getTypedRuleContext(FusionFlowParser.AtomicTermContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.AtomicTermContext,0)
 
 
         def CARET(self):
-            return self.getToken(FusionFlowParser.CARET, 0)
+            return self.getToken(FusionMethodParser.CARET, 0)
 
         def STAR(self):
-            return self.getToken(FusionFlowParser.STAR, 0)
+            return self.getToken(FusionMethodParser.STAR, 0)
 
         def DIVIDE(self):
-            return self.getToken(FusionFlowParser.DIVIDE, 0)
+            return self.getToken(FusionMethodParser.DIVIDE, 0)
 
         def MODULO(self):
-            return self.getToken(FusionFlowParser.MODULO, 0)
+            return self.getToken(FusionMethodParser.MODULO, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_term
+            return FusionMethodParser.RULE_term
 
 
 
     def term(self, _p:int=0):
         _parentctx = self._ctx
         _parentState = self.state
-        localctx = FusionFlowParser.TermContext(self, self._ctx, _parentState)
+        localctx = FusionMethodParser.TermContext(self, self._ctx, _parentState)
         _prevctx = localctx
         _startState = 20
         self.enterRecursionRule(localctx, 20, self.RULE_term, _p)
@@ -923,11 +923,11 @@ class FusionFlowParser ( Parser ):
             la_ = self._interp.adaptivePredict(self._input,8,self._ctx)
             if la_ == 1:
                 self.state = 133
-                self.match(FusionFlowParser.LPAREN)
+                self.match(FusionMethodParser.LPAREN)
                 self.state = 134
                 self.term(0)
                 self.state = 135
-                self.match(FusionFlowParser.RPAREN)
+                self.match(FusionMethodParser.RPAREN)
                 pass
 
             elif la_ == 2:
@@ -977,7 +977,7 @@ class FusionFlowParser ( Parser ):
                     self._errHandler.sync(self)
                     la_ = self._interp.adaptivePredict(self._input,9,self._ctx)
                     if la_ == 1:
-                        localctx = FusionFlowParser.TermContext(self, _parentctx, _parentState)
+                        localctx = FusionMethodParser.TermContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_term)
                         self.state = 145
@@ -985,13 +985,13 @@ class FusionFlowParser ( Parser ):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 4)")
                         self.state = 146
-                        localctx.op = self.match(FusionFlowParser.CARET)
+                        localctx.op = self.match(FusionMethodParser.CARET)
                         self.state = 147
                         localctx.right = self.term(4)
                         pass
 
                     elif la_ == 2:
-                        localctx = FusionFlowParser.TermContext(self, _parentctx, _parentState)
+                        localctx = FusionMethodParser.TermContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_term)
                         self.state = 148
@@ -1011,7 +1011,7 @@ class FusionFlowParser ( Parser ):
                         pass
 
                     elif la_ == 3:
-                        localctx = FusionFlowParser.TermContext(self, _parentctx, _parentState)
+                        localctx = FusionMethodParser.TermContext(self, _parentctx, _parentState)
                         localctx.left = _prevctx
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_term)
                         self.state = 151
@@ -1052,28 +1052,28 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def operatorName(self):
-            return self.getTypedRuleContext(FusionFlowParser.OperatorNameContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.OperatorNameContext,0)
 
 
         def LPAREN(self):
-            return self.getToken(FusionFlowParser.LPAREN, 0)
+            return self.getToken(FusionMethodParser.LPAREN, 0)
 
         def RPAREN(self):
-            return self.getToken(FusionFlowParser.RPAREN, 0)
+            return self.getToken(FusionMethodParser.RPAREN, 0)
 
         def termList(self):
-            return self.getTypedRuleContext(FusionFlowParser.TermListContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.TermListContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_operatorCall
+            return FusionMethodParser.RULE_operatorCall
 
 
 
 
     def operatorCall(self):
 
-        localctx = FusionFlowParser.OperatorCallContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.OperatorCallContext(self, self._ctx, self.state)
         self.enterRule(localctx, 22, self.RULE_operatorCall)
         self._la = 0 # Token type
         try:
@@ -1081,7 +1081,7 @@ class FusionFlowParser ( Parser ):
             self.state = 159
             self.operatorName()
             self.state = 160
-            self.match(FusionFlowParser.LPAREN)
+            self.match(FusionMethodParser.LPAREN)
             self.state = 162
             self._errHandler.sync(self)
             _la = self._input.LA(1)
@@ -1091,7 +1091,7 @@ class FusionFlowParser ( Parser ):
 
 
             self.state = 164
-            self.match(FusionFlowParser.RPAREN)
+            self.match(FusionMethodParser.RPAREN)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -1109,59 +1109,59 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def IF(self):
-            return self.getToken(FusionFlowParser.IF, 0)
+            return self.getToken(FusionMethodParser.IF, 0)
 
         def LPAREN(self):
-            return self.getToken(FusionFlowParser.LPAREN, 0)
+            return self.getToken(FusionMethodParser.LPAREN, 0)
 
         def formula(self):
-            return self.getTypedRuleContext(FusionFlowParser.FormulaContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.FormulaContext,0)
 
 
         def COMMA(self, i:int=None):
             if i is None:
-                return self.getTokens(FusionFlowParser.COMMA)
+                return self.getTokens(FusionMethodParser.COMMA)
             else:
-                return self.getToken(FusionFlowParser.COMMA, i)
+                return self.getToken(FusionMethodParser.COMMA, i)
 
         def term(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.TermContext)
+                return self.getTypedRuleContexts(FusionMethodParser.TermContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.TermContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.TermContext,i)
 
 
         def RPAREN(self):
-            return self.getToken(FusionFlowParser.RPAREN, 0)
+            return self.getToken(FusionMethodParser.RPAREN, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_ifExpression
+            return FusionMethodParser.RULE_ifExpression
 
 
 
 
     def ifExpression(self):
 
-        localctx = FusionFlowParser.IfExpressionContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.IfExpressionContext(self, self._ctx, self.state)
         self.enterRule(localctx, 24, self.RULE_ifExpression)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 166
-            self.match(FusionFlowParser.IF)
+            self.match(FusionMethodParser.IF)
             self.state = 167
-            self.match(FusionFlowParser.LPAREN)
+            self.match(FusionMethodParser.LPAREN)
             self.state = 168
             self.formula(0)
             self.state = 169
-            self.match(FusionFlowParser.COMMA)
+            self.match(FusionMethodParser.COMMA)
             self.state = 170
             self.term(0)
             self.state = 171
-            self.match(FusionFlowParser.COMMA)
+            self.match(FusionMethodParser.COMMA)
             self.state = 172
             self.term(0)
             self.state = 173
-            self.match(FusionFlowParser.RPAREN)
+            self.match(FusionMethodParser.RPAREN)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -1180,26 +1180,26 @@ class FusionFlowParser ( Parser ):
 
         def term(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(FusionFlowParser.TermContext)
+                return self.getTypedRuleContexts(FusionMethodParser.TermContext)
             else:
-                return self.getTypedRuleContext(FusionFlowParser.TermContext,i)
+                return self.getTypedRuleContext(FusionMethodParser.TermContext,i)
 
 
         def COMMA(self, i:int=None):
             if i is None:
-                return self.getTokens(FusionFlowParser.COMMA)
+                return self.getTokens(FusionMethodParser.COMMA)
             else:
-                return self.getToken(FusionFlowParser.COMMA, i)
+                return self.getToken(FusionMethodParser.COMMA, i)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_termList
+            return FusionMethodParser.RULE_termList
 
 
 
 
     def termList(self):
 
-        localctx = FusionFlowParser.TermListContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.TermListContext(self, self._ctx, self.state)
         self.enterRule(localctx, 26, self.RULE_termList)
         self._la = 0 # Token type
         try:
@@ -1211,7 +1211,7 @@ class FusionFlowParser ( Parser ):
             _la = self._input.LA(1)
             while _la==50:
                 self.state = 176
-                self.match(FusionFlowParser.COMMA)
+                self.match(FusionMethodParser.COMMA)
                 self.state = 177
                 self.term(0)
                 self.state = 182
@@ -1235,30 +1235,30 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def LBRACK(self):
-            return self.getToken(FusionFlowParser.LBRACK, 0)
+            return self.getToken(FusionMethodParser.LBRACK, 0)
 
         def RBRACK(self):
-            return self.getToken(FusionFlowParser.RBRACK, 0)
+            return self.getToken(FusionMethodParser.RBRACK, 0)
 
         def termList(self):
-            return self.getTypedRuleContext(FusionFlowParser.TermListContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.TermListContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_listLiteral
+            return FusionMethodParser.RULE_listLiteral
 
 
 
 
     def listLiteral(self):
 
-        localctx = FusionFlowParser.ListLiteralContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.ListLiteralContext(self, self._ctx, self.state)
         self.enterRule(localctx, 28, self.RULE_listLiteral)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 183
-            self.match(FusionFlowParser.LBRACK)
+            self.match(FusionMethodParser.LBRACK)
             self.state = 185
             self._errHandler.sync(self)
             _la = self._input.LA(1)
@@ -1268,7 +1268,7 @@ class FusionFlowParser ( Parser ):
 
 
             self.state = 187
-            self.match(FusionFlowParser.RBRACK)
+            self.match(FusionMethodParser.RBRACK)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -1286,25 +1286,25 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def constantName(self):
-            return self.getTypedRuleContext(FusionFlowParser.ConstantNameContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.ConstantNameContext,0)
 
 
         def STRING_LITERAL(self):
-            return self.getToken(FusionFlowParser.STRING_LITERAL, 0)
+            return self.getToken(FusionMethodParser.STRING_LITERAL, 0)
 
         def booleanLiteral(self):
-            return self.getTypedRuleContext(FusionFlowParser.BooleanLiteralContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.BooleanLiteralContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_atomicTerm
+            return FusionMethodParser.RULE_atomicTerm
 
 
 
 
     def atomicTerm(self):
 
-        localctx = FusionFlowParser.AtomicTermContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.AtomicTermContext(self, self._ctx, self.state)
         self.enterRule(localctx, 30, self.RULE_atomicTerm)
         try:
             self.state = 192
@@ -1318,7 +1318,7 @@ class FusionFlowParser ( Parser ):
             elif token in [48]:
                 self.enterOuterAlt(localctx, 2)
                 self.state = 190
-                self.match(FusionFlowParser.STRING_LITERAL)
+                self.match(FusionMethodParser.STRING_LITERAL)
                 pass
             elif token in [28, 29]:
                 self.enterOuterAlt(localctx, 3)
@@ -1345,22 +1345,22 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def LOWID(self):
-            return self.getToken(FusionFlowParser.LOWID, 0)
+            return self.getToken(FusionMethodParser.LOWID, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_identifier
+            return FusionMethodParser.RULE_identifier
 
 
 
 
     def identifier(self):
 
-        localctx = FusionFlowParser.IdentifierContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.IdentifierContext(self, self._ctx, self.state)
         self.enterRule(localctx, 32, self.RULE_identifier)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 194
-            self.match(FusionFlowParser.LOWID)
+            self.match(FusionMethodParser.LOWID)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -1378,22 +1378,22 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def UPID(self):
-            return self.getToken(FusionFlowParser.UPID, 0)
+            return self.getToken(FusionMethodParser.UPID, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_conceptName
+            return FusionMethodParser.RULE_conceptName
 
 
 
 
     def conceptName(self):
 
-        localctx = FusionFlowParser.ConceptNameContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.ConceptNameContext(self, self._ctx, self.state)
         self.enterRule(localctx, 34, self.RULE_conceptName)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 196
-            self.match(FusionFlowParser.UPID)
+            self.match(FusionMethodParser.UPID)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -1411,21 +1411,21 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def LOWID(self):
-            return self.getToken(FusionFlowParser.LOWID, 0)
+            return self.getToken(FusionMethodParser.LOWID, 0)
 
-        def workflowBuiltinOperator(self):
-            return self.getTypedRuleContext(FusionFlowParser.WorkflowBuiltinOperatorContext,0)
+        def methodBuiltinOperator(self):
+            return self.getTypedRuleContext(FusionMethodParser.MethodBuiltinOperatorContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_operatorName
+            return FusionMethodParser.RULE_operatorName
 
 
 
 
     def operatorName(self):
 
-        localctx = FusionFlowParser.OperatorNameContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.OperatorNameContext(self, self._ctx, self.state)
         self.enterRule(localctx, 36, self.RULE_operatorName)
         try:
             self.state = 200
@@ -1434,12 +1434,12 @@ class FusionFlowParser ( Parser ):
             if token in [45]:
                 self.enterOuterAlt(localctx, 1)
                 self.state = 198
-                self.match(FusionFlowParser.LOWID)
+                self.match(FusionMethodParser.LOWID)
                 pass
             elif token in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]:
                 self.enterOuterAlt(localctx, 2)
                 self.state = 199
-                self.workflowBuiltinOperator()
+                self.methodBuiltinOperator()
                 pass
             else:
                 raise NoViableAltException(self)
@@ -1453,43 +1453,43 @@ class FusionFlowParser ( Parser ):
         return localctx
 
 
-    class WorkflowBuiltinOperatorContext(ParserRuleContext):
+    class MethodBuiltinOperatorContext(ParserRuleContext):
         __slots__ = 'parser'
 
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
             super().__init__(parent, invokingState)
             self.parser = parser
 
-        def workflowOwnerOperator(self):
-            return self.getTypedRuleContext(FusionFlowParser.WorkflowOwnerOperatorContext,0)
+        def methodOwnerOperator(self):
+            return self.getTypedRuleContext(FusionMethodParser.MethodOwnerOperatorContext,0)
 
 
         def stepOwnerOperator(self):
-            return self.getTypedRuleContext(FusionFlowParser.StepOwnerOperatorContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.StepOwnerOperatorContext,0)
 
 
         def programOwnerOperator(self):
-            return self.getTypedRuleContext(FusionFlowParser.ProgramOwnerOperatorContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.ProgramOwnerOperatorContext,0)
 
 
         def dataResourceOperator(self):
-            return self.getTypedRuleContext(FusionFlowParser.DataResourceOperatorContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.DataResourceOperatorContext,0)
 
 
         def agentOwnerOperator(self):
-            return self.getTypedRuleContext(FusionFlowParser.AgentOwnerOperatorContext,0)
+            return self.getTypedRuleContext(FusionMethodParser.AgentOwnerOperatorContext,0)
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_workflowBuiltinOperator
+            return FusionMethodParser.RULE_methodBuiltinOperator
 
 
 
 
-    def workflowBuiltinOperator(self):
+    def methodBuiltinOperator(self):
 
-        localctx = FusionFlowParser.WorkflowBuiltinOperatorContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 38, self.RULE_workflowBuiltinOperator)
+        localctx = FusionMethodParser.MethodBuiltinOperatorContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 38, self.RULE_methodBuiltinOperator)
         try:
             self.state = 207
             self._errHandler.sync(self)
@@ -1497,7 +1497,7 @@ class FusionFlowParser ( Parser ):
             if token in [1, 2, 3, 4]:
                 self.enterOuterAlt(localctx, 1)
                 self.state = 202
-                self.workflowOwnerOperator()
+                self.methodOwnerOperator()
                 pass
             elif token in [6, 7, 8, 9, 10]:
                 self.enterOuterAlt(localctx, 2)
@@ -1531,7 +1531,7 @@ class FusionFlowParser ( Parser ):
         return localctx
 
 
-    class WorkflowOwnerOperatorContext(ParserRuleContext):
+    class MethodOwnerOperatorContext(ParserRuleContext):
         __slots__ = 'parser'
 
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
@@ -1540,15 +1540,15 @@ class FusionFlowParser ( Parser ):
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_workflowOwnerOperator
+            return FusionMethodParser.RULE_methodOwnerOperator
 
 
 
 
-    def workflowOwnerOperator(self):
+    def methodOwnerOperator(self):
 
-        localctx = FusionFlowParser.WorkflowOwnerOperatorContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 40, self.RULE_workflowOwnerOperator)
+        localctx = FusionMethodParser.MethodOwnerOperatorContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 40, self.RULE_methodOwnerOperator)
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
@@ -1577,19 +1577,19 @@ class FusionFlowParser ( Parser ):
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_programOwnerOperator
+            return FusionMethodParser.RULE_programOwnerOperator
 
 
 
 
     def programOwnerOperator(self):
 
-        localctx = FusionFlowParser.ProgramOwnerOperatorContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.ProgramOwnerOperatorContext(self, self._ctx, self.state)
         self.enterRule(localctx, 42, self.RULE_programOwnerOperator)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 211
-            self.match(FusionFlowParser.T__4)
+            self.match(FusionMethodParser.T__4)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -1608,14 +1608,14 @@ class FusionFlowParser ( Parser ):
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_stepOwnerOperator
+            return FusionMethodParser.RULE_stepOwnerOperator
 
 
 
 
     def stepOwnerOperator(self):
 
-        localctx = FusionFlowParser.StepOwnerOperatorContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.StepOwnerOperatorContext(self, self._ctx, self.state)
         self.enterRule(localctx, 44, self.RULE_stepOwnerOperator)
         self._la = 0 # Token type
         try:
@@ -1645,14 +1645,14 @@ class FusionFlowParser ( Parser ):
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_dataResourceOperator
+            return FusionMethodParser.RULE_dataResourceOperator
 
 
 
 
     def dataResourceOperator(self):
 
-        localctx = FusionFlowParser.DataResourceOperatorContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.DataResourceOperatorContext(self, self._ctx, self.state)
         self.enterRule(localctx, 46, self.RULE_dataResourceOperator)
         self._la = 0 # Token type
         try:
@@ -1682,14 +1682,14 @@ class FusionFlowParser ( Parser ):
 
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_agentOwnerOperator
+            return FusionMethodParser.RULE_agentOwnerOperator
 
 
 
 
     def agentOwnerOperator(self):
 
-        localctx = FusionFlowParser.AgentOwnerOperatorContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.AgentOwnerOperatorContext(self, self._ctx, self.state)
         self.enterRule(localctx, 48, self.RULE_agentOwnerOperator)
         self._la = 0 # Token type
         try:
@@ -1718,26 +1718,26 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def NUMBER(self):
-            return self.getToken(FusionFlowParser.NUMBER, 0)
+            return self.getToken(FusionMethodParser.NUMBER, 0)
 
         def RELATIVE_PATH_ID(self):
-            return self.getToken(FusionFlowParser.RELATIVE_PATH_ID, 0)
+            return self.getToken(FusionMethodParser.RELATIVE_PATH_ID, 0)
 
         def QUOTEDCONSTANTID(self):
-            return self.getToken(FusionFlowParser.QUOTEDCONSTANTID, 0)
+            return self.getToken(FusionMethodParser.QUOTEDCONSTANTID, 0)
 
         def LOWID(self):
-            return self.getToken(FusionFlowParser.LOWID, 0)
+            return self.getToken(FusionMethodParser.LOWID, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_constantName
+            return FusionMethodParser.RULE_constantName
 
 
 
 
     def constantName(self):
 
-        localctx = FusionFlowParser.ConstantNameContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.ConstantNameContext(self, self._ctx, self.state)
         self.enterRule(localctx, 50, self.RULE_constantName)
         self._la = 0 # Token type
         try:
@@ -1766,20 +1766,20 @@ class FusionFlowParser ( Parser ):
             self.parser = parser
 
         def TRUE(self):
-            return self.getToken(FusionFlowParser.TRUE, 0)
+            return self.getToken(FusionMethodParser.TRUE, 0)
 
         def FALSE(self):
-            return self.getToken(FusionFlowParser.FALSE, 0)
+            return self.getToken(FusionMethodParser.FALSE, 0)
 
         def getRuleIndex(self):
-            return FusionFlowParser.RULE_booleanLiteral
+            return FusionMethodParser.RULE_booleanLiteral
 
 
 
 
     def booleanLiteral(self):
 
-        localctx = FusionFlowParser.BooleanLiteralContext(self, self._ctx, self.state)
+        localctx = FusionMethodParser.BooleanLiteralContext(self, self._ctx, self.state)
         self.enterRule(localctx, 52, self.RULE_booleanLiteral)
         self._la = 0 # Token type
         try:

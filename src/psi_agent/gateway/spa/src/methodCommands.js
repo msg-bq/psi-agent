@@ -1,7 +1,7 @@
-export const WORKFLOW_COMMAND_PREFIX = '/workflow:'
+export const METHOD_COMMAND_PREFIX = '/method:'
 
-const WORKFLOW_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/
-const WINDOWS_RESERVED_WORKFLOW_NAMES = new Set([
+const METHOD_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/
+const WINDOWS_RESERVED_METHOD_NAMES = new Set([
   'con',
   'prn',
   'aux',
@@ -10,72 +10,72 @@ const WINDOWS_RESERVED_WORKFLOW_NAMES = new Set([
   ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`),
 ])
 
-function isValidWorkflowName(name) {
+function isValidMethodName(name) {
   return typeof name === 'string'
-    && WORKFLOW_NAME_RE.test(name)
-    && !WINDOWS_RESERVED_WORKFLOW_NAMES.has(name)
+    && METHOD_NAME_RE.test(name)
+    && !WINDOWS_RESERVED_METHOD_NAMES.has(name)
 }
 
 function invalid(error) {
   return { kind: 'invalid', error }
 }
 
-export function parseWorkflowCommand(value) {
+export function parseMethodCommand(value) {
   const text = String(value ?? '').trim()
-  if (!text.startsWith(WORKFLOW_COMMAND_PREFIX)) return { kind: 'text' }
+  if (!text.startsWith(METHOD_COMMAND_PREFIX)) return { kind: 'text' }
 
-  const name = text.slice(WORKFLOW_COMMAND_PREFIX.length)
-  if (!name) return invalid('请输入要运行的工作流名称，例如 /workflow:daily-brief')
+  const name = text.slice(METHOD_COMMAND_PREFIX.length)
+  if (!name) return invalid('请输入要运行的工作流名称，例如 /method:daily-brief')
   if (/\s/.test(name)) {
-    return invalid('工作流指令只支持 /workflow:<名称>，不能附加参数')
+    return invalid('工作流指令只支持 /method:<名称>，不能附加参数')
   }
-  if (!isValidWorkflowName(name)) {
+  if (!isValidMethodName(name)) {
     return invalid('工作流名称必须以小写字母开头，只能包含小写字母、数字和连字符，且不能使用系统保留名')
   }
-  return { kind: 'workflow', name }
+  return { kind: 'method', name }
 }
 
-export function getWorkflowCommandQuery(value) {
+export function getMethodCommandQuery(value) {
   const text = String(value ?? '').trimStart()
   if (!text || /\s/.test(text)) return null
 
-  if (WORKFLOW_COMMAND_PREFIX.startsWith(text)) return ''
-  if (!text.startsWith(WORKFLOW_COMMAND_PREFIX)) return null
-  return text.slice(WORKFLOW_COMMAND_PREFIX.length)
+  if (METHOD_COMMAND_PREFIX.startsWith(text)) return ''
+  if (!text.startsWith(METHOD_COMMAND_PREFIX)) return null
+  return text.slice(METHOD_COMMAND_PREFIX.length)
 }
 
-export function filterWorkflowOptions(workflows, query = '') {
-  if (!Array.isArray(workflows)) return []
+export function filterMethodOptions(methods, query = '') {
+  if (!Array.isArray(methods)) return []
   const needle = String(query).toLowerCase()
 
-  return workflows
-    .filter(workflow => workflow
-      && isValidWorkflowName(workflow.name))
-    .map((workflow, index) => {
-      const name = workflow.name.toLowerCase()
+  return methods
+    .filter(method => method
+      && isValidMethodName(method.name))
+    .map((method, index) => {
+      const name = method.name.toLowerCase()
       let rank = 3
       if (!needle) rank = 0
       else if (name === needle) rank = 0
       else if (name.startsWith(needle)) rank = 1
       else if (name.includes(needle)) rank = 2
-      return { workflow, index, rank }
+      return { method, index, rank }
     })
     .filter(item => item.rank < 3)
     .sort((a, b) => a.rank - b.rank
-      || a.workflow.name.localeCompare(b.workflow.name)
+      || a.method.name.localeCompare(b.method.name)
       || a.index - b.index)
-    .map(item => item.workflow)
+    .map(item => item.method)
 }
 
-export function formatWorkflowCommand(workflow) {
-  const name = workflow?.name
-  if (!isValidWorkflowName(name)) {
-    throw new Error('Invalid workflow name')
+export function formatMethodCommand(method) {
+  const name = method?.name
+  if (!isValidMethodName(name)) {
+    throw new Error('Invalid method name')
   }
-  return `${WORKFLOW_COMMAND_PREFIX}${name}`
+  return `${METHOD_COMMAND_PREFIX}${name}`
 }
 
-export function moveWorkflowSelection(current, count, delta) {
+export function moveMethodSelection(current, count, delta) {
   if (!Number.isInteger(count) || count <= 0) return -1
   if (!Number.isInteger(current) || current < 0 || current >= count) {
     return delta < 0 ? count - 1 : 0

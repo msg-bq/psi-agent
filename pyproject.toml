@@ -82,7 +82,7 @@ artifacts = [
 target-version = "py314"
 line-length = 120
 extend-exclude = [
-    "examples/haitun-workspace/skills/fusion-flow/fusion_flow/generated",
+    "examples/haitun-workspace/skills/fusion-method/fusion_method/generated",
     "**/pytest-of-root/**",
 ]
 
@@ -101,11 +101,11 @@ addopts = ["--strict-markers", "-ra", "--cov"]
 markers = ["schedule: schedule-based tests (> 30s)"]
 
 [tool.ty.environment]
-extra-paths = ["examples/haitun-workspace/skills/fusion-flow"]
+extra-paths = ["examples/haitun-workspace/skills/fusion-method"]
 
 [tool.ty.src]
 exclude = [
-    "examples/haitun-workspace/skills/fusion-flow/fusion_flow/generated",
+    "examples/haitun-workspace/skills/fusion-method/fusion_method/generated",
     "**/pytest-of-root/**",
 ]
 

@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from fusion_flow.workflow_runner import compile_workflow
+from fusion_method.method_runner import compile_method
 
 _WORKSPACE_DIR = Path(__file__).resolve().parents[3]
-_WORKFLOW_DIR = _WORKSPACE_DIR / "flows" / "workflows" / "coscientist-ows"
+_METHOD_DIR = _WORKSPACE_DIR / "mtds" / "methods" / "coscientist-ows"
 _PROGRAM_PATH = _WORKSPACE_DIR / "skills" / "coscientist-ows-entry" / "scripts" / "program.py"
 _DISTRIBUTED_SKILLS = (
     "coscientist-ows-entry",
@@ -31,13 +31,13 @@ _DISTRIBUTED_SKILLS = (
     ("slug", "step_count"),
     [("single-step", 1), ("sequential", 2), ("parallel-join", 3)],
 )
-def test_short_workflow_compiles_with_current_executor_contract(
+def test_short_method_compiles_with_current_executor_contract(
     slug: str,
     step_count: int,
 ) -> None:
-    source = (_WORKSPACE_DIR / "flows" / "workflows" / slug / f"{slug}.workflow").read_text(encoding="utf-8")
+    source = (_WORKSPACE_DIR / "mtds" / "methods" / slug / f"{slug}.method").read_text(encoding="utf-8")
 
-    compiled = compile_workflow(source, strict_executors=True)
+    compiled = compile_method(source, strict_executors=True)
 
     assert len(compiled.graph.steps) == step_count
     assert set(compiled.executor_kinds.values()) == {"Agent"}
@@ -48,10 +48,10 @@ def _load_program() -> dict[str, Any]:
     return runpy.run_path(str(_PROGRAM_PATH))
 
 
-def test_workflow_compiles_with_local_instruction_and_program_assets() -> None:
-    source = (_WORKFLOW_DIR / "coscientist-ows.workflow").read_text(encoding="utf-8")
+def test_method_compiles_with_local_instruction_and_program_assets() -> None:
+    source = (_METHOD_DIR / "coscientist-ows.method").read_text(encoding="utf-8")
 
-    compiled = compile_workflow(source, strict_executors=True)
+    compiled = compile_method(source, strict_executors=True)
 
     assert len(compiled.graph.steps) == 12
     assert set(compiled.executor_kinds.values()) == {"Agent", "Program"}
@@ -59,22 +59,22 @@ def test_workflow_compiles_with_local_instruction_and_program_assets() -> None:
     for reference in (step.instruction_id for step in compiled.graph.steps):
         assert reference is not None
         assert reference.startswith("./")
-        assert (_WORKFLOW_DIR / reference.removeprefix("./")).is_file()
+        assert (_METHOD_DIR / reference.removeprefix("./")).is_file()
     for reference in compiled.program_paths.values():
         assert reference.startswith("./")
         assert (_WORKSPACE_DIR / reference.removeprefix("./")).is_file()
 
 
-def test_saved_workflow_has_public_distribution_assets() -> None:
-    inputs_path = _WORKFLOW_DIR / "coscientist-ows.inputs.example.json"
+def test_saved_method_has_public_distribution_assets() -> None:
+    inputs_path = _METHOD_DIR / "coscientist-ows.inputs.example.json"
     inputs = json.loads(inputs_path.read_text(encoding="utf-8"))
-    source = (_WORKFLOW_DIR / "coscientist-ows.workflow").read_text(encoding="utf-8")
+    source = (_METHOD_DIR / "coscientist-ows.method").read_text(encoding="utf-8")
     scheduler_source = (
         _WORKSPACE_DIR / "skills" / "coscientist-ows-entry" / "scripts" / "run_ows_streaming_scheduler.py"
     ).read_text(encoding="utf-8")
-    compiled = compile_workflow(source, strict_executors=True)
+    compiled = compile_method(source, strict_executors=True)
 
-    assert (_WORKFLOW_DIR / "README.md").is_file()
+    assert (_METHOD_DIR / "README.md").is_file()
     assert "/public/home/" not in scheduler_source
     assert set(inputs) == {artifact.artifact_id for artifact in compiled.graph.artifacts if artifact.is_input}
     for skill_name in _DISTRIBUTED_SKILLS:
@@ -171,7 +171,7 @@ def test_prepare_program_initializes_all_declared_artifacts(
         "mattergen_stage_directory_initial",
         "mattersim_stage_directory_initial",
         "novel_and_stable_catalysts_initial",
-        "prepare_workflow_step_result",
+        "prepare_method_step_result",
         "recommender_slot_1_directory",
         "recommender_slot_2_directory",
         "recommender_slot_3_directory",
@@ -180,11 +180,11 @@ def test_prepare_program_initializes_all_declared_artifacts(
         "scheduler_state",
         "tmp_candidates_directory_initial",
         "tmp_knowledge_directory_initial",
-        "workflow_run_context",
+        "method_run_context",
     }
     assert outputs["candidate_knowledge_base"] == {"candidates": []}
     assert (tmp_path / outputs["scheduler_state"]).is_file()
-    assert (tmp_path / outputs["prepare_workflow_step_result"]).is_file()
+    assert (tmp_path / outputs["prepare_method_step_result"]).is_file()
     assert connections
     assert all(cast(TrackingConnection, connection).closed for connection in connections)
 

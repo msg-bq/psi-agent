@@ -1,4 +1,4 @@
-const sequential: Workflow;
+const sequential: Method;
 const draft_step: Step;
 const polish_step: Step;
 const draft_name: StepName;
@@ -8,9 +8,9 @@ const request: Artifact;
 const draft: Artifact;
 const result: Artifact;
 
-workflow sequential {
-    input_workflow(sequential) == [request];
-    output_workflow(sequential) == [result];
+method sequential {
+    input_method(sequential) == [request];
+    output_method(sequential) == [result];
 
     step_name(draft_step) == draft_name;
     step_instruction(draft_step) == "Read the supplied inputs and return exactly one JSON object whose keys exactly match the required output artifacts. Do not call tools or add prose.";

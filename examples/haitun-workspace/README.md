@@ -3,9 +3,9 @@
 A consolidated psi-agent workspace whose agent is **Haitun (海豚)**. It combines:
 
 - a de-branded OpenClaw-style system-prompt engine (all config kept **inside** the workspace),
-- full **Fusion Flow** workflow authoring (bundled Python G4 runtime +
-  `flow_manage` + `run_flow` / `run_flow_resume` + `flows/`), fixed-path
-  reusable workflows, and `/workflow:<slug>` frontend routing,
+- full **Fusion Method** method authoring (bundled Python G4 runtime +
+  `mtd_manage` + `run_mtd` / `run_mtd_resume` + `mtds/`), fixed-path
+  reusable methods, and `/method:<slug>` frontend routing,
 - the hermes domain skill set + curated skills, and
 - clean async file/shell tools, Serper web search, and environment-configured
   iFLYTEK STT/TTS tools.
@@ -46,26 +46,26 @@ uv run psi-agent channel repl --session-socket /tmp/ch.sock
 
 - **First run** triggers a short onboarding (from `BOOTSTRAP.md`). Delete `BOOTSTRAP.md` to
   skip it.
-- **Fusion Flow** runs through the bundled Python G4 parser/compiler; it needs no separate
+- **Fusion Method** runs through the bundled Python G4 parser/compiler; it needs no separate
   Node.js install or runtime setup. One-off declarations go under
-  `flows/<task-slug>/`. Save reusable
+  `mtds/<task-slug>/`. Save reusable
   declarations with the existing file-writing capability at
-  `flows/workflows/<slug>/<slug>.workflow`. Reuse one with the exact command
-  `/workflow:<slug>`; the agent reads the declaration and collects all declared
-  inputs before the initial fresh `run_flow` call.
+  `mtds/methods/<slug>/<slug>.method`. Reuse one with the exact command
+  `/method:<slug>`; the agent reads the declaration and collects all declared
+  inputs before the initial fresh `run_mtd` call.
 - Agent and workspace-local Program Steps execute directly. Human Steps use a dedicated
   instruction-preparation Agent, persist checkpoints under
-  `.psi/fusion-flow/runs/`, ask through the existing `clarify` interaction, and
+  `.psi/fusion-method/runs/`, ask through the existing `clarify` interaction, and
   resume from the next conversation turn.
 - Every run persists each materialized input, intermediate, selected, and final
-  Artifact as Markdown under the workflow bundle's
+  Artifact as Markdown under the method bundle's
   `runs/<run-id>/artifacts/` directory. String values remain Markdown; other
   JSON values use a fenced `json` block.
 - **Serper search** needs psi-agent installed with the `mcp` extra and `uvx` on PATH.
 - **Haibao ChatBI** needs the required operator-provisioned private MCP server and the three
   deployment-managed variables documented in `docs/haibao-integration.md`. The bundled Adapter,
   tools, and Skill do not provide the private service or database onboarding.
-- Never put API keys in this workspace or in generated `.workflow`, legacy `.flow.ts`,
+- Never put API keys in this workspace or in generated `.method`, legacy `.mtd.ts`,
   or `.env` files.
 
 ## Fusion Memory
@@ -131,7 +131,7 @@ uv run python examples/haitun-workspace/systems/system.py
 
 ## Windows 安装包
 
-`.github/workflows/pyinstaller.yml` 的 `haitun-inno-setup` job 会自动构建 Windows 安装程序：
+`.github/methods/pyinstaller.yml` 的 `haitun-inno-setup` job 会自动构建 Windows 安装程序：
 
 1. PyInstaller 生成的 `psi-agent.exe` 被拷贝进本目录
 2. Inno Setup（`.github/inno-setup/haitun.iss`）将整个 workspace 打包为安装程序

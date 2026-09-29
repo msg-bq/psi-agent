@@ -7,8 +7,8 @@ import anyio
 import pytest
 from anyio.lowlevel import checkpoint
 
-import psi_agent.workflow_execution as workflow_execution
-from psi_agent.workflow_execution import (
+import psi_agent.method_execution as method_execution
+from psi_agent.method_execution import (
     Await,
     DispatchContext,
     ExecutionCheckpoint,
@@ -23,7 +23,7 @@ from psi_agent.workflow_execution import (
     execution_plan_digest,
     generate_plan,
 )
-from psi_agent.workflow_graph import (
+from psi_agent.method_graph import (
     ArtifactNode,
     ArtifactOperand,
     ComparisonCondition,
@@ -36,14 +36,14 @@ from psi_agent.workflow_graph import (
     SelectCondition,
     SelectNode,
     StepNode,
-    WorkflowGraph,
-    WorkflowPolicy,
+    MethodGraph,
+    MethodPolicy,
 )
 
 
-def _diamond_graph() -> WorkflowGraph:
-    return WorkflowGraph(
-        workflow_id="article",
+def _diamond_graph() -> MethodGraph:
+    return MethodGraph(
+        method_id="article",
         steps=(
             StepNode("research", "research", "researcher"),
             StepNode("draft", "draft", "writer"),
@@ -73,9 +73,9 @@ def _diamond_graph() -> WorkflowGraph:
 
 def _select_graph(
     condition: SelectCondition | None = None,
-) -> WorkflowGraph:
-    return WorkflowGraph(
-        workflow_id="select",
+) -> MethodGraph:
+    return MethodGraph(
+        method_id="select",
         steps=(
             StepNode("primary", "primary", "primary-executor"),
             StepNode("fallback", "fallback", "fallback-executor"),
@@ -119,7 +119,7 @@ async def _unexpected_dispatch(
 
 def test_generate_plan_lowers_artifact_dependencies_to_awaits() -> None:
     assert generate_plan(_diamond_graph()) == ExecutionPlan(
-        workflow_id="article",
+        method_id="article",
         fibers=(
             Fiber("draft", (Await(("research",)), Invoke("draft"))),
             Fiber(
@@ -133,8 +133,8 @@ def test_generate_plan_lowers_artifact_dependencies_to_awaits() -> None:
 
 
 def test_generate_plan_lowers_explicit_dependencies_without_data_edges() -> None:
-    graph = WorkflowGraph(
-        workflow_id="ordered",
+    graph = MethodGraph(
+        method_id="ordered",
         steps=(
             StepNode("prepare", "prepare", "executor"),
             StepNode("publish", "publish", "executor", depends_on=("prepare",)),
@@ -143,7 +143,7 @@ def test_generate_plan_lowers_explicit_dependencies_without_data_edges() -> None
     )
 
     assert generate_plan(graph) == ExecutionPlan(
-        workflow_id="ordered",
+        method_id="ordered",
         fibers=(
             Fiber("prepare", (Invoke("prepare"),)),
             Fiber("publish", (Await(("prepare",)), Invoke("publish"))),
@@ -152,8 +152,8 @@ def test_generate_plan_lowers_explicit_dependencies_without_data_edges() -> None
 
 
 def test_generate_plan_lowers_multiple_explicit_dependencies() -> None:
-    graph = WorkflowGraph(
-        workflow_id="multiple-predecessors",
+    graph = MethodGraph(
+        method_id="multiple-predecessors",
         steps=(
             StepNode("left", "left", "executor"),
             StepNode("right", "right", "executor"),
@@ -168,7 +168,7 @@ def test_generate_plan_lowers_multiple_explicit_dependencies() -> None:
     )
 
     assert generate_plan(graph) == ExecutionPlan(
-        workflow_id="multiple-predecessors",
+        method_id="multiple-predecessors",
         fibers=(
             Fiber("join", (Await(("left", "right")), Invoke("join"))),
             Fiber("left", (Invoke("left"),)),
@@ -178,8 +178,8 @@ def test_generate_plan_lowers_multiple_explicit_dependencies() -> None:
 
 
 def test_generate_plan_merges_and_deduplicates_data_and_explicit_dependencies() -> None:
-    graph = WorkflowGraph(
-        workflow_id="merged-dependencies",
+    graph = MethodGraph(
+        method_id="merged-dependencies",
         steps=(
             StepNode("producer", "producer", "executor"),
             StepNode(
@@ -197,7 +197,7 @@ def test_generate_plan_merges_and_deduplicates_data_and_explicit_dependencies() 
     )
 
     assert generate_plan(graph) == ExecutionPlan(
-        workflow_id="merged-dependencies",
+        method_id="merged-dependencies",
         fibers=(
             Fiber("consumer", (Await(("producer",)), Invoke("consumer"))),
             Fiber("producer", (Invoke("producer"),)),
@@ -206,8 +206,8 @@ def test_generate_plan_merges_and_deduplicates_data_and_explicit_dependencies() 
 
 
 def test_generate_plan_rejects_cycles() -> None:
-    graph = WorkflowGraph(
-        workflow_id="cycle",
+    graph = MethodGraph(
+        method_id="cycle",
         steps=(
             StepNode("left", "left", "left-executor"),
             StepNode("right", "right", "right-executor"),
@@ -226,8 +226,8 @@ def test_generate_plan_rejects_cycles() -> None:
 
 
 def test_generate_plan_rejects_explicit_dependency_cycles() -> None:
-    graph = WorkflowGraph(
-        workflow_id="explicit-cycle",
+    graph = MethodGraph(
+        method_id="explicit-cycle",
         steps=(
             StepNode("left", "left", "executor", depends_on=("right",)),
             StepNode("right", "right", "executor", depends_on=("left",)),
@@ -240,8 +240,8 @@ def test_generate_plan_rejects_explicit_dependency_cycles() -> None:
 
 
 def test_generate_plan_rejects_explicit_self_dependency() -> None:
-    graph = WorkflowGraph(
-        workflow_id="self-cycle",
+    graph = MethodGraph(
+        method_id="self-cycle",
         steps=(StepNode("step", "step", "executor", depends_on=("step",)),),
         artifacts=(),
     )
@@ -254,7 +254,7 @@ def test_generate_plan_rejects_explicit_self_dependency() -> None:
     ("graph", "message"),
     [
         (
-            WorkflowGraph(
+            MethodGraph(
                 "foreach",
                 (StepNode("step", "step", "executor"),),
                 (
@@ -269,7 +269,7 @@ def test_generate_plan_rejects_explicit_self_dependency() -> None:
             "foreach",
         ),
         (
-            WorkflowGraph(
+            MethodGraph(
                 "retry",
                 (StepNode("step", "step", "executor", max_attempts=2),),
                 (),
@@ -277,7 +277,7 @@ def test_generate_plan_rejects_explicit_self_dependency() -> None:
             "retr",
         ),
         (
-            WorkflowGraph(
+            MethodGraph(
                 "input-producer",
                 (
                     StepNode("producer", "producer", "producer-executor"),
@@ -294,7 +294,7 @@ def test_generate_plan_rejects_explicit_self_dependency() -> None:
     ],
 )
 def test_generate_plan_rejects_unsupported_one_shot_semantics(
-    graph: WorkflowGraph,
+    graph: MethodGraph,
     message: str,
 ) -> None:
     with pytest.raises(ExecutionPlanError, match=message):
@@ -302,7 +302,7 @@ def test_generate_plan_rejects_unsupported_one_shot_semantics(
 
 
 def test_generate_plan_accepts_resource_requirements() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "resources",
         (
             StepNode(
@@ -316,7 +316,7 @@ def test_generate_plan_accepts_resource_requirements() -> None:
     )
 
     assert generate_plan(graph) == ExecutionPlan(
-        workflow_id="resources",
+        method_id="resources",
         fibers=(Fiber("step", (Invoke("step"),)),),
     )
 
@@ -355,8 +355,8 @@ async def test_execute_plan_starts_ready_steps_in_parallel() -> None:
 
 @pytest.mark.anyio
 async def test_execute_plan_enforces_explicit_dependency_without_data_edge() -> None:
-    graph = WorkflowGraph(
-        workflow_id="ordered",
+    graph = MethodGraph(
+        method_id="ordered",
         steps=(
             StepNode("prepare", "prepare", "executor"),
             StepNode("publish", "publish", "executor", depends_on=("prepare",)),
@@ -392,8 +392,8 @@ async def test_execute_plan_enforces_explicit_dependency_without_data_edge() -> 
 
 @pytest.mark.anyio
 async def test_execute_plan_does_not_invoke_explicit_dependent_after_predecessor_failure() -> None:
-    graph = WorkflowGraph(
-        workflow_id="ordered-failure",
+    graph = MethodGraph(
+        method_id="ordered-failure",
         steps=(
             StepNode("prepare", "prepare", "executor"),
             StepNode("publish", "publish", "executor", depends_on=("prepare",)),
@@ -428,7 +428,7 @@ async def test_execute_plan_rejects_missing_plan_dependency() -> None:
     graph = _diamond_graph()
     valid_plan = generate_plan(graph)
     plan = ExecutionPlan(
-        valid_plan.workflow_id,
+        valid_plan.method_id,
         tuple(
             Fiber(fiber.fiber_id, (Invoke("draft"),)) if fiber.fiber_id == "draft" else fiber
             for fiber in valid_plan.fibers
@@ -447,8 +447,8 @@ async def test_execute_plan_rejects_missing_plan_dependency() -> None:
 
 @pytest.mark.anyio
 async def test_execute_plan_rejects_missing_explicit_dependency() -> None:
-    graph = WorkflowGraph(
-        workflow_id="ordered",
+    graph = MethodGraph(
+        method_id="ordered",
         steps=(
             StepNode("prepare", "prepare", "executor"),
             StepNode("publish", "publish", "executor", depends_on=("prepare",)),
@@ -456,7 +456,7 @@ async def test_execute_plan_rejects_missing_explicit_dependency() -> None:
         artifacts=(),
     )
     plan = ExecutionPlan(
-        workflow_id=graph.workflow_id,
+        method_id=graph.method_id,
         fibers=(
             Fiber("prepare", (Invoke("prepare"),)),
             Fiber("publish", (Invoke("publish"),)),
@@ -469,7 +469,7 @@ async def test_execute_plan_rejects_missing_explicit_dependency() -> None:
 
 @pytest.mark.anyio
 async def test_execute_plan_rejects_circular_plan_awaits() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "circular-plan",
         (
             StepNode("left", "left", "left-executor"),
@@ -478,7 +478,7 @@ async def test_execute_plan_rejects_circular_plan_awaits() -> None:
         (),
     )
     plan = ExecutionPlan(
-        graph.workflow_id,
+        graph.method_id,
         (
             Fiber("left", (Await(("right",)), Invoke("left"))),
             Fiber("right", (Await(("left",)), Invoke("right"))),
@@ -498,7 +498,7 @@ async def test_execute_plan_rejects_circular_plan_awaits() -> None:
 
 @pytest.mark.anyio
 async def test_execute_plan_rejects_non_mapping_dispatcher_output() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "invalid-output",
         (StepNode("step", "step", "executor"),),
         (ArtifactNode("result", is_output=True),),
@@ -522,12 +522,12 @@ async def test_execute_plan_rejects_non_mapping_dispatcher_output() -> None:
 
 def test_generate_plan_includes_eager_select_fiber_and_mixed_waits() -> None:
     assert generate_plan(_select_graph()) == ExecutionPlan(
-        workflow_id="select",
+        method_id="select",
         fibers=(
             Fiber(
                 "consumer",
                 (
-                    workflow_execution.AwaitSelections(("selected",)),
+                    method_execution.AwaitSelections(("selected",)),
                     Invoke("consumer"),
                 ),
             ),
@@ -537,7 +537,7 @@ def test_generate_plan_includes_eager_select_fiber_and_mixed_waits() -> None:
                 "selected",
                 (
                     Await(("fallback", "primary")),
-                    workflow_execution.Select("selected"),
+                    method_execution.Select("selected"),
                 ),
             ),
         ),
@@ -581,7 +581,7 @@ async def test_execute_plan_eagerly_selects_named_artifact(
 
 @pytest.mark.anyio
 async def test_execute_plan_supports_chained_selects() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "chained-selects",
         (
             StepNode("first", "first", "executor"),
@@ -633,8 +633,8 @@ async def test_execute_plan_supports_chained_selects() -> None:
     second_select_fiber = next(fiber for fiber in plan.fibers if fiber.fiber_id == "second_selected")
     assert second_select_fiber.instructions == (
         Await(("third",)),
-        workflow_execution.AwaitSelections(("first_selected",)),
-        workflow_execution.Select("second_selected"),
+        method_execution.AwaitSelections(("first_selected",)),
+        method_execution.Select("second_selected"),
     )
 
     async def dispatch(
@@ -656,7 +656,7 @@ async def test_execute_plan_supports_chained_selects() -> None:
 
 
 def test_generate_plan_rejects_mixed_step_select_cycle() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "mixed-cycle",
         (StepNode("step", "step", "executor"),),
         (
@@ -692,7 +692,7 @@ async def test_execute_plan_rejects_missing_selection_dependency() -> None:
     graph = _select_graph()
     valid_plan = generate_plan(graph)
     plan = ExecutionPlan(
-        valid_plan.workflow_id,
+        valid_plan.method_id,
         tuple(
             Fiber(fiber.fiber_id, (Invoke("consumer"),)) if fiber.fiber_id == "consumer" else fiber
             for fiber in valid_plan.fibers
@@ -765,7 +765,7 @@ async def test_execute_plan_rejects_missing_selection_dependency() -> None:
 async def test_execute_plan_evaluates_select_conditions(
     condition: SelectCondition,
 ) -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "condition",
         (),
         (
@@ -795,7 +795,7 @@ async def test_execute_plan_evaluates_select_conditions(
 
 @pytest.mark.anyio
 async def test_execute_plan_rejects_incompatible_ordered_comparison() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "incompatible-condition",
         (),
         (
@@ -842,7 +842,7 @@ async def test_execute_plan_requires_every_select_exactly_once(
     fibers = valid_plan.fibers + ((select_fiber,) if duplicate else ())
     if not duplicate:
         fibers = tuple(fiber for fiber in fibers if fiber.fiber_id != "selected")
-    plan = ExecutionPlan(valid_plan.workflow_id, fibers)
+    plan = ExecutionPlan(valid_plan.method_id, fibers)
 
     with pytest.raises(ExecutionPlanError, match="every graph select exactly once"):
         await execute_plan(
@@ -857,9 +857,9 @@ async def test_execute_plan_requires_every_select_exactly_once(
     "replacement_factory",
     [
         lambda: (Invoke("selected"),),
-        lambda: (workflow_execution.Select("primary_value"),),
+        lambda: (method_execution.Select("primary_value"),),
         lambda: (
-            workflow_execution.AwaitSelections(("missing",)),
+            method_execution.AwaitSelections(("missing",)),
             Invoke("consumer"),
         ),
     ],
@@ -873,15 +873,15 @@ async def test_execute_plan_rejects_unknown_instruction_targets(
     replacement = replacement_factory()
     target_fiber_id = (
         "selected"
-        if any(isinstance(instruction, workflow_execution.Select) for instruction in replacement)
+        if any(isinstance(instruction, method_execution.Select) for instruction in replacement)
         else "consumer"
     )
     plan = ExecutionPlan(
-        valid_plan.workflow_id,
+        valid_plan.method_id,
         tuple(
             Fiber(
                 fiber.fiber_id,
-                cast(tuple[workflow_execution.PlanInstruction, ...], replacement),
+                cast(tuple[method_execution.PlanInstruction, ...], replacement),
             )
             if fiber.fiber_id == target_fiber_id
             else fiber
@@ -902,17 +902,17 @@ def _steps_graph(
     steps: tuple[StepNode, ...],
     *,
     max_concurrency: int | None = None,
-) -> WorkflowGraph:
-    return WorkflowGraph(
+) -> MethodGraph:
+    return MethodGraph(
         "scheduled",
         steps,
         (),
-        policy=WorkflowPolicy(max_concurrency=max_concurrency),
+        policy=MethodPolicy(max_concurrency=max_concurrency),
     )
 
 
 async def _assert_max_active(
-    graph: WorkflowGraph,
+    graph: MethodGraph,
     expected: int,
     *,
     resource_capacities: Mapping[str, int | tuple[str, ...]] | None = None,
@@ -1326,11 +1326,11 @@ async def test_execute_plan_resumes_from_dependency_closed_checkpoint() -> None:
 
 def _checkpoint_input_graph(
     *,
-    workflow_id: str = "checkpoint-input",
+    method_id: str = "checkpoint-input",
     executor_id: str = "processor",
-) -> WorkflowGraph:
-    return WorkflowGraph(
-        workflow_id=workflow_id,
+) -> MethodGraph:
+    return MethodGraph(
+        method_id=method_id,
         steps=(StepNode("process", "process", executor_id),),
         artifacts=(
             ArtifactNode("payload", is_input=True),
@@ -1499,8 +1499,8 @@ async def test_execute_plan_rejects_non_finite_current_checkpoint_input() -> Non
 
 
 @pytest.mark.anyio
-async def test_checkpoint_rejects_another_workflow_with_matching_operation_ids() -> None:
-    original_graph = _checkpoint_input_graph(workflow_id="original")
+async def test_checkpoint_rejects_another_method_with_matching_operation_ids() -> None:
+    original_graph = _checkpoint_input_graph(method_id="original")
     original_plan = generate_plan(original_graph)
     checkpoint_value = create_execution_checkpoint(
         original_plan,
@@ -1508,10 +1508,10 @@ async def test_checkpoint_rejects_another_workflow_with_matching_operation_ids()
         values={"payload": "saved", "result": "stale"},
         completed_step_ids=("process",),
     )
-    current_graph = _checkpoint_input_graph(workflow_id="current")
+    current_graph = _checkpoint_input_graph(method_id="current")
     current_plan = generate_plan(current_graph)
 
-    with pytest.raises(ExecutionPlanError, match=r"checkpoint targets workflow 'original'.*'current'"):
+    with pytest.raises(ExecutionPlanError, match=r"checkpoint targets method 'original'.*'current'"):
         await execute_plan(
             current_plan,
             current_graph,
@@ -1522,7 +1522,7 @@ async def test_checkpoint_rejects_another_workflow_with_matching_operation_ids()
 
 
 @pytest.mark.anyio
-async def test_checkpoint_rejects_changed_graph_with_same_workflow_and_operation_ids() -> None:
+async def test_checkpoint_rejects_changed_graph_with_same_method_and_operation_ids() -> None:
     original_graph = _checkpoint_input_graph(executor_id="processor-v1")
     original_plan = generate_plan(original_graph)
     checkpoint_value = create_execution_checkpoint(
@@ -1548,7 +1548,7 @@ def test_execution_plan_digest_is_stable_for_concurrent_fiber_order() -> None:
     graph = _diamond_graph()
     plan = generate_plan(graph)
     reordered_plan = ExecutionPlan(
-        workflow_id=plan.workflow_id,
+        method_id=plan.method_id,
         fibers=tuple(reversed(plan.fibers)),
     )
 
@@ -1564,7 +1564,7 @@ def test_execution_plan_digest_covers_explicit_plan_structure() -> None:
     )
     concurrent_plan = generate_plan(graph)
     ordered_plan = ExecutionPlan(
-        workflow_id=graph.workflow_id,
+        method_id=graph.method_id,
         fibers=(
             Fiber("first", (Invoke("first"),)),
             Fiber("second", (Await(("first",)), Invoke("second"))),
@@ -1596,7 +1596,7 @@ async def test_execute_plan_rejects_checkpoint_without_dependency_closure() -> N
 
 @pytest.mark.anyio
 async def test_checkpoint_observer_finishes_before_dependent_is_released() -> None:
-    graph = WorkflowGraph(
+    graph = MethodGraph(
         "persist-before-release",
         (
             StepNode("prepare", "prepare", "executor"),
@@ -1640,5 +1640,5 @@ async def test_checkpoint_observer_finishes_before_dependent_is_released() -> No
 
     assert publish_entered.is_set()
     assert checkpoints[-1].completed_step_ids == ("prepare", "publish")
-    assert checkpoints[-1].workflow_id == graph.workflow_id
+    assert checkpoints[-1].method_id == graph.method_id
     assert checkpoints[-1].plan_digest == execution_plan_digest(generate_plan(graph), graph)

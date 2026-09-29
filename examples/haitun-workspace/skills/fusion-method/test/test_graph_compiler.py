@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import cast
 
-import fusion_flow
+import fusion_method
 import pytest
-from fusion_flow.compiler import CoreIRCompiler
-from fusion_flow.core_ir import (
+from fusion_method.compiler import CoreIRCompiler
+from fusion_method.core_ir import (
     Assertion,
     CompoundTerm,
     Concept,
@@ -13,26 +13,26 @@ from fusion_flow.core_ir import (
     Constant,
     IfTerm,
     ListTerm,
+    Method,
+    MethodFile,
     Operator,
     Term,
-    Workflow,
-    WorkflowFile,
 )
-from fusion_flow.graph_compiler import (
-    WorkflowGraphCompilation,
-    WorkflowGraphCompilationError,
-    WorkflowGraphCompiler,
+from fusion_method.graph_compiler import (
+    MethodGraphCompilation,
+    MethodGraphCompilationError,
+    MethodGraphCompiler,
 )
 
-from psi_agent.workflow_graph.model import (
+from psi_agent.method_graph.model import (
     ArtifactOperand,
     ComparisonCondition,
     ComparisonOperator,
     LiteralOperand,
     LogicalCondition,
+    MethodGraphError,
     ResourceRequirement,
     SelectNode,
-    WorkflowGraphError,
 )
 
 
@@ -65,31 +65,31 @@ def _step_declarations(step_id: str = "step") -> tuple[Assertion, ...]:
 def _compile(
     assertions: tuple[Assertion, ...],
     *,
-    workflow_id: str = "workflow",
-) -> WorkflowGraphCompilation:
-    compiled = WorkflowGraphCompiler().compile(
-        WorkflowFile(
+    method_id: str = "method",
+) -> MethodGraphCompilation:
+    compiled = MethodGraphCompiler().compile(
+        MethodFile(
             constants=(),
-            workflows=(Workflow(name=workflow_id, assertions=assertions),),
+            methods=(Method(name=method_id, assertions=assertions),),
         )
     )
     assert isinstance(compiled, tuple)
-    return cast(tuple[WorkflowGraphCompilation, ...], compiled)[0]
+    return cast(tuple[MethodGraphCompilation, ...], compiled)[0]
 
 
 def test_supported_operators_include_depends_on() -> None:
-    assert "depends_on" in WorkflowGraphCompiler.SUPPORTED_OPERATORS
+    assert "depends_on" in MethodGraphCompiler.SUPPORTED_OPERATORS
 
 
 def test_compiles_all_graph_operators() -> None:
-    workflow = Constant("workflow")
+    method = Constant("method")
     step = Constant("step")
     input_artifact = Constant("input")
     output_artifact = Constant("output")
     compilation = _compile(
         (
-            _assertion("input_workflow", (workflow,), ListTerm((input_artifact,))),
-            _assertion("output_workflow", (workflow,), ListTerm((output_artifact,))),
+            _assertion("input_method", (method,), ListTerm((input_artifact,))),
+            _assertion("output_method", (method,), ListTerm((output_artifact,))),
             _assertion("step_name", (step,), Constant("name")),
             _assertion("step_instruction", (step,), Constant("instruction")),
             _assertion(
@@ -107,14 +107,14 @@ def test_compiles_all_graph_operators() -> None:
                 (step, Constant("gpu")),
                 Constant("3"),
             ),
-            _assertion("max_concurrency", (workflow,), Constant("4")),
-            _assertion("workflow_timeout", (workflow,), Constant("120")),
+            _assertion("max_concurrency", (method,), Constant("4")),
+            _assertion("method_timeout", (method,), Constant("120")),
         )
     )
 
     assert compilation.residual_assertions == ()
     assert compilation.graph.to_dict() == {
-        "workflow_id": "workflow",
+        "method_id": "method",
         "steps": [
             {
                 "step_id": "step",
@@ -210,7 +210,7 @@ def test_catalog_bool_relations_accept_only_true(
     arguments: tuple[Term, ...],
 ) -> None:
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="RHS must be the Boolean constant True",
     ):
         _compile(
@@ -252,7 +252,7 @@ def test_depends_on_rejects_duplicate_pair() -> None:
     predecessor = Constant("predecessor", (Concept("Step"),))
 
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match=r"duplicate depends_on: \('step', 'predecessor'\)",
     ):
         _compile(
@@ -271,7 +271,7 @@ def test_depends_on_rejects_duplicate_pair() -> None:
 
 def test_depends_on_rejects_unknown_predecessor() -> None:
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="depends_on predecessor 'missing' is not a fully declared step",
     ):
         _compile(
@@ -291,7 +291,7 @@ def test_depends_on_rejects_unknown_predecessor() -> None:
 
 def test_depends_on_rejects_unknown_target() -> None:
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="depends_on target 'missing' is not a fully declared step",
     ):
         _compile(
@@ -326,15 +326,15 @@ def test_depends_on_self_cycle_is_preserved_for_the_planner() -> None:
 
 
 def test_graph_dataflow_operators_read_multiple_list_term_items() -> None:
-    workflow = Constant("workflow")
+    method = Constant("method")
     step = Constant("step")
     inputs = (Constant("in-b"), Constant("in-a"))
     outputs = (Constant("out-b"), Constant("out-a"))
     compilation = _compile(
         (
             *_step_declarations(),
-            _assertion("input_workflow", (workflow,), ListTerm(inputs)),
-            _assertion("output_workflow", (workflow,), ListTerm(outputs)),
+            _assertion("input_method", (method,), ListTerm(inputs)),
+            _assertion("output_method", (method,), ListTerm(outputs)),
             _assertion("consumes", (step,), ListTerm(inputs)),
             _assertion("produces", (step,), ListTerm(outputs)),
         )
@@ -356,23 +356,23 @@ def test_graph_dataflow_operators_read_multiple_list_term_items() -> None:
     }
 
 
-def test_shared_compiler_contract_builds_every_workflow() -> None:
-    compiler = WorkflowGraphCompiler()
+def test_shared_compiler_contract_builds_every_method() -> None:
+    compiler = MethodGraphCompiler()
 
     compiled = compiler.compile(
-        WorkflowFile(
+        MethodFile(
             constants=(),
-            workflows=(
-                Workflow(name="first", assertions=()),
-                Workflow(name="second", assertions=()),
+            methods=(
+                Method(name="first", assertions=()),
+                Method(name="second", assertions=()),
             ),
         )
     )
     assert isinstance(compiled, tuple)
-    compilations = cast(tuple[WorkflowGraphCompilation, ...], compiled)
+    compilations = cast(tuple[MethodGraphCompilation, ...], compiled)
 
     assert isinstance(compiler, CoreIRCompiler)
-    assert tuple(compilation.graph.workflow_id for compilation in compilations) == (
+    assert tuple(compilation.graph.method_id for compilation in compilations) == (
         "first",
         "second",
     )
@@ -451,12 +451,12 @@ def test_supported_graph_operator_on_rhs_is_lowered_as_equality() -> None:
     reversed_input = Assertion(
         lhs=ListTerm((Constant("artifact2"),)),
         rhs=CompoundTerm(
-            operator=Operator("input_workflow"),
-            arguments=(Constant("workflow1"),),
+            operator=Operator("input_method"),
+            arguments=(Constant("method1"),),
         ),
     )
 
-    compilation = _compile((reversed_input,), workflow_id="workflow1")
+    compilation = _compile((reversed_input,), method_id="method1")
 
     assert compilation.residual_assertions == ()
     assert tuple(
@@ -467,17 +467,17 @@ def test_supported_graph_operator_on_rhs_is_lowered_as_equality() -> None:
 def test_one_equality_cannot_declare_multiple_graph_facts() -> None:
     assertion = Assertion(
         lhs=CompoundTerm(
-            operator=Operator("input_workflow"),
-            arguments=(Constant("workflow"),),
+            operator=Operator("input_method"),
+            arguments=(Constant("method"),),
         ),
         rhs=CompoundTerm(
-            operator=Operator("output_workflow"),
-            arguments=(Constant("workflow"),),
+            operator=Operator("output_method"),
+            arguments=(Constant("method"),),
         ),
     )
 
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="one equality cannot declare multiple graph facts",
     ):
         _compile((assertion,))
@@ -497,7 +497,7 @@ def test_supported_operator_with_unsupported_term_fails_closed() -> None:
 def test_named_artifact_if_lowers_to_select_without_residual() -> None:
     artifact = Concept("Artifact")
     boolean = Concept("Bool")
-    workflow = Constant("workflow")
+    method = Constant("method")
     flag = Constant("flag", (artifact,))
     status = Constant("status", (artifact,))
     primary = Constant("primary", (artifact,))
@@ -518,11 +518,11 @@ def test_named_artifact_if_lowers_to_select_without_residual() -> None:
     compilation = _compile(
         (
             _assertion(
-                "input_workflow",
-                (workflow,),
+                "input_method",
+                (method,),
                 ListTerm((flag, status, primary, fallback)),
             ),
-            _assertion("output_workflow", (workflow,), ListTerm((selected,))),
+            _assertion("output_method", (method,), ListTerm((selected,))),
             Assertion(
                 lhs=selected,
                 rhs=IfTerm(
@@ -587,7 +587,7 @@ def test_named_artifact_if_lowers_ordered_comparison(
     artifact = Concept("Artifact")
     boolean = Concept("Bool")
     number = Concept("ComplexNumber")
-    workflow = Constant("workflow")
+    method = Constant("method")
     score = Constant("score", (artifact,))
     primary = Constant("primary", (artifact,))
     fallback = Constant("fallback", (artifact,))
@@ -596,11 +596,11 @@ def test_named_artifact_if_lowers_ordered_comparison(
     compilation = _compile(
         (
             _assertion(
-                "input_workflow",
-                (workflow,),
+                "input_method",
+                (method,),
                 ListTerm((score, primary, fallback)),
             ),
-            _assertion("output_workflow", (workflow,), ListTerm((selected,))),
+            _assertion("output_method", (method,), ListTerm((selected,))),
             Assertion(
                 lhs=selected,
                 rhs=IfTerm(
@@ -628,7 +628,7 @@ def test_named_artifact_if_lowers_ordered_comparison(
 def test_named_select_chains_compile_deterministically() -> None:
     artifact = Concept("Artifact")
     boolean = Concept("Bool")
-    workflow = Constant("workflow")
+    method = Constant("method")
     condition_one = Constant("condition_one", (artifact,))
     condition_two = Constant("condition_two", (artifact,))
     primary = Constant("primary", (artifact,))
@@ -639,11 +639,11 @@ def test_named_select_chains_compile_deterministically() -> None:
     true = Constant("True", (boolean,))
     assertions = (
         _assertion(
-            "input_workflow",
-            (workflow,),
+            "input_method",
+            (method,),
             ListTerm((condition_one, condition_two, primary, review, fallback)),
         ),
-        _assertion("output_workflow", (workflow,), ListTerm((selected,))),
+        _assertion("output_method", (method,), ListTerm((selected,))),
         Assertion(
             lhs=review_or_fallback,
             rhs=IfTerm(
@@ -680,7 +680,7 @@ def test_inline_if_in_consumes_fails_closed() -> None:
         when_false=Constant("no"),
     )
 
-    with pytest.raises(WorkflowGraphCompilationError, match="unsupported if term"):
+    with pytest.raises(MethodGraphCompilationError, match="unsupported if term"):
         _compile(
             (
                 _assertion(
@@ -733,7 +733,7 @@ def test_named_if_rejects_non_artifact_and_compound_branches(
 ) -> None:
     artifact = Concept("Artifact")
 
-    with pytest.raises(WorkflowGraphCompilationError, match=message):
+    with pytest.raises(MethodGraphCompilationError, match=message):
         _compile(
             (
                 Assertion(
@@ -767,7 +767,7 @@ def test_named_if_rejects_unsupported_condition_operands(operand: Term) -> None:
     artifact = Concept("Artifact")
 
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="condition operands must be constants",
     ):
         _compile(
@@ -789,25 +789,25 @@ def test_named_if_rejects_unsupported_condition_operands(operand: Term) -> None:
 
 def test_step_and_select_duplicate_producer_is_public_and_chained() -> None:
     artifact = Concept("Artifact")
-    workflow = Constant("workflow")
+    method = Constant("method")
     condition = Constant("condition", (artifact,))
     primary = Constant("primary", (artifact,))
     fallback = Constant("fallback", (artifact,))
     selected = Constant("selected", (artifact,))
 
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="artifact has multiple producers",
     ) as caught:
         _compile(
             (
                 *_step_declarations(),
                 _assertion(
-                    "input_workflow",
-                    (workflow,),
+                    "input_method",
+                    (method,),
                     ListTerm((condition, primary, fallback)),
                 ),
-                _assertion("output_workflow", (workflow,), ListTerm((selected,))),
+                _assertion("output_method", (method,), ListTerm((selected,))),
                 _assertion(
                     "produces",
                     (Constant("step"),),
@@ -824,12 +824,12 @@ def test_step_and_select_duplicate_producer_is_public_and_chained() -> None:
             )
         )
 
-    assert isinstance(caught.value.__cause__, WorkflowGraphError)
+    assert isinstance(caught.value.__cause__, MethodGraphError)
 
 
 def test_duplicate_select_output_is_public_and_chained() -> None:
     artifact = Concept("Artifact")
-    workflow = Constant("workflow")
+    method = Constant("method")
     condition = Constant("condition", (artifact,))
     primary = Constant("primary", (artifact,))
     fallback = Constant("fallback", (artifact,))
@@ -841,28 +841,28 @@ def test_duplicate_select_output_is_public_and_chained() -> None:
     )
 
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="artifact has multiple producers",
     ) as caught:
         _compile(
             (
                 _assertion(
-                    "input_workflow",
-                    (workflow,),
+                    "input_method",
+                    (method,),
                     ListTerm((condition, primary, fallback)),
                 ),
-                _assertion("output_workflow", (workflow,), ListTerm((selected,))),
+                _assertion("output_method", (method,), ListTerm((selected,))),
                 Assertion(lhs=selected, rhs=select),
                 Assertion(lhs=selected, rhs=select),
             )
         )
 
-    assert isinstance(caught.value.__cause__, WorkflowGraphError)
+    assert isinstance(caught.value.__cause__, MethodGraphError)
 
 
 def test_oversized_integer_is_reported_as_a_graph_compilation_error() -> None:
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="step_timeout RHS must be a positive integer constant",
     ) as caught:
         _compile(
@@ -880,7 +880,7 @@ def test_oversized_integer_is_reported_as_a_graph_compilation_error() -> None:
 
 
 def test_explicit_one_does_not_hide_duplicate_max_attempts() -> None:
-    with pytest.raises(WorkflowGraphCompilationError, match="duplicate max_attempts"):
+    with pytest.raises(MethodGraphCompilationError, match="duplicate max_attempts"):
         _compile(
             (
                 *_step_declarations(),
@@ -925,23 +925,23 @@ def test_cycle_compilation_is_order_independent() -> None:
 
 def test_graph_validation_errors_are_public_and_chained() -> None:
     with pytest.raises(
-        WorkflowGraphCompilationError,
+        MethodGraphCompilationError,
         match="input or producer-backed",
     ) as caught:
         _compile(
             (
                 _assertion(
-                    "output_workflow",
-                    (Constant("workflow"),),
+                    "output_method",
+                    (Constant("method"),),
                     ListTerm((Constant("missing"),)),
                 ),
             )
         )
 
-    assert isinstance(caught.value.__cause__, WorkflowGraphError)
+    assert isinstance(caught.value.__cause__, MethodGraphError)
 
 
 def test_graph_backend_is_exported_from_package() -> None:
-    assert fusion_flow.WorkflowGraphCompiler is WorkflowGraphCompiler
-    assert fusion_flow.WorkflowGraphCompilation is WorkflowGraphCompilation
-    assert fusion_flow.WorkflowGraphCompilationError is WorkflowGraphCompilationError
+    assert fusion_method.MethodGraphCompiler is MethodGraphCompiler
+    assert fusion_method.MethodGraphCompilation is MethodGraphCompilation
+    assert fusion_method.MethodGraphCompilationError is MethodGraphCompilationError

@@ -1,4 +1,4 @@
-from .checker import check_workflow
+from .checker import check_method
 from .compiler import CoreIRCompiler
 from .contracts import (
     CheckResult,
@@ -18,17 +18,17 @@ from .core_ir import (
     IfTerm,
     ListTerm,
     LogicalConnective,
+    Method,
+    MethodFile,
     Operator,
     Term,
-    Workflow,
-    WorkflowFile,
 )
 from .graph_compiler import (
-    WorkflowGraphCompilation,
-    WorkflowGraphCompilationError,
-    WorkflowGraphCompiler,
+    MethodGraphCompilation,
+    MethodGraphCompilationError,
+    MethodGraphCompiler,
 )
-from .parser import ParseContext, parse_workflow
+from .parser import ParseContext, parse_method
 from .planning import (
     PlannedStep,
     PlannedSyntax,
@@ -50,6 +50,11 @@ __all__ = [
     "IfTerm",
     "ListTerm",
     "LogicalConnective",
+    "Method",
+    "MethodFile",
+    "MethodGraphCompilation",
+    "MethodGraphCompilationError",
+    "MethodGraphCompiler",
     "Operator",
     "ParseContext",
     "ParseResult",
@@ -59,12 +64,7 @@ __all__ = [
     "SourcePosition",
     "SourceSpan",
     "Term",
-    "Workflow",
-    "WorkflowFile",
-    "WorkflowGraphCompilation",
-    "WorkflowGraphCompilationError",
-    "WorkflowGraphCompiler",
+    "check_method",
     "check_planned_steps",
-    "check_workflow",
-    "parse_workflow",
+    "parse_method",
 ]
