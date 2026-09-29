@@ -16,14 +16,14 @@
         id="method-command-menu"
         class="method-menu"
         role="listbox"
-        aria-label="可复用工作流"
+        aria-label="可复用方法"
       >
-        <div v-if="loadingMethods" class="method-menu-state">正在加载工作流…</div>
+        <div v-if="loadingMethods" class="method-menu-state">正在加载方法…</div>
         <div v-else-if="methodLoadError" class="method-menu-state error">
           {{ methodLoadError }}
         </div>
         <div v-else-if="!methodOptions.length" class="method-menu-state">
-          没有匹配的工作流
+          没有匹配的方法
         </div>
         <template v-else>
           <button
@@ -166,7 +166,7 @@ async function submitMessage() {
     return
   }
   if (parsed.kind === 'method' && selectedFiles.value.length) {
-    ui.showAlert('工作流指令暂不支持同时发送附件；请先移除附件')
+    ui.showAlert('方法指令暂不支持同时发送附件；请先移除附件')
     return
   }
   dismissedMethodText.value = inputText.value
@@ -255,7 +255,7 @@ watch(
       if (requestVersion === methodRequestVersion) methods.value = result
     } catch (error) {
       if (requestVersion === methodRequestVersion) {
-        methodLoadError.value = error.message || '工作流加载失败'
+        methodLoadError.value = error.message || '方法加载失败'
       }
     } finally {
       if (requestVersion === methodRequestVersion) loadingMethods.value = false

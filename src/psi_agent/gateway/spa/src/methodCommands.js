@@ -25,12 +25,12 @@ export function parseMethodCommand(value) {
   if (!text.startsWith(METHOD_COMMAND_PREFIX)) return { kind: 'text' }
 
   const name = text.slice(METHOD_COMMAND_PREFIX.length)
-  if (!name) return invalid('请输入要运行的工作流名称，例如 /method:daily-brief')
+  if (!name) return invalid('请输入要运行的方法名称，例如 /method:daily-brief')
   if (/\s/.test(name)) {
-    return invalid('工作流指令只支持 /method:<名称>，不能附加参数')
+    return invalid('方法指令只支持 /method:<名称>，不能附加参数')
   }
   if (!isValidMethodName(name)) {
-    return invalid('工作流名称必须以小写字母开头，只能包含小写字母、数字和连字符，且不能使用系统保留名')
+    return invalid('方法名称必须以小写字母开头，只能包含小写字母、数字和连字符，且不能使用系统保留名')
   }
   return { kind: 'method', name }
 }

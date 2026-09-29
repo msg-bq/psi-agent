@@ -47,7 +47,7 @@ describe('parseMethodCommand', () => {
 describe('getMethodCommandQuery', () => {
   it('returns the active partial command query', () => {
     expect(getMethodCommandQuery('/')).toBe('')
-    expect(getMethodCommandQuery('/work')).toBe('')
+    expect(getMethodCommandQuery('/meth')).toBe('')
     expect(getMethodCommandQuery('/method:')).toBe('')
     expect(getMethodCommandQuery('/method:daily')).toBe('daily')
   })

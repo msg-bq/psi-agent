@@ -30,9 +30,9 @@ Once a task is method-shaped (multiple agents / parallel branches / multi-step p
 
 Do **NOT** offer "我直接帮你做这一次" as an option, and especially do **NOT** make it the default. Building the mtd IS how you help: doing it by hand throws away explicit dependencies, graph concurrency, named Artifacts, and the reusable G4 source.
 
-❌ **Real failure to never repeat** (observed in testing): user said "让几个 AI 从安全/性能/可读性分别审一段代码再汇总". The agent replied with "方式 A：我直接帮你审这次代码 / 方式 B：给你做成可复用工作流" — offering to personally act as the three reviewers, with the manual path listed first as the default. **Wrong.** The correct response is to go straight into Authoring Mode and build the review mtd: three reviewer Steps consume the same input, then one final Step consumes all three review artifacts. No A/B menu, no "I'll just review it myself".
+❌ **Real failure to never repeat** (observed in testing): user said "让几个 AI 从安全/性能/可读性分别审一段代码再汇总". The agent replied with "方式 A：我直接帮你审这次代码 / 方式 B：给你做成可复用方法" — offering to personally act as the three reviewers, with the manual path listed first as the default. **Wrong.** The correct response is to go straight into Authoring Mode and build the review mtd: three reviewer Steps consume the same input, then one final Step consumes all three review artifacts. No A/B menu, no "I'll just review it myself".
 
-✅ **Correct shape**: "🐾 这是个多 agent 协作任务，我来帮你搭一个工作流：3 个审查 agent（安全/性能/可读性）并行审 → 一个汇总 agent 合并成带严重等级的报告。" Then run the author loop (understand → model → author → static self-check → one heads-up line → **run it once**).
+✅ **Correct shape**: "🐾 这是个多 agent 协作任务，我来帮你搭一个方法：3 个审查 agent（安全/性能/可读性）并行审 → 一个汇总 agent 合并成带严重等级的报告。" Then run the author loop (understand → model → author → static self-check → one heads-up line → **run it once**).
 
 The only time you don't build a mtd is when the user **explicitly** says they just want a one-off answer and not a tool ("别给我搭工具，就这一次，你直接说结论"). Even then, confirm — don't assume.
 
@@ -65,14 +65,14 @@ Natural-language requests and the explicit `/method:` reuse command both map to 
 | --- | --- |
 | "我能用这个干嘛 / 你能帮我做什么" | Describe capabilities in plain language (see "Capabilities" at the bottom) + offer to build a mtd |
 | `/method:<slug>` | Map the slug to `mtds/methods/<slug>/<slug>.method`, collect its declared inputs, and start one fresh run with `run_mtd(mtd_path=...)`. |
-| "有哪些保存的工作流 / list methods" | List the fixed `mtds/methods/` directory with existing file tools. |
+| "有哪些保存的方法 / list methods" | List the fixed `mtds/methods/` directory with existing file tools. |
 | "加载 X / 看看保存的 X" | Read the canonical `.method` file with existing file tools. |
 | "把刚生成的这个保存为 X" | After self-check, save the self-contained bundle at `mtds/methods/<slug>/`: the canonical `.method` file plus every referenced instruction Markdown file, preserving relative paths. |
 | "跑一下这个 / 帮我跑 X / 执行这个 method" | Start the concrete workspace G4 source with `run_mtd`; return outputs, or handle its Human request with `clarify`. |
 | "接着上次那个跑 / 只重跑改动的部分" | Use `run_mtd_resume` only for the active Human request already returned in this conversation. Arbitrary cache/resume is unsupported; otherwise offer a fresh run. |
 | "看看结果 / 刚才那个跑完了吗" | Use the result already returned. A Human wait is not completion; wait for the user's answer rather than polling. |
 | "环境齐不齐 / 能不能跑 / 帮我检查下" | Confirm that the G4 source parses and that all Steps use supported Agent, Human, or Program executors. |
-| **"帮我写个工作流做 X / 帮我编排 / 我想让几个 agent ..."** | **Author a new FusionMethod G4 method from natural language. See "Authoring Mode" below.** |
+| **"帮我写个方法做 X / 帮我编排 / 我想让几个 agent ..."** | **Author a new FusionMethod G4 method from natural language. See "Authoring Mode" below.** |
 | Anything else method-shaped | Interpret intent against this table |
 
 ## Running a Method
@@ -218,7 +218,7 @@ Paths are relative to the workspace:
 
 ## Authoring Mode
 
-This is the flagship: turn a natural-language intent into a runnable FusionMethod G4 method. The user normally describes what they want in plain words ("帮我写个工作流做 X"). `/method:<slug>` reuses an already-saved method; it is not an authoring command.
+This is the flagship: turn a natural-language intent into a runnable FusionMethod G4 method. The user normally describes what they want in plain words ("帮我写个方法做 X"). `/method:<slug>` reuses an already-saved method; it is not an authoring command.
 
 > **NO-MOCK RULE (global, applies to all of Authoring Mode).** When you build a mtd for the user, author **exactly one** real FusionMethod G4 method and NEVER fabricate a mock/offline/simplified twin to "test" or "demonstrate" it. A twin with hardcoded sample output, fake numbers, or a fake executor standing in for the real work is a **forgery** — it always "passes" regardless of what the real mtd does, so it proves nothing and misleads the user. Validate the one real method, then actually run it. If the user *explicitly* later asks for an offline twin, that's a separate request you confirm first — never self-initiate one.
 >
@@ -226,7 +226,7 @@ This is the flagship: turn a natural-language intent into a runnable FusionMetho
 
 ### When to enter Authoring Mode
 
-- User describes a method they want built: "帮我写个工作流 ..." / "make a mtd that ..." / "帮我编排 ..." / similar.
+- User describes a method they want built: "帮我写个方法 ..." / "make a mtd that ..." / "帮我编排 ..." / similar.
 - User asks "帮我写一个 mtd ..." / "make a mtd that ..." / similar in any LLM client.
 - User edits existing FusionMethod G4 source and asks you to "rewrite" or "扩展".
 - **User describes a method-shaped task without naming "mtd"** — anything needing two or more coordinated agents / parallel branches / a multi-step pipeline / per-item work (see "When to Activate"). In that case, don't wait for the word "mtd": offer to build one, then run the author loop below.
@@ -259,7 +259,7 @@ The real run is how you deliver — there is no "spend-free preview" step to off
 
 ### Heads-up line (说一句就开跑，不是 gate)
 
-Keep this **minimal**. A real investor ("悠悠") and an internal teammate ("张浩") both bailed on the authoring mtd because the summary was wall-to-wall framework jargon (`parallel / pmap / reduce / evaluate / choice / 原语 / 异构复合工作流`). Their words: "这么专业应该不是给我这种用户用的吧" / "这表述太专业太多专有名词了，我都不知道咋聊了". This line is a **告知**, not a go/no-go gate — you say it and then immediately run. It exists so the user isn't surprised by a few minutes' wait / the cost, NOT to ask permission.
+Keep this **minimal**. A real investor ("悠悠") and an internal teammate ("张浩") both bailed on the authoring mtd because the summary was wall-to-wall framework jargon (`parallel / pmap / reduce / evaluate / choice / 原语 / 异构复合方法`). Their words: "这么专业应该不是给我这种用户用的吧" / "这表述太专业太多专有名词了，我都不知道咋聊了". This line is a **告知**, not a go/no-go gate — you say it and then immediately run. It exists so the user isn't surprised by a few minutes' wait / the cost, NOT to ask permission.
 
 **Default heads-up (use this for everyone unless they're clearly a developer):** one plain-language sentence on what they'll get + a rough time estimate. No primitive names, no API names, no pattern names, no file path, no per-step breakdown, no token math, no "要不要跑".
 
@@ -279,12 +279,12 @@ Only show that line when a developer explicitly asks for it. Never push it at a 
 
 | 框架黑话（别说） | 业务语言（要这么说） |
 | --- | --- |
-| G4 / operator | 工作流结构 |
+| G4 / operator | 方法结构 |
 | Step | 一次处理 |
 | Artifact | 中间结果 |
 | `max_concurrency` | 同时处理 |
 | `consumes(step) == [result_a, result_b]` | 汇总多个结果 |
-| 异构复合工作流 | 多方向 + 分层汇总 |
+| 异构复合方法 | 多方向 + 分层汇总 |
 | token / LLM 调用 | （折成）几分钟 / 花多少钱 |
 
 
@@ -632,15 +632,15 @@ When the user asks what this skill can do ("你能帮我做什么 / 我能用这
 
 ```
 🐾 FusionMethod G4
-用自然语言驱动多 Agent 工作流，也可以保存后用固定短指令复用：
+用自然语言驱动多 Agent 方法，也可以保存后用固定短指令复用：
 
-  • "帮我写个工作流做 X / 帮我编排 ..."           → 用大白话描述需求，我帮你搭好并运行
+  • "帮我写个方法做 X / 帮我编排 ..."           → 用大白话描述需求，我帮你搭好并运行
   • "把这个保存为 daily-brief"                   → 保存到固定的 method 文件夹
   • "/method:daily-brief"                       → 按名称加载并全新运行一次
   • "跑一下刚才那个 / 帮我跑这个 method"        → 执行 G4 method；需要你审批或输入时直接在对话里问
   • "环境齐不齐 / 能不能跑"                        → 检查 G4、Agent/Human/Program executor 和资源声明
 
-不附带现成可运行示例；你想要什么工作流，直接描述，我会写入 workspace 的 mtds/ 目录。
+不附带现成可运行示例；你想要什么方法，直接描述，我会写入 workspace 的 mtds/ 目录。
 ```
 
 ## Security + Approvals
